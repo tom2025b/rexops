@@ -1,0 +1,24 @@
+[package]
+name = "rexops-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Ratatui + crossterm TUI for RexOps. Keyboard-first shell + 5 screens. Calls rexops-app for snapshots; never owns domain logic or execution."
+
+[[bin]]
+name = "rexops-tui"
+path = "src/main.rs"
+
+[dependencies]
+# Keep versions reasonable for rust-version 1.75. Ratatui is the maintained tui-rs successor.
+crossterm = "0.28"
+ratatui = "0.29"
+# For loading the YAML config (as in examples/config.yaml and AppConfig).
+serde_yaml = "0.9"
+
+# Thin deps on our own crates. TUI must not duplicate models or adapter concerns.
+# The heavy lifting (config + live snapshot building) now comes from rexops-app.
+rexops-core = { path = "../rexops-core" }
+rexops-app = { path = "../rexops-app" }

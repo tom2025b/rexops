@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/rexops-adapters"]
+members = [
+    "crates/rexops-adapters",
+    "crates/rexops-app",
+    "crates/rexops-core",
+    "crates/rexops-cli",
+    "crates/rexops-tui",
+]
 resolver = "2"
 
 [workspace.package]

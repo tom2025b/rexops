@@ -28,6 +28,9 @@
 //! - AdapterError — the only error type you should ever see from this crate.
 //! - Adapter, AdapterHealth, AdapterOutput — the common vocabulary.
 //! - BulwarkAdapter + Bulwark* types — the first concrete adapter.
+//! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
+//! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only metadata/favorites/recents stub (third adapter, demo data).
+//! - ToolFoundryAdapter + ToolFoundryInfo/Tool — ownership/lifecycle/health/symlinks stub (fourth adapter, demo data).
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 
@@ -35,6 +38,9 @@ mod adapter;
 mod bulwark;
 mod error;
 mod exec;
+mod scriptvault;
+mod system;
+mod toolfoundry;
 mod types;
 
 // Re-export the public API in a flat, convenient way.
@@ -45,6 +51,9 @@ pub use bulwark::{
     BulwarkScanResult, BulwarkSeverity,
 };
 pub use error::AdapterError;
+pub use scriptvault::{Script, ScriptVaultAdapter, ScriptVaultInfo};
+pub use system::{SystemAdapter, SystemInfo};
+pub use toolfoundry::{Tool, ToolFoundryAdapter, ToolFoundryInfo};
 pub use types::{AdapterHealth, AdapterOutput};
 
 // NOTE TO FUTURE EDITORS:

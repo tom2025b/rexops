@@ -1,0 +1,21 @@
+[package]
+name = "rexops-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Core domain models, OpsSnapshot, AppConfig, registries, and pure data transformations for RexOps. Single source of truth. No UI, no execution."
+
+[dependencies]
+# Keep deps minimal per project rules. No async, no tokio, no anyhow in foundation phases.
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+# Depend on adapters to lift AdapterOutput<T> and reuse AdapterHealth without duplication.
+# Path dep is fine inside workspace; version alignment comes from workspace.package.
+rexops-adapters = { path = "../rexops-adapters" }
+
+[dev-dependencies]
+# Only for unit tests that do serde roundtrips. Not needed in the lib itself.
+serde_json = "1.0"
