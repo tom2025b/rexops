@@ -179,6 +179,15 @@ fn print_status_human(snap: &OpsSnapshot) {
         println!();
     }
 
+    if let Some(ws) = &snap.workstate {
+        println!("Workstate (snapshot as of {}):", ws.generated_at);
+        println!("  projects: {}", ws.project_count());
+        for p in ws.projects.iter().take(5) {
+            println!("  - {}", p.label());
+        }
+        println!();
+    }
+
     println!(
         "Risk: total_findings={} should_block={}",
         snap.risk.total_findings, snap.risk.should_block

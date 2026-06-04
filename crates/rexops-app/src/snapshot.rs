@@ -15,7 +15,7 @@
 
 use rexops_adapters::{
     Adapter, BulwarkAdapter, BulwarkFeedAdapter, ScriptVaultAdapter, SystemAdapter,
-    ToolFoundryAdapter,
+    ToolFoundryAdapter, WorkstateAdapter,
 };
 use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, RiskSummary};
 
@@ -143,6 +143,17 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         populate_scriptvault(&mut snap, routed);
     }
 
+    // Workstate snapshot feed: read-only consumer of per-project repo health.
+    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
+    if ws_enabled {
+        let routed = if route == Some(FeedKind::Workstate) {
+            piped.map(str::to_owned)
+        } else {
+            None
+        };
+        populate_workstate(&mut snap, routed);
+    }
+
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
@@ -157,6 +168,7 @@ enum FeedKind {
     ToolFoundry,
     Bulwark,
     ScriptVault,
+    Workstate,
     Unknown,
 }
 
@@ -186,6 +198,7 @@ fn classify_feed(text: &str) -> FeedKind {
     match v.get("source_tool").and_then(|s| s.as_str()) {
         Some("bulwark") => return FeedKind::Bulwark,
         Some("scriptvault") => return FeedKind::ScriptVault,
+        Some("workstate") => return FeedKind::Workstate,
         _ => {}
     }
     // ToolFoundry feed: no source_tool, but tool_count + attention_count + tools.
@@ -365,6 +378,50 @@ fn populate_scriptvault(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     }
 }
 
+/// Read the Workstate snapshot feed and fold it into the snapshot.
+///
+/// On a supported-version feed this populates `snap.workstate` and notes the
+/// project count plus the first couple of project labels. The Workstate contract
+/// carries NO risk fields, so this contributes no risk — notes + structured field
+/// only. Unknown/missing versions and missing feeds degrade gracefully.
+fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
+    let ws = match routed_stdin {
+        Some(text) => WorkstateAdapter::with_text(text),
+        None => WorkstateAdapter::new(),
+    };
+    let (ws_health, feed) = match ws.read() {
+        Ok(pair) => pair,
+        Err(e) => {
+            snap.add_note(format!("workstate: snapshot unreadable ({e})"));
+            (rexops_core::AdapterHealth::Unknown, None)
+        }
+    };
+    if let Ok(id) = AdapterId::new("workstate") {
+        snap.set_adapter_health(&id, ws_health);
+    }
+    match feed {
+        Some(out) => {
+            let i = &out.data;
+            snap.add_note(format!(
+                "workstate: {} projects (as of {})",
+                i.project_count(),
+                i.generated_at
+            ));
+            for p in i.projects.iter().take(2) {
+                snap.add_note(format!("  project: {}", p.label()));
+            }
+            snap.workstate = Some(i.clone());
+        }
+        None if ws_health == rexops_core::AdapterHealth::Degraded => {
+            snap.add_note(
+                "workstate: snapshot present but unknown/missing schema version — skipped"
+                    .to_owned(),
+            );
+        }
+        None => {}
+    }
+}
+
 /// Build a simple AdapterRegistry from live probes (demo of registry usage).
 /// Only includes adapters enabled in config.
 ///
@@ -448,6 +505,19 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
+    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
+    if ws_enabled {
+        let ws = WorkstateAdapter::new();
+        let ws_health = ws.health();
+        if let Ok(id) = AdapterId::new("workstate") {
+            reg.insert(AdapterEntry {
+                id,
+                health: ws_health,
+                label: Some("Workstate snapshot consumer (read-only)".to_owned()),
+            });
+        }
+    }
+
     reg
 }
 
@@ -479,12 +549,15 @@ mod tests {
         include_str!("../../rexops-adapters/fixtures/toolfoundry/rexops_feed_v1.json");
     const SCRIPTVAULT_FEED: &str =
         include_str!("../../rexops-adapters/fixtures/scriptvault/export_v1.json");
+    const WORKSTATE_FEED: &str =
+        include_str!("../../rexops-adapters/fixtures/workstate/snapshot_v1.json");
 
     #[test]
     fn classify_routes_each_feed_to_its_own_consumer() {
         assert_eq!(classify_feed(BULWARK_FEED), FeedKind::Bulwark);
         assert_eq!(classify_feed(TOOLFOUNDRY_FEED), FeedKind::ToolFoundry);
         assert_eq!(classify_feed(SCRIPTVAULT_FEED), FeedKind::ScriptVault);
+        assert_eq!(classify_feed(WORKSTATE_FEED), FeedKind::Workstate);
     }
 
     #[test]
@@ -541,6 +614,10 @@ mod tests {
             snap.scriptvault.is_none(),
             "bulwark feed must NOT leak into scriptvault"
         );
+        assert!(
+            snap.workstate.is_none(),
+            "bulwark feed must NOT leak into workstate"
+        );
         assert!(snap.risk.critical >= 1, "risk pane should reflect the scan");
     }
 
@@ -559,6 +636,10 @@ mod tests {
             snap.scriptvault.is_none(),
             "toolfoundry feed must NOT leak into scriptvault"
         );
+        assert!(
+            snap.workstate.is_none(),
+            "toolfoundry feed must NOT leak into workstate"
+        );
     }
 
     #[test]
@@ -575,6 +656,31 @@ mod tests {
         assert!(
             snap.bulwark.is_none(),
             "scriptvault feed must NOT leak into bulwark"
+        );
+        assert!(
+            snap.workstate.is_none(),
+            "scriptvault feed must NOT leak into workstate"
+        );
+    }
+
+    #[test]
+    fn build_routes_workstate_feed_only_to_workstate() {
+        let snap = route_via_build(WORKSTATE_FEED);
+        assert!(
+            snap.workstate.is_some(),
+            "workstate feed must populate workstate"
+        );
+        assert!(
+            snap.toolfoundry.is_none(),
+            "workstate feed must NOT leak into toolfoundry"
+        );
+        assert!(
+            snap.bulwark.is_none(),
+            "workstate feed must NOT leak into bulwark"
+        );
+        assert!(
+            snap.scriptvault.is_none(),
+            "workstate feed must NOT leak into scriptvault"
         );
     }
 }

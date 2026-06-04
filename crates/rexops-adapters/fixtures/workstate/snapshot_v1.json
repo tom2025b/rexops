@@ -1,0 +1,26 @@
+{
+  "_comment": "PROVISIONAL — envelope-shaped Workstate snapshot sample for RexOps' workstate consumer. The contract (workstate.snapshot.schema.json) fixes only the envelope (schema_version, source_tool, generated_at) plus a free-form projects[] array. The project item fields below are illustrative and will change when Workstate ships real versioned JSON.",
+  "schema_version": 1,
+  "source_tool": "workstate",
+  "generated_at": "2026-06-04",
+  "projects": [
+    {
+      "name": "rexops",
+      "path": "/home/tom/projects/rexops",
+      "branch": "main",
+      "dirty": false
+    },
+    {
+      "name": "linux-ops-suite",
+      "path": "/home/tom/projects/linux-ops-suite",
+      "branch": "main",
+      "dirty": true
+    },
+    {
+      "name": "bulwark",
+      "path": "/home/tom/projects/bulwark",
+      "branch": "develop",
+      "dirty": false
+    }
+  ]
+}

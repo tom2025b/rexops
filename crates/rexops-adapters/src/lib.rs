@@ -32,6 +32,7 @@
 //! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only consumer of the ScriptVault export feed (third adapter; provisional contract; reads in-memory text or standard path).
 //! - ToolFoundryAdapter + ToolFoundryInfo/Tool — read-only consumer of the ToolFoundry rexops-feed contract (fourth adapter, real).
 //! - BulwarkFeedAdapter + BulwarkScanInfo/ScanItem — read-only consumer of the Bulwark scan export feed (fifth adapter; provisional contract; reads in-memory text or standard path).
+//! - WorkstateAdapter + WorkstateInfo/Project — read-only consumer of the Workstate snapshot feed (sixth adapter; provisional contract; per-project repo health; reads in-memory text or standard path).
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 
@@ -44,6 +45,7 @@ mod scriptvault;
 mod system;
 mod toolfoundry;
 mod types;
+mod workstate;
 
 // Re-export the public API in a flat, convenient way.
 // Callers should be able to `use rexops_adapters::{BulwarkAdapter, AdapterError};`
@@ -58,6 +60,7 @@ pub use scriptvault::{Script, ScriptVaultAdapter, ScriptVaultInfo};
 pub use system::{SystemAdapter, SystemInfo};
 pub use toolfoundry::{Tool, ToolFoundryAdapter, ToolFoundryInfo};
 pub use types::{AdapterHealth, AdapterOutput};
+pub use workstate::{Project, WorkstateAdapter, WorkstateInfo};
 
 // NOTE TO FUTURE EDITORS:
 // Do NOT add any functions, constants, or re-exports that contain logic in this

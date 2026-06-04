@@ -170,6 +170,12 @@ pub struct OpsSnapshot {
     /// supported-version feed was read). The risk counts also feed `risk` above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bulwark: Option<crate::BulwarkScanInfo>,
+
+    /// Structured Workstate snapshot data from the WorkstateAdapter (if a
+    /// supported-version feed was read). Per-project repo health; contributes
+    /// notes and a structured field only — no risk (the contract has none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workstate: Option<crate::WorkstateInfo>,
 }
 
 impl OpsSnapshot {
@@ -186,6 +192,7 @@ impl OpsSnapshot {
             scriptvault: None,
             toolfoundry: None,
             bulwark: None,
+            workstate: None,
         }
     }
 
