@@ -176,6 +176,10 @@ impl App {
                 self.toggle_help();
                 false
             }
+            crate::action::Action::Launch => {
+                self.log_event("Launch requested (stub) — no-op for now");
+                false
+            }
             crate::action::Action::SwitchToDashboard => {
                 self.current_screen = Screen::Dashboard;
                 self.log_event("Switched to Dashboard screen");
