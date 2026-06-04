@@ -136,13 +136,16 @@ fn print_status_human(snap: &OpsSnapshot) {
     }
 
     if let Some(tf) = &snap.toolfoundry {
-        println!("ToolFoundry:");
-        println!("  tools: {}", tf.total);
-        for t in tf.tools.iter().take(3) {
-            let sl = t.symlink.as_deref().unwrap_or("-");
+        println!("ToolFoundry (feed as of {}):", tf.as_of);
+        println!(
+            "  tools: {} ({} need attention)",
+            tf.tool_count, tf.attention_count
+        );
+        for t in tf.tools.iter().take(5) {
+            let mark = if t.needs_attention() { "!" } else { "✓" };
             println!(
-                "  - {} (owner: {}, health: {}, symlink: {})",
-                t.name, t.owner, t.health, sl
+                "  {} {} — {} ({})",
+                mark, t.display_name, t.status, t.lifecycle_state
             );
         }
         println!();

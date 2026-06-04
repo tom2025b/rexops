@@ -30,7 +30,7 @@
 //! - BulwarkAdapter + Bulwark* types — the first concrete adapter.
 //! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
 //! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only metadata/favorites/recents stub (third adapter, demo data).
-//! - ToolFoundryAdapter + ToolFoundryInfo/Tool — ownership/lifecycle/health/symlinks stub (fourth adapter, demo data).
+//! - ToolFoundryAdapter + ToolFoundryInfo/Tool — read-only consumer of the ToolFoundry rexops-feed contract (fourth adapter, real).
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 

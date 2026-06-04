@@ -1,9 +1,8 @@
 //! tools.rs — Tools / ToolFoundry screen (5th screen, key '5').
 //!
-//! Shows the structured ToolFoundryInfo from the snapshot (populated from
-//! ToolFoundryAdapter). Lists tools with owner, per-tool health, and symlink
-//! status. This demonstrates ToolFoundry's focus (ownership / lifecycle /
-//! health / symlinks) in the TUI.
+//! Shows the structured ToolFoundryInfo from the snapshot (populated from the
+//! ToolFoundry `rexops-feed`). Lists each tool with owner, lifecycle state, and
+//! health-check tally, badging by the feed's per-tool `status` (ok / attention).
 //!
 //! Reuses the adapter_item widget + health badge for visual consistency with
 //! Adapters and Scripts screens. No selection/filter on this screen yet
@@ -55,14 +54,13 @@ fn render_tools_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(header, area);
 }
 
-/// Map the free-string health from ToolFoundry sample ("healthy", "degraded")
-/// into our AdapterHealth for badge rendering in the list. Keeps the demo
-/// visually interesting without adding new types or complex logic.
-fn tool_health_to_adapter_health(h: &str) -> rexops_core::AdapterHealth {
-    match h.to_lowercase().as_str() {
-        "healthy" => rexops_core::AdapterHealth::Healthy,
-        "degraded" => rexops_core::AdapterHealth::Degraded,
-        "unavailable" => rexops_core::AdapterHealth::Unavailable,
+/// Map the per-tool aggregate `status` from the feed ("ok" / "attention") into
+/// our AdapterHealth for badge rendering in the list. "attention" → Degraded so
+/// it stands out visually; "ok" → Healthy.
+fn tool_status_to_adapter_health(status: &str) -> rexops_core::AdapterHealth {
+    match status.to_lowercase().as_str() {
+        "ok" => rexops_core::AdapterHealth::Healthy,
+        "attention" => rexops_core::AdapterHealth::Degraded,
         _ => rexops_core::AdapterHealth::Unknown,
     }
 }
@@ -75,32 +73,28 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from("No tools found."));
         } else {
             for t in &tf.tools {
-                // Build a compact info string for the widget (owner + symlink).
-                // The per-tool health goes into its own badge via the helper above.
-                let sl = t.symlink.as_deref().unwrap_or("-");
-                let info = format!("owner: {}  symlink: {}", t.owner, sl);
+                // Compact info string: owner, lifecycle, and health-check tally
+                // from the contract feed.
+                let info = format!(
+                    "owner: {}  lifecycle: {}  health: {}/{}{}",
+                    t.owner,
+                    t.lifecycle_state,
+                    t.health_passed,
+                    t.health_total,
+                    if t.drifted { "  (drifted)" } else { "" }
+                );
 
-                // Use the widget for the main row (name + badge + info). We pass
-                // a mapped health so the "old-tool" shows degraded visually.
-                let item_health = tool_health_to_adapter_health(&t.health);
-                let item = widgets::render_adapter_item(&t.name, item_health, &info, false);
+                // Main row: display_name + badge (from status) + info.
+                let item_health = tool_status_to_adapter_health(&t.status);
+                let item = widgets::render_adapter_item(&t.display_name, item_health, &info, false);
                 lines.push(item);
-
-                // Append a small detail line for the raw tool health string (educational;
-                // shows that ToolFoundry can report its own notion of health per tool).
-                if !t.health.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        format!("   tool health: {}", t.health),
-                        theme::help_style(),
-                    )));
-                }
             }
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
-            "Total: {} tools (from ToolFoundry stub)",
-            tf.total
+            "Total: {} tools, {} need attention (feed as of {})",
+            tf.tool_count, tf.attention_count, tf.as_of
         )));
     } else {
         // Excellent degraded state: clear message + hint what to do.
@@ -130,10 +124,11 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
 // - Exact mirror of scripts.rs structure: split header + list, lookup adapter_health
 //   by string key, reuse render_adapter_item + health badge, fallback text when
 //   Option is None (respects "enabled" and probe failures).
-// - Small pure helper tool_health_to_adapter_health() shows how to bridge the
-//   stringly health from the stub into our typed AdapterHealth for visuals.
-//   In a real ToolFoundryAdapter we would probably return typed health too.
+// - Small pure helper tool_status_to_adapter_health() bridges the feed's
+//   stringly per-tool status ("ok"/"attention") into our typed AdapterHealth
+//   so the existing health badge widget can render it.
 // - No Up/Down/selection on this screen (yet); Scripts didn't have it either.
 //   Adding later is easy because Action::Up/Down already guard on screen==Adapters.
 // - Educational comments on nearly every line per project rules.
-// - Demonstrates the plan's "ToolFoundryAdapter (ownership/lifecycle/health/symlinks)".
+// - The data here is now REAL: parsed from ToolFoundry's rexops-feed contract,
+//   not demo data. RexOps only reads it — it never writes back to ToolFoundry.

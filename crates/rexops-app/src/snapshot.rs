@@ -104,31 +104,68 @@ pub fn build_snapshot(config: &AppConfig) -> OpsSnapshot {
         }
     }
 
-    // ToolFoundry: stub for ownership/lifecycle/health/symlinks.
+    // ToolFoundry: read-only consumer of the `rexops-feed` contract.
+    // Reads stdin (when piped) or the documented standard path; never writes back.
     let tf_enabled = config
         .adapters
         .get("toolfoundry")
         .map_or(true, |c| c.enabled);
     if tf_enabled {
-        let tf = ToolFoundryAdapter::new();
-        let tf_health = tf.health();
-        if let Ok(id) = AdapterId::new("toolfoundry") {
-            snap.set_adapter_health(&id, tf_health);
-        }
-        if let Ok(out) = tf.info() {
-            let i = &out.data;
-            snap.toolfoundry = Some(i.clone());
-            snap.add_note(format!("toolfoundry: {} tools", i.total));
-            for t in i.tools.iter().take(2) {
-                snap.add_note(format!("  tool: {} (owner: {})", t.name, t.owner));
-            }
-        }
+        populate_toolfoundry(&mut snap);
     }
 
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
     snap
+}
+
+/// Read the ToolFoundry feed and fold it into the snapshot.
+///
+/// Records adapter health, and on a version-1 feed populates `snap.toolfoundry`
+/// plus a summary note. Unknown/missing versions and missing feeds are handled
+/// gracefully (a note or silence) — never an error that breaks the cockpit.
+fn populate_toolfoundry(snap: &mut OpsSnapshot) {
+    let tf = ToolFoundryAdapter::new();
+    // Single acquisition: stdin can only be drained once, so read() returns both
+    // health and the parsed feed together. (Calling health() then info() would
+    // consume a piped feed twice and lose the data.)
+    let (tf_health, feed) = match tf.read() {
+        Ok(pair) => pair,
+        Err(e) => {
+            // Malformed feed or I/O error: note it, do not crash the cockpit.
+            snap.add_note(format!("toolfoundry: feed unreadable ({e})"));
+            (rexops_core::AdapterHealth::Unknown, None)
+        }
+    };
+    if let Ok(id) = AdapterId::new("toolfoundry") {
+        snap.set_adapter_health(&id, tf_health);
+    }
+    match feed {
+        // A version-1 feed was read and parsed: surface the summary.
+        Some(out) => {
+            let i = &out.data;
+            snap.toolfoundry = Some(i.clone());
+            snap.add_note(format!(
+                "toolfoundry: {} tools, {} need attention (as of {})",
+                i.tool_count, i.attention_count, i.as_of
+            ));
+            for t in i.tools.iter().filter(|t| t.needs_attention()).take(3) {
+                snap.add_note(format!(
+                    "  attention: {} ({}, {})",
+                    t.display_name, t.status, t.lifecycle_state
+                ));
+            }
+        }
+        // Feed present but an unknown/missing major version: skip gracefully.
+        None if tf_health == rexops_core::AdapterHealth::Degraded => {
+            snap.add_note(
+                "toolfoundry: feed present but unknown/missing schema version — skipped".to_owned(),
+            );
+        }
+        // No feed found: normal for an optional tool.
+        None => {}
+    }
 }
 
 /// Build a simple AdapterRegistry from live probes (demo of registry usage).
@@ -193,7 +230,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
             reg.insert(AdapterEntry {
                 id,
                 health: tf_health,
-                label: Some("Tool ownership / lifecycle / symlinks (stub)".to_owned()),
+                label: Some("ToolFoundry rexops-feed consumer (read-only)".to_owned()),
             });
         }
     }
