@@ -125,12 +125,17 @@ fn print_status_human(snap: &OpsSnapshot) {
     }
 
     if let Some(sv) = &snap.scriptvault {
-        println!("ScriptVault:");
-        println!("  scripts: {} ({} favorites)", sv.total, sv.favorites);
+        println!("ScriptVault (export as of {}):", sv.generated_at);
+        println!(
+            "  scripts: {} ({} favorites, {} recents)",
+            sv.total(),
+            sv.favorites_count(),
+            sv.recents_count()
+        );
         for s in sv.scripts.iter().take(3) {
-            let flag = if s.favorite { " ★" } else { "" };
+            let flag = if sv.is_favorite(s) { " ★" } else { "" };
             let desc = s.description.as_deref().unwrap_or("");
-            println!("  - {}{} {}", s.name, flag, desc);
+            println!("  - {}{} {}", s.label(), flag, desc);
         }
         println!();
     }

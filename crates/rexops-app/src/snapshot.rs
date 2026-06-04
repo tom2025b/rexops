@@ -23,8 +23,10 @@ use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapsh
 ///
 /// Respects the per-adapter `enabled` flag (default true when key absent).
 /// Always adds a final "config loaded" note.
-/// Populates first-class structured fields (system, scriptvault, toolfoundry)
-/// when the corresponding adapter succeeds, plus notes for the dashboard/logs.
+/// Populates first-class structured fields (system, scriptvault, toolfoundry,
+/// bulwark) when the corresponding adapter succeeds, plus notes for the
+/// dashboard/logs. Feed consumers (toolfoundry/bulwark/scriptvault) share the
+/// single piped stdin, read once here and routed by content.
 ///
 /// This is the single implementation used by both `rexops status` and the TUI
 /// refresh thread.
@@ -87,37 +89,10 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         }
     }
 
-    // ScriptVault: stub adapter (read-only metadata/favorites/recents).
-    // For demo it always provides sample data; respect 'enabled' like the others.
-    let sv_enabled = config
-        .adapters
-        .get("scriptvault")
-        .map_or(true, |c| c.enabled);
-    if sv_enabled {
-        let sv = ScriptVaultAdapter::new();
-        let sv_health = sv.health();
-        if let Ok(id) = AdapterId::new("scriptvault") {
-            snap.set_adapter_health(&id, sv_health);
-        }
-        if let Ok(out) = sv.info() {
-            let i = &out.data;
-            snap.scriptvault = Some(i.clone());
-            snap.add_note(format!(
-                "scriptvault: {} scripts, {} favorites",
-                i.total, i.favorites
-            ));
-            // Surface first couple of script names for the notes pane / TUI.
-            for s in i.scripts.iter().take(2) {
-                let flag = if s.favorite { " (favorite)" } else { "" };
-                snap.add_note(format!("  script: {}{}", s.name, flag));
-            }
-        }
-    }
-
-    // Feed consumers (ToolFoundry, Bulwark scan) share a single piped stdin.
-    // stdin is a process-wide singleton — readable once, owned by exactly one
-    // consumer — so the caller read it ONCE and we route those bytes to whichever
-    // feed the content identifies. Everything else falls back to standard paths.
+    // Feed consumers (ToolFoundry, Bulwark scan, ScriptVault) share a single piped
+    // stdin. stdin is a process-wide singleton — readable once, owned by exactly
+    // one consumer — so the caller read it ONCE and we route those bytes to
+    // whichever feed identifies itself. Everything else falls back to standard paths.
     let route = piped.map(classify_feed);
     if route == Some(FeedKind::Unknown) {
         snap.add_note(
@@ -154,6 +129,20 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         populate_bulwark_feed(&mut snap, routed);
     }
 
+    // ScriptVault export feed: read-only consumer of the script inventory JSON.
+    let sv_enabled = config
+        .adapters
+        .get("scriptvault")
+        .map_or(true, |c| c.enabled);
+    if sv_enabled {
+        let routed = if route == Some(FeedKind::ScriptVault) {
+            piped.map(str::to_owned)
+        } else {
+            None
+        };
+        populate_scriptvault(&mut snap, routed);
+    }
+
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
@@ -167,6 +156,7 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
 enum FeedKind {
     ToolFoundry,
     Bulwark,
+    ScriptVault,
     Unknown,
 }
 
@@ -185,14 +175,18 @@ fn read_piped_stdin() -> Option<String> {
     }
 }
 
-/// Classify piped JSON by content. Bulwark carries `source_tool: "bulwark"`;
-/// ToolFoundry has no self-tag, so we positively match its required fields.
+/// Classify piped JSON by content. Bulwark and ScriptVault carry a `source_tool`
+/// tag; ToolFoundry has no self-tag, so we positively match its required fields.
+/// Every arm is a POSITIVE match — an unrecognized blob is Unknown, never
+/// silently misrouted into the wrong consumer.
 fn classify_feed(text: &str) -> FeedKind {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
         return FeedKind::Unknown;
     };
-    if v.get("source_tool").and_then(|s| s.as_str()) == Some("bulwark") {
-        return FeedKind::Bulwark;
+    match v.get("source_tool").and_then(|s| s.as_str()) {
+        Some("bulwark") => return FeedKind::Bulwark,
+        Some("scriptvault") => return FeedKind::ScriptVault,
+        _ => {}
     }
     // ToolFoundry feed: no source_tool, but tool_count + attention_count + tools.
     let tf = v.get("tool_count").is_some()
@@ -325,6 +319,52 @@ fn populate_toolfoundry(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     }
 }
 
+/// Read the ScriptVault export feed and fold it into the snapshot.
+///
+/// On a supported-version feed this populates `snap.scriptvault` and notes the
+/// script/favorites/recents counts. Unknown/missing versions and missing feeds
+/// degrade gracefully.
+fn populate_scriptvault(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
+    let sv = match routed_stdin {
+        Some(text) => ScriptVaultAdapter::with_text(text),
+        None => ScriptVaultAdapter::new(),
+    };
+    let (sv_health, feed) = match sv.read() {
+        Ok(pair) => pair,
+        Err(e) => {
+            snap.add_note(format!("scriptvault: export unreadable ({e})"));
+            (rexops_core::AdapterHealth::Unknown, None)
+        }
+    };
+    if let Ok(id) = AdapterId::new("scriptvault") {
+        snap.set_adapter_health(&id, sv_health);
+    }
+    match feed {
+        Some(out) => {
+            let i = &out.data;
+            snap.add_note(format!(
+                "scriptvault: {} scripts, {} favorites, {} recents (as of {})",
+                i.total(),
+                i.favorites_count(),
+                i.recents_count(),
+                i.generated_at
+            ));
+            for s in i.scripts.iter().take(2) {
+                let flag = if i.is_favorite(s) { " (favorite)" } else { "" };
+                snap.add_note(format!("  script: {}{}", s.label(), flag));
+            }
+            snap.scriptvault = Some(i.clone());
+        }
+        None if sv_health == rexops_core::AdapterHealth::Degraded => {
+            snap.add_note(
+                "scriptvault: export present but unknown/missing schema version — skipped"
+                    .to_owned(),
+            );
+        }
+        None => {}
+    }
+}
+
 /// Build a simple AdapterRegistry from live probes (demo of registry usage).
 /// Only includes adapters enabled in config.
 ///
@@ -371,7 +411,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
             reg.insert(AdapterEntry {
                 id,
                 health: sv_health,
-                label: Some("Script metadata / favorites / recents (stub)".to_owned()),
+                label: Some("ScriptVault export consumer (read-only)".to_owned()),
             });
         }
     }
@@ -437,11 +477,14 @@ mod tests {
         include_str!("../../rexops-adapters/fixtures/bulwark/scan_feed_v1.json");
     const TOOLFOUNDRY_FEED: &str =
         include_str!("../../rexops-adapters/fixtures/toolfoundry/rexops_feed_v1.json");
+    const SCRIPTVAULT_FEED: &str =
+        include_str!("../../rexops-adapters/fixtures/scriptvault/export_v1.json");
 
     #[test]
     fn classify_routes_each_feed_to_its_own_consumer() {
         assert_eq!(classify_feed(BULWARK_FEED), FeedKind::Bulwark);
         assert_eq!(classify_feed(TOOLFOUNDRY_FEED), FeedKind::ToolFoundry);
+        assert_eq!(classify_feed(SCRIPTVAULT_FEED), FeedKind::ScriptVault);
     }
 
     #[test]
@@ -454,11 +497,13 @@ mod tests {
         assert_eq!(classify_feed("not json"), FeedKind::Unknown);
     }
 
-    /// Config that disables every adapter except the two feed consumers, so the
-    /// built snapshot reflects only feed routing.
+    /// Config that disables the non-feed adapters, leaving the three feed
+    /// consumers (toolfoundry, bulwark-feed, scriptvault) enabled so the built
+    /// snapshot reflects only feed routing.
     fn feeds_only_config() -> AppConfig {
         let mut cfg = AppConfig::default();
-        for name in ["bulwark", "system", "scriptvault"] {
+        // Note: scriptvault is now a feed consumer, so it must stay ENABLED here.
+        for name in ["bulwark", "system"] {
             cfg.adapters.insert(
                 name.to_owned(),
                 rexops_core::AdapterConfig {
@@ -492,6 +537,10 @@ mod tests {
             snap.toolfoundry.is_none(),
             "bulwark feed must NOT leak into toolfoundry"
         );
+        assert!(
+            snap.scriptvault.is_none(),
+            "bulwark feed must NOT leak into scriptvault"
+        );
         assert!(snap.risk.critical >= 1, "risk pane should reflect the scan");
     }
 
@@ -505,6 +554,27 @@ mod tests {
         assert!(
             snap.bulwark.is_none(),
             "toolfoundry feed must NOT leak into bulwark"
+        );
+        assert!(
+            snap.scriptvault.is_none(),
+            "toolfoundry feed must NOT leak into scriptvault"
+        );
+    }
+
+    #[test]
+    fn build_routes_scriptvault_feed_only_to_scriptvault() {
+        let snap = route_via_build(SCRIPTVAULT_FEED);
+        assert!(
+            snap.scriptvault.is_some(),
+            "scriptvault feed must populate scriptvault"
+        );
+        assert!(
+            snap.toolfoundry.is_none(),
+            "scriptvault feed must NOT leak into toolfoundry"
+        );
+        assert!(
+            snap.bulwark.is_none(),
+            "scriptvault feed must NOT leak into bulwark"
         );
     }
 }

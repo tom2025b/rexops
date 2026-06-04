@@ -59,13 +59,15 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
                 // info field: description or empty.
                 let info = s.description.as_deref().unwrap_or("");
                 let item = widgets::render_adapter_item(
-                    &s.name,
+                    s.label(),
                     rexops_core::AdapterHealth::Healthy,
                     info,
                     false,
                 );
                 lines.push(item);
-                if s.favorite {
+                // Opportunistic favorite star: only if this script's id/name is in
+                // the feed's favorites list. Never a correctness dependency.
+                if sv.is_favorite(s) {
                     lines.push(Line::from(Span::styled(
                         "   ★ favorite",
                         theme::health_style(&rexops_core::AdapterHealth::Healthy),
@@ -75,8 +77,10 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
-            "Total: {} scripts, {} favorites",
-            sv.total, sv.favorites
+            "Total: {} scripts, {} favorites, {} recents",
+            sv.total(),
+            sv.favorites_count(),
+            sv.recents_count()
         )));
     } else {
         lines.push(Line::from(

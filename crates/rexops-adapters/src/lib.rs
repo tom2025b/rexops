@@ -29,7 +29,7 @@
 //! - Adapter, AdapterHealth, AdapterOutput — the common vocabulary.
 //! - BulwarkAdapter + Bulwark* types — the first concrete adapter.
 //! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
-//! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only metadata/favorites/recents stub (third adapter, demo data).
+//! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only consumer of the ScriptVault export feed (third adapter; provisional contract; reads in-memory text or standard path).
 //! - ToolFoundryAdapter + ToolFoundryInfo/Tool — read-only consumer of the ToolFoundry rexops-feed contract (fourth adapter, real).
 //! - BulwarkFeedAdapter + BulwarkScanInfo/ScanItem — read-only consumer of the Bulwark scan export feed (fifth adapter; provisional contract; reads in-memory text or standard path).
 //!
