@@ -19,13 +19,19 @@
 //!   resulting snapshot over the channel.
 //! - The main loop uses try_recv() so drawing continues at full speed.
 
-use std::io::{self, stdout};
+use std::io::{self, stdout, Write};
+use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use crossterm::{
+    cursor::{Hide, Show},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    style::ResetColor,
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
@@ -41,7 +47,7 @@ mod theme;
 mod ui;
 mod widgets;
 
-use app::App;
+use app::{App, LaunchRequest};
 
 /// Entry point. We return a Result so that any setup error is reported after
 /// we have done our best to restore the terminal.
@@ -88,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, Hide)?;
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
@@ -96,7 +102,60 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
 /// from the panic hook).
 fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
+    execute!(stdout(), ResetColor, Show, LeaveAlternateScreen)?;
+    Ok(())
+}
+
+/// Temporarily give the user's real terminal to a foreground child process.
+///
+/// The TUI must leave raw mode and the alternate screen before spawning, then
+/// restore both even when the child fails to start.
+fn run_foreground_child(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    program: &str,
+) -> io::Result<ExitStatus> {
+    if let Err(err) = suspend_terminal_for_child(terminal) {
+        let _ = resume_terminal_after_child(terminal);
+        return Err(err);
+    }
+
+    let child_result = Command::new(program).status();
+    let resume_result = resume_terminal_after_child(terminal);
+
+    match (child_result, resume_result) {
+        (_, Err(err)) => Err(err),
+        (result, Ok(())) => result,
+    }
+}
+
+/// Leave RexOps' full-screen terminal mode before launching a specialist.
+fn suspend_terminal_for_child(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<()> {
+    terminal.show_cursor()?;
+    terminal.backend_mut().flush()?;
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        ResetColor,
+        Show,
+        LeaveAlternateScreen
+    )?;
+    Ok(())
+}
+
+/// Re-enter RexOps' full-screen terminal mode after a specialist exits.
+fn resume_terminal_after_child(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<()> {
+    enable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        Clear(ClearType::All),
+        Hide
+    )?;
+    terminal.clear()?;
     Ok(())
 }
 
@@ -129,10 +188,38 @@ fn run_app(
                             // Action indicated we should quit.
                             return Ok(());
                         }
+                        handle_pending_launch(terminal, app)?;
                     }
                 }
             }
         }
+    }
+}
+
+/// Run any foreground launch requested by App::on_action.
+fn handle_pending_launch(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match app.take_launch_request() {
+        Some(LaunchRequest::ScriptVault) => {
+            match run_foreground_child(terminal, "scriptvault") {
+                Ok(status) if status.success() => {
+                    app.log_event("ScriptVault exited successfully");
+                }
+                Ok(status) => {
+                    app.log_event(format!("ScriptVault exited with status {status}"));
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    app.log_event("ScriptVault launch failed: binary not found");
+                }
+                Err(err) => {
+                    app.log_event(format!("ScriptVault launch failed: {err}"));
+                }
+            }
+            Ok(())
+        }
+        None => Ok(()),
     }
 }
 

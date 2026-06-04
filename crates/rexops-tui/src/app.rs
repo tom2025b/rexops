@@ -57,9 +57,19 @@ pub struct App {
     /// Recent events/logs for the dashboard pane (newest last).
     pub recent_events: Vec<String>,
 
+    /// One-shot foreground launch request for the terminal-owning main loop.
+    pending_launch: Option<LaunchRequest>,
+
     /// Sender end of the channel that worker threads use to deliver completed
     /// snapshots. We keep it here so `request_refresh` can clone it.
     tx: mpsc::Sender<OpsSnapshot>,
+}
+
+/// Foreground launch requests that require the real terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchRequest {
+    /// Stage 2 hardcodes ScriptVault to prove suspend/run/restore.
+    ScriptVault,
 }
 
 /// Simple screen selector (more can be added later: Tools, Reports, etc.).
@@ -88,6 +98,7 @@ impl App {
             filter: String::new(),
             config,
             recent_events: vec!["TUI started".to_owned()],
+            pending_launch: None,
             tx,
         }
     }
@@ -157,6 +168,11 @@ impl App {
         }
     }
 
+    /// Take the pending launch request, if an action queued one.
+    pub fn take_launch_request(&mut self) -> Option<LaunchRequest> {
+        self.pending_launch.take()
+    }
+
     /// Toggle the help text overlay / hint area.
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
@@ -177,7 +193,8 @@ impl App {
                 false
             }
             crate::action::Action::Launch => {
-                self.log_event("Launch requested (stub) — no-op for now");
+                self.pending_launch = Some(LaunchRequest::ScriptVault);
+                self.log_event("Launch requested: ScriptVault");
                 false
             }
             crate::action::Action::SwitchToDashboard => {
@@ -277,6 +294,22 @@ impl App {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::Action;
+
+    #[test]
+    fn launch_action_queues_scriptvault_request_once() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+
+        assert!(!app.on_action(Action::Launch));
+        assert_eq!(app.take_launch_request(), Some(LaunchRequest::ScriptVault));
+        assert_eq!(app.take_launch_request(), None);
     }
 }
 
