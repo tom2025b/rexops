@@ -42,12 +42,14 @@ mod action;
 mod app;
 mod event;
 mod keymap;
+mod launcher;
 mod screens;
 mod theme;
 mod ui;
 mod widgets;
 
-use app::{App, LaunchRequest};
+use app::App;
+use launcher::{ChildExit, ForegroundRunner};
 
 /// Entry point. We return a Result so that any setup error is reported after
 /// we have done our best to restore the terminal.
@@ -128,6 +130,17 @@ fn run_foreground_child(
     }
 }
 
+impl ForegroundRunner for Terminal<CrosstermBackend<io::Stdout>> {
+    fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit> {
+        let status = run_foreground_child(self, command)?;
+        if status.success() {
+            Ok(ChildExit::Success)
+        } else {
+            Ok(ChildExit::Status(status.to_string()))
+        }
+    }
+}
+
 /// Leave RexOps' full-screen terminal mode before launching a specialist.
 fn suspend_terminal_for_child(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -184,42 +197,14 @@ fn run_app(
             match ev {
                 event::Event::Key(key) => {
                     if let Some(action) = keymap::handle_key(key) {
-                        if app.on_action(action) {
+                        if app.on_action(action, terminal) {
                             // Action indicated we should quit.
                             return Ok(());
                         }
-                        handle_pending_launch(terminal, app)?;
                     }
                 }
             }
         }
-    }
-}
-
-/// Run any foreground launch requested by App::on_action.
-fn handle_pending_launch(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match app.take_launch_request() {
-        Some(LaunchRequest::ScriptVault) => {
-            match run_foreground_child(terminal, "scriptvault") {
-                Ok(status) if status.success() => {
-                    app.log_event("ScriptVault exited successfully");
-                }
-                Ok(status) => {
-                    app.log_event(format!("ScriptVault exited with status {status}"));
-                }
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                    app.log_event("ScriptVault launch failed: binary not found");
-                }
-                Err(err) => {
-                    app.log_event(format!("ScriptVault launch failed: {err}"));
-                }
-            }
-            Ok(())
-        }
-        None => Ok(()),
     }
 }
 

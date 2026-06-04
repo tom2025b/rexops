@@ -23,6 +23,8 @@ use std::sync::mpsc;
 use rexops_app::build_snapshot;
 use rexops_core::{AppConfig, OpsSnapshot};
 
+use crate::launcher::{self, ForegroundRunner};
+
 /// The top-level application state.
 ///
 /// All data that the UI renders comes from (or is derived from) the
@@ -57,19 +59,9 @@ pub struct App {
     /// Recent events/logs for the dashboard pane (newest last).
     pub recent_events: Vec<String>,
 
-    /// One-shot foreground launch request for the terminal-owning main loop.
-    pending_launch: Option<LaunchRequest>,
-
     /// Sender end of the channel that worker threads use to deliver completed
     /// snapshots. We keep it here so `request_refresh` can clone it.
     tx: mpsc::Sender<OpsSnapshot>,
-}
-
-/// Foreground launch requests that require the real terminal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchRequest {
-    /// Stage 2 hardcodes ScriptVault to prove suspend/run/restore.
-    ScriptVault,
 }
 
 /// Simple screen selector (more can be added later: Tools, Reports, etc.).
@@ -98,7 +90,6 @@ impl App {
             filter: String::new(),
             config,
             recent_events: vec!["TUI started".to_owned()],
-            pending_launch: None,
             tx,
         }
     }
@@ -168,11 +159,6 @@ impl App {
         }
     }
 
-    /// Take the pending launch request, if an action queued one.
-    pub fn take_launch_request(&mut self) -> Option<LaunchRequest> {
-        self.pending_launch.take()
-    }
-
     /// Toggle the help text overlay / hint area.
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
@@ -181,7 +167,11 @@ impl App {
     /// Handle a high-level Action.
     ///
     /// Returns true if the action means "quit now".
-    pub fn on_action(&mut self, action: crate::action::Action) -> bool {
+    pub fn on_action(
+        &mut self,
+        action: crate::action::Action,
+        launcher: &mut impl ForegroundRunner,
+    ) -> bool {
         match action {
             crate::action::Action::Quit => true,
             crate::action::Action::Refresh => {
@@ -193,8 +183,11 @@ impl App {
                 false
             }
             crate::action::Action::Launch => {
-                self.pending_launch = Some(LaunchRequest::ScriptVault);
-                self.log_event("Launch requested: ScriptVault");
+                let report = launcher::launch_scriptvault(&self.config, launcher);
+                self.log_event(report.message());
+                if report.should_refresh() {
+                    self.request_refresh();
+                }
                 false
             }
             crate::action::Action::SwitchToDashboard => {
@@ -301,15 +294,41 @@ impl App {
 mod tests {
     use super::*;
     use crate::action::Action;
+    use crate::launcher::ChildExit;
+
+    struct FakeRunner {
+        calls: usize,
+    }
+
+    impl ForegroundRunner for FakeRunner {
+        fn run_foreground(&mut self, _command: &str) -> std::io::Result<ChildExit> {
+            self.calls += 1;
+            Ok(ChildExit::Success)
+        }
+    }
 
     #[test]
-    fn launch_action_queues_scriptvault_request_once() {
+    fn launch_action_runs_scriptvault_and_requests_refresh() {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default());
+        app.config.adapters.insert(
+            "scriptvault".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/scriptvault".to_owned()),
+                timeout_secs: None,
+            },
+        );
+        let mut runner = FakeRunner { calls: 0 };
 
-        assert!(!app.on_action(Action::Launch));
-        assert_eq!(app.take_launch_request(), Some(LaunchRequest::ScriptVault));
-        assert_eq!(app.take_launch_request(), None);
+        assert!(!app.on_action(Action::Launch, &mut runner));
+
+        assert_eq!(runner.calls, 1);
+        assert!(app.refreshing);
+        assert!(app
+            .recent_events
+            .iter()
+            .any(|event| event == "ScriptVault exited successfully"));
     }
 }
 
