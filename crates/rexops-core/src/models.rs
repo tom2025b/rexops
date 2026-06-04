@@ -165,6 +165,11 @@ pub struct OpsSnapshot {
     /// successfully probed). Enables a Tools screen showing ownership etc.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toolfoundry: Option<crate::ToolFoundryInfo>,
+
+    /// Structured Bulwark scan-export data from the BulwarkFeedAdapter (if a
+    /// supported-version feed was read). The risk counts also feed `risk` above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulwark: Option<crate::BulwarkScanInfo>,
 }
 
 impl OpsSnapshot {
@@ -180,6 +185,7 @@ impl OpsSnapshot {
             system: None,
             scriptvault: None,
             toolfoundry: None,
+            bulwark: None,
         }
     }
 

@@ -151,6 +151,29 @@ fn print_status_human(snap: &OpsSnapshot) {
         println!();
     }
 
+    if let Some(bw) = &snap.bulwark {
+        let t = bw.risk_tally();
+        println!("Bulwark scan (as of {}):", bw.generated_at);
+        if t.has_risk_data() {
+            println!(
+                "  {} items — critical={} high={} medium={} low={} info={}",
+                bw.items.len(),
+                t.critical,
+                t.high,
+                t.medium,
+                t.low,
+                t.info
+            );
+            for item in bw.high_risk_items().take(5) {
+                let sev = item.severity.as_deref().unwrap_or("?");
+                println!("  ! {} ({})", item.label(), sev);
+            }
+        } else {
+            println!("  {} items — risk breakdown unavailable", bw.items.len());
+        }
+        println!();
+    }
+
     println!(
         "Risk: total_findings={} should_block={}",
         snap.risk.total_findings, snap.risk.should_block

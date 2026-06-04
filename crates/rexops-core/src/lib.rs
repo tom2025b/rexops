@@ -53,7 +53,7 @@ pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 // Re-export key adapter types so the rest of RexOps does not have to depend
 // directly on rexops-adapters everywhere (reduces coupling at call sites).
 pub use rexops_adapters::{
-    AdapterHealth, AdapterOutput, ScriptVaultInfo, SystemInfo, ToolFoundryInfo,
+    AdapterHealth, AdapterOutput, BulwarkScanInfo, ScriptVaultInfo, SystemInfo, ToolFoundryInfo,
 };
 
 // NOTE TO FUTURE EDITORS:

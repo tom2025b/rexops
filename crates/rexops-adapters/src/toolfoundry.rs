@@ -5,10 +5,11 @@
 //! shape is fixed by the contract:
 //!   ../linux-ops-suite/contracts/toolfoundry.rexops-feed.schema.json
 //!
-//! This adapter is *purely* a consumer: it reads the feed (from stdin when piped,
-//! otherwise from the documented standard path) and parses it into typed structs.
-//! It NEVER writes back to ToolFoundry and never spawns the ToolFoundry binary —
-//! it only reads bytes that ToolFoundry already produced.
+//! This adapter is *purely* a consumer: it reads the feed (from in-memory text
+//! supplied by the caller, or the documented standard path) and parses it into
+//! typed structs. It NEVER writes back to ToolFoundry, never spawns the binary,
+//! and never reads stdin directly — stdin is a process singleton, so the snapshot
+//! layer reads it once and routes the bytes here via `with_text`.
 //!
 //! Why no JSON-Schema validator? The schema pins `schema_version` to `const: 1`,
 //! but the requirement is to treat a missing/unknown *major* version gracefully.
@@ -16,7 +17,6 @@
 //! So we parse with serde (like every other adapter) and gate the version
 //! ourselves: version 1 → full parse; anything else → graceful skip (Ok(None)).
 
-use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -94,10 +94,13 @@ struct VersionProbe {
 
 /// Read-only ToolFoundry feed consumer.
 ///
-/// Holds an optional explicit feed path (used by tests and future `--feed`
-/// flags). When `None`, acquisition uses stdin-if-piped, else the standard path.
+/// Acquisition precedence: in-memory text (`with_text`) → explicit path
+/// (`with_path`) → the documented standard path. The adapter never reads stdin
+/// itself — stdin is a process singleton, so the snapshot layer reads it once
+/// and routes the bytes here via `with_text`.
 #[derive(Debug, Clone, Default)]
 pub struct ToolFoundryAdapter {
+    text_override: Option<String>,
     path_override: Option<PathBuf>,
 }
 
@@ -106,9 +109,19 @@ impl ToolFoundryAdapter {
         Self::default()
     }
 
+    /// Construct an adapter that reads from in-memory text (e.g. piped stdin the
+    /// snapshot layer already captured and routed here).
+    pub fn with_text(text: impl Into<String>) -> Self {
+        Self {
+            text_override: Some(text.into()),
+            path_override: None,
+        }
+    }
+
     /// Construct an adapter that always reads from an explicit file path.
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
+            text_override: None,
             path_override: Some(path.into()),
         }
     }
@@ -124,21 +137,13 @@ impl ToolFoundryAdapter {
         Some(base.join("rexops/feeds/toolfoundry.rexops-feed.json"))
     }
 
-    /// Acquire the raw feed text: stdin when it is piped (not a terminal),
-    /// otherwise the explicit/standard path. Returns Ok(None) when no feed is
-    /// available — a normal, non-error condition for an optional tool.
+    /// Acquire the raw feed text by precedence: in-memory text → explicit path →
+    /// standard path. Returns Ok(None) when no feed is available. Never reads
+    /// stdin (see struct note).
     fn read_feed_text(&self) -> Result<Option<String>, AdapterError> {
-        // 1) Piped stdin wins, so `toolfoundry rexops-feed --json | rexops` works.
-        if self.path_override.is_none() && !std::io::stdin().is_terminal() {
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
-            if !buf.trim().is_empty() {
-                return Ok(Some(buf));
-            }
-            // Empty pipe → fall through to the path.
+        if let Some(text) = &self.text_override {
+            return Ok(Some(text.clone()));
         }
-
-        // 2) Explicit override or the documented standard path.
         let path = match &self.path_override {
             Some(p) => Some(p.clone()),
             None => Self::standard_path(),
@@ -320,6 +325,15 @@ mod tests {
     }
 
     #[test]
+    fn with_text_reads_from_memory_without_touching_disk_or_stdin() {
+        // This is how the snapshot layer hands routed stdin bytes to the adapter.
+        let a = ToolFoundryAdapter::with_text(FEED_V1);
+        let (health, out) = a.read().expect("read ok");
+        assert_eq!(health, AdapterHealth::Healthy);
+        assert_eq!(out.expect("v1 feed present").data.tool_count, 1);
+    }
+
+    #[test]
     fn read_returns_health_and_info_from_one_acquisition() {
         // Critical for the stdin path: a single read() must yield BOTH health and
         // the parsed feed, because stdin can only be drained once.
@@ -346,9 +360,11 @@ mod tests {
 // - The version gate (parse_feed) is the heart of "treat unknown versions
 //   gracefully": we read `schema_version` with a tiny probe struct first, so a
 //   future v2 feed is *skipped*, not rejected with an error.
-// - stdin-if-piped (IsTerminal) lets `toolfoundry rexops-feed --json | rexops`
-//   work with no new subcommand, while interactive runs fall back to the
-//   documented XDG path. The path_override keeps tests hermetic.
+// - The adapter never reads stdin. Acquisition precedence is in-memory text
+//   (with_text) → explicit path (with_path) → standard XDG path. The snapshot
+//   layer reads the single piped stdin once and routes it here via with_text,
+//   so `toolfoundry rexops-feed --json | rexops` still works without this file
+//   touching stdin. text/path overrides also keep tests hermetic.
 // - #[serde(default)] on optional fields + additionalProperties:true (serde's
 //   default ignore-unknown) make the type forward-compatible within a major
 //   version: ToolFoundry can add fields without breaking us.

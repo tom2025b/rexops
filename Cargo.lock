@@ -466,6 +466,7 @@ version = "0.1.0"
 dependencies = [
  "rexops-adapters",
  "rexops-core",
+ "serde_json",
  "serde_yaml",
 ]
 

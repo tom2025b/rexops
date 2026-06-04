@@ -31,11 +31,13 @@
 //! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
 //! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only metadata/favorites/recents stub (third adapter, demo data).
 //! - ToolFoundryAdapter + ToolFoundryInfo/Tool — read-only consumer of the ToolFoundry rexops-feed contract (fourth adapter, real).
+//! - BulwarkFeedAdapter + BulwarkScanInfo/ScanItem — read-only consumer of the Bulwark scan export feed (fifth adapter; provisional contract; reads in-memory text or standard path).
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 
 mod adapter;
 mod bulwark;
+mod bulwark_feed;
 mod error;
 mod exec;
 mod scriptvault;
@@ -50,6 +52,7 @@ pub use bulwark::{
     BulwarkAction, BulwarkAdapter, BulwarkCategory, BulwarkFinding, BulwarkLocation,
     BulwarkScanResult, BulwarkSeverity,
 };
+pub use bulwark_feed::{BulwarkFeedAdapter, BulwarkScanInfo, RiskTally, ScanItem, Severity};
 pub use error::AdapterError;
 pub use scriptvault::{Script, ScriptVaultAdapter, ScriptVaultInfo};
 pub use system::{SystemAdapter, SystemInfo};

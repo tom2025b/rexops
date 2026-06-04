@@ -18,7 +18,6 @@ rexops-adapters = { path = "../rexops-adapters" }
 
 # YAML for loading AppConfig from disk (same as before in CLI/TUI).
 serde_yaml = "0.9"
-
-[dev-dependencies]
-# For any future unit tests of the builder logic (e.g. enabled=false paths).
-# serde_json = "1"  # if we add snapshot roundtrip tests here
+# JSON for classifying which feed a single piped stdin belongs to before routing
+# it to the right consumer (ToolFoundry vs Bulwark scan). Read-only inspection.
+serde_json = "1"
