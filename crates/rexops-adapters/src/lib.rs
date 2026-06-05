@@ -60,7 +60,7 @@ pub use scriptvault::{Script, ScriptVaultAdapter, ScriptVaultInfo};
 pub use system::{SystemAdapter, SystemInfo};
 pub use toolfoundry::{Tool, ToolFoundryAdapter, ToolFoundryInfo};
 pub use types::{AdapterHealth, AdapterOutput};
-pub use workstate::{Project, WorkstateAdapter, WorkstateInfo};
+pub use workstate::{status_to_health, Provenance, Section, WorkstateAdapter, WorkstateInfo};
 
 // NOTE TO FUTURE EDITORS:
 // Do NOT add any functions, constants, or re-exports that contain logic in this

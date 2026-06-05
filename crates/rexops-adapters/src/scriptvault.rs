@@ -57,6 +57,10 @@ impl Script {
 /// The whole ScriptVault export envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ScriptVaultInfo {
+    /// `#[serde(default)]` because the Workstate v3 snapshot carries the version
+    /// at the snapshot envelope level, not inside this `data` payload. The raw
+    /// ScriptVault export still provides it, so this stays backward-compatible.
+    #[serde(default)]
     pub schema_version: i64,
     /// Lenient: should be "scriptvault" but we don't reject a mismatch.
     #[serde(default)]

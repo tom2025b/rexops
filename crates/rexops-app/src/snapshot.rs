@@ -188,9 +188,9 @@ fn read_piped_stdin() -> Option<String> {
 }
 
 /// Classify piped JSON by content. Bulwark and ScriptVault carry a `source_tool`
-/// tag; ToolFoundry has no self-tag, so we positively match its required fields.
-/// Every arm is a POSITIVE match — an unrecognized blob is Unknown, never
-/// silently misrouted into the wrong consumer.
+/// tag; the Workstate v3 snapshot and ToolFoundry have no self-tag, so we
+/// positively match their required fields. Every arm is a POSITIVE match — an
+/// unrecognized blob is Unknown, never silently misrouted into the wrong consumer.
 fn classify_feed(text: &str) -> FeedKind {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
         return FeedKind::Unknown;
@@ -200,6 +200,17 @@ fn classify_feed(text: &str) -> FeedKind {
         Some("scriptvault") => return FeedKind::ScriptVault,
         Some("workstate") => return FeedKind::Workstate,
         _ => {}
+    }
+    // Workstate v3 snapshot: no source_tool, identified by schema_version 3 plus
+    // its three Section keys. Checked BEFORE ToolFoundry: a v3 snapshot has a
+    // `tools` section but lacks ToolFoundry's top-level tool_count/attention_count,
+    // so the two never collide — but matching Workstate first keeps it unambiguous.
+    let ws = v.get("schema_version").and_then(serde_json::Value::as_i64) == Some(3)
+        && v.get("scripts").is_some()
+        && v.get("tools").is_some()
+        && v.get("findings").is_some();
+    if ws {
+        return FeedKind::Workstate;
     }
     // ToolFoundry feed: no source_tool, but tool_count + attention_count + tools.
     let tf = v.get("tool_count").is_some()
@@ -402,14 +413,14 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     match feed {
         Some(out) => {
             let i = &out.data;
+            // Step 2: store the parsed v3 snapshot and note a summary. Routing
+            // each section into snap.toolfoundry/bulwark/scriptvault + merge_risk
+            // (and per-section freshness health) is Step 3.
             snap.add_note(format!(
-                "workstate: {} projects (as of {})",
-                i.project_count(),
-                i.generated_at
+                "workstate: v3 snapshot, {}/3 sections populated (built {})",
+                i.populated_section_count(),
+                i.built_at
             ));
-            for p in i.projects.iter().take(2) {
-                snap.add_note(format!("  project: {}", p.label()));
-            }
             snap.workstate = Some(i.clone());
         }
         None if ws_health == rexops_core::AdapterHealth::Degraded => {
@@ -550,7 +561,7 @@ mod tests {
     const SCRIPTVAULT_FEED: &str =
         include_str!("../../rexops-adapters/fixtures/scriptvault/export_v1.json");
     const WORKSTATE_FEED: &str =
-        include_str!("../../rexops-adapters/fixtures/workstate/snapshot_v1.json");
+        include_str!("../../rexops-adapters/fixtures/workstate/snapshot_v3.json");
 
     #[test]
     fn classify_routes_each_feed_to_its_own_consumer() {

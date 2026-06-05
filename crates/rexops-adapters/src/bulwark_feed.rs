@@ -98,13 +98,20 @@ impl Severity {
 /// The whole scan export envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BulwarkScanInfo {
+    /// `#[serde(default)]` because the Workstate v3 snapshot carries the version
+    /// at the envelope level, not inside this `data` payload. The raw Bulwark
+    /// scan export still provides it.
+    #[serde(default)]
     pub schema_version: i64,
     /// Lenient: should be "bulwark" but we don't reject a mismatch.
     #[serde(default)]
     pub source_tool: String,
     #[serde(default)]
     pub generated_at: String,
-    #[serde(default)]
+    /// Scanned items. `alias = "findings"` lets this same type absorb the
+    /// Workstate v3 snapshot's `findings[]` array (same shape, different key) as
+    /// well as the raw Bulwark export's `items[]`.
+    #[serde(default, alias = "findings")]
     pub items: Vec<ScanItem>,
 }
 

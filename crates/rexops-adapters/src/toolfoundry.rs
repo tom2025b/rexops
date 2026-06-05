@@ -29,6 +29,17 @@ use crate::types::{AdapterHealth, AdapterOutput};
 /// support for a new breaking ToolFoundry feed shape.
 const SUPPORTED_SCHEMA_VERSION: i64 = 1;
 
+/// Deserialize a bool that may arrive as JSON `null` (or be absent) as `false`.
+/// Needed because the Workstate v3 snapshot sends `review_due: null` (a nullable
+/// date, with the real flag in `review_due_flag`), and plain `#[serde(default)]`
+/// rejects an explicit `null` for a non-Option bool.
+fn bool_or_null<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(false))
+}
+
 /// One tool as reported by the ToolFoundry feed.
 ///
 /// Required-by-contract fields (`id`, `display_name`, `lifecycle_state`,
@@ -45,7 +56,14 @@ pub struct Tool {
     pub project: String,
     #[serde(default)]
     pub lifecycle_state: String,
-    #[serde(default)]
+    /// "Is a review due?" flag. The raw ToolFoundry feed sends this as
+    /// `review_due: bool`. The Workstate v3 snapshot instead sends `review_due`
+    /// as a nullable due-DATE (with the real flag in a separate
+    /// `review_due_flag`, which serde ignores as an unknown field). We tolerate
+    /// the snapshot's explicit `null` here as `false` via `bool_or_null`. This
+    /// field is parse-only — nothing in RexOps reads it — so collapsing the
+    /// date form to `false` loses no rendered information.
+    #[serde(default, deserialize_with = "bool_or_null")]
     pub review_due: bool,
     #[serde(default)]
     pub health_passed: u32,
@@ -70,7 +88,10 @@ impl Tool {
 /// The whole ToolFoundry feed, mirroring the contract exactly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ToolFoundryInfo {
-    /// Integer major version. We only fully accept version 1.
+    /// Integer major version. `#[serde(default)]` because the Workstate v3
+    /// snapshot carries the version at the envelope level, not inside this
+    /// `data` payload. The raw ToolFoundry feed still provides it.
+    #[serde(default)]
     pub schema_version: i64,
     /// Date the feed was generated (YYYY-MM-DD).
     #[serde(default)]
