@@ -1,0 +1,135 @@
+{
+  "schema_version": 3,
+  "built_at": "2026-06-05T12:00:00Z",
+  "scripts": {
+    "status": "Stale",
+    "provenance": {
+      "feed_id": "scriptvault",
+      "fetched_at": "2026-06-05T12:00:00Z",
+      "source_observed_at": "2026-06-04T00:00:00Z"
+    },
+    "data": {
+      "generated_at": "2026-06-04",
+      "scripts": [
+        {
+          "id": "deploy-prod",
+          "name": "deploy-prod.sh",
+          "description": "Deploy to production with safety checks"
+        },
+        {
+          "id": "backup-db",
+          "name": "backup-db.sh",
+          "description": "Nightly database backup"
+        },
+        {
+          "id": "cleanup-logs",
+          "name": "cleanup-logs.py",
+          "description": "Rotate and compress old logs"
+        }
+      ],
+      "favorites": [
+        "deploy-prod"
+      ],
+      "recents": [
+        "deploy-prod",
+        "backup-db"
+      ]
+    }
+  },
+  "tools": {
+    "status": "Stale",
+    "provenance": {
+      "feed_id": "toolfoundry",
+      "fetched_at": "2026-06-05T12:00:00Z",
+      "source_observed_at": "2026-06-02T00:00:00Z"
+    },
+    "data": {
+      "as_of": "2026-06-02",
+      "tool_count": 2,
+      "attention_count": 1,
+      "tools": [
+        {
+          "id": "backup-home",
+          "display_name": "Backup Home",
+          "owner": "tom",
+          "project": "backupsage",
+          "lifecycle_state": "active",
+          "status": "attention",
+          "review_due": null,
+          "review_due_flag": false,
+          "drifted": true,
+          "health_passed": 0,
+          "health_total": 2,
+          "manifest_path": "default.yaml"
+        },
+        {
+          "id": "log-rotator",
+          "display_name": "Log Rotator",
+          "owner": "tom",
+          "project": "ops-utils",
+          "lifecycle_state": "active",
+          "status": "ok",
+          "review_due": null,
+          "review_due_flag": true,
+          "drifted": false,
+          "health_passed": 3,
+          "health_total": 3,
+          "manifest_path": "log-rotator.yaml"
+        }
+      ]
+    }
+  },
+  "findings": {
+    "status": "Stale",
+    "provenance": {
+      "feed_id": "bulwark",
+      "fetched_at": "2026-06-05T12:00:00Z",
+      "source_observed_at": "2026-06-04T00:00:00Z"
+    },
+    "data": {
+      "generated_at": "2026-06-04",
+      "findings": [
+        {
+          "id": "deploy-prod.sh",
+          "name": "deploy-prod.sh",
+          "rule_id": "aws-key",
+          "description": "AWS access key ID detected",
+          "severity": "critical",
+          "raw_severity": "critical",
+          "category": "secret_leakage",
+          "location": "line 42"
+        },
+        {
+          "id": "backup-db.sh",
+          "name": "backup-db.sh",
+          "rule_id": "broad-chmod",
+          "description": "World-writable permission change",
+          "severity": "medium",
+          "raw_severity": "medium",
+          "category": "sensitive_data",
+          "location": "bytes 120..168"
+        },
+        {
+          "id": "cleanup-logs.py",
+          "name": "cleanup-logs.py",
+          "rule_id": "email-address",
+          "description": "Email address found",
+          "severity": "low",
+          "raw_severity": "low",
+          "category": "pii",
+          "location": "$.contacts[0].email"
+        },
+        {
+          "id": "healthcheck.sh",
+          "name": "healthcheck.sh",
+          "rule_id": "curl-pipe-sh",
+          "description": "curl piped to shell",
+          "severity": "high",
+          "raw_severity": "high",
+          "category": "corp-policy-x",
+          "location": "unknown"
+        }
+      ]
+    }
+  }
+}
