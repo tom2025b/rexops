@@ -1,12 +1,11 @@
 //! tools.rs — Tools / ToolFoundry screen (5th screen, key '5').
 //!
-//! Shows the structured ToolFoundryInfo from the snapshot (populated from the
-//! ToolFoundry `rexops-feed`). Lists each tool with owner, lifecycle state, and
-//! health-check tally, badging by the feed's per-tool `status` (ok / attention).
+//! Shows the structured ToolFoundryInfo from the Workstate snapshot. Lists
+//! each tool with owner, lifecycle state, and health-check tally, badging
+//! by the per-tool `status` (ok / attention).
 //!
 //! Reuses the adapter_item widget + health badge for visual consistency with
-//! Adapters and Scripts screens. No selection/filter on this screen yet
-//! (kept deliberately simple, like Scripts).
+//! Adapters and Scripts screens. No selection/filter on this screen yet.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

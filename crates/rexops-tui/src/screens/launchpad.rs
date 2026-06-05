@@ -73,12 +73,14 @@ pub fn render_launcher(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_launcher_header(f: &mut Frame, area: Rect) {
-    let header = Paragraph::new(Line::from(Span::raw("Launcher — pick a tool, Enter to launch")))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme::border_style()),
-        );
+    let header = Paragraph::new(Line::from(Span::raw(
+        "Launcher — pick a tool, Enter to launch",
+    )))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style()),
+    );
     f.render_widget(header, area);
 }
 
@@ -104,7 +106,7 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "↑/↓ select  •  Enter launch  •  Esc back to Dashboard",
+        "↑/↓ select  •  Enter launch (asks to confirm)  •  Esc back to Dashboard",
         theme::help_style(),
     )));
     lines.push(Line::from(Span::styled(

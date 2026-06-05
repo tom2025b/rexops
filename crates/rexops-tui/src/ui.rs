@@ -15,9 +15,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, PendingAction};
 use crate::screens;
 use crate::theme;
+use rexops_core::AppConfig;
 
 /// Main render entry point called every frame.
 pub fn render(f: &mut Frame, app: &App) {
@@ -58,6 +59,13 @@ pub fn render(f: &mut Frame, app: &App) {
     if app.show_help {
         render_help_popup(f, f.area());
     }
+
+    // Confirmation modal takes precedence over everything else: if a mutating
+    // action is awaiting confirmation, it MUST be the thing the user sees and
+    // acts on. Drawn last so it sits on top of the screen and the help popup.
+    if let Some(pending) = &app.pending_action {
+        render_confirm_popup(f, pending, &app.config, f.area());
+    }
 }
 
 fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -80,16 +88,24 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let available = app.snapshot.any_adapter_available();
     let count = app.snapshot.adapter_health.len();
 
-    let left = match app.current_screen {
-        crate::app::Screen::Dashboard => "q quit  •  r refresh  •  ? help  •  1/2/3/4/5/6 screens",
-        crate::app::Screen::Adapters => {
-            "q quit  •  r refresh  •  ? help  •  j/k nav  •  enter select  •  1 dashboard"
-        }
-        crate::app::Screen::System => "q quit  •  r refresh  •  ? help  •  1 dashboard",
-        crate::app::Screen::Scripts => "q quit  •  r refresh  •  ? help  •  1 dashboard",
-        crate::app::Screen::Tools => "q quit  •  r refresh  •  ? help  •  1 dashboard",
-        crate::app::Screen::Launcher => {
-            "q quit  •  ↑/↓ nav  •  enter launch  •  esc back  •  1 dashboard"
+    // While confirming, the status bar speaks only to the modal — every other
+    // hint is irrelevant until the user confirms or cancels.
+    let left = if app.pending_action.is_some() {
+        "CONFIRM:  Enter = run  •  Esc = cancel"
+    } else {
+        match app.current_screen {
+            crate::app::Screen::Dashboard => {
+                "q quit  •  r refresh  •  ? help  •  1/2/3/4/5/6 screens"
+            }
+            crate::app::Screen::Adapters => {
+                "q quit  •  r refresh  •  ? help  •  j/k nav  •  enter select  •  1 dashboard"
+            }
+            crate::app::Screen::System => "q quit  •  r refresh  •  ? help  •  1 dashboard",
+            crate::app::Screen::Scripts => "q quit  •  r refresh  •  ? help  •  1 dashboard",
+            crate::app::Screen::Tools => "q quit  •  r refresh  •  ? help  •  1 dashboard",
+            crate::app::Screen::Launcher => {
+                "q quit  •  ↑/↓ nav  •  enter launch  •  esc back  •  1 dashboard"
+            }
         }
     };
     let right = if app.refreshing {
@@ -147,6 +163,43 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
             .borders(Borders::ALL)
             .border_style(theme::border_style()),
     );
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup, popup_area);
+}
+
+/// Render the confirmation modal for a pending mutating action.
+///
+/// Deliberately loud and explicit (hard to miss): a yellow bordered box, a
+/// bold ⚠ CONFIRM title, the action prompt, the dry-run preview of exactly what
+/// would run, and an unambiguous Enter = YES / Esc = no affordance.
+fn render_confirm_popup(f: &mut Frame, pending: &PendingAction, config: &AppConfig, area: Rect) {
+    let popup_area = centered_rect(60, 35, area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(pending.prompt(), theme::confirm_style())),
+        Line::from(""),
+        // The preview line IS the dry-run: what would happen, shown before it does.
+        Line::from(Span::raw(pending.preview(config))),
+        Line::from(""),
+        Line::from(Span::styled(
+            "[ Enter = YES, run it ]    [ Esc = no, cancel ]",
+            theme::confirm_style(),
+        )),
+        Line::from(Span::styled(
+            "Nothing runs until you press Enter.",
+            theme::help_style(),
+        )),
+    ];
+
+    let popup = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .title(" ⚠ CONFIRM ")
+            .borders(Borders::ALL)
+            .border_style(theme::confirm_style()),
+    );
+
+    // Clear erases whatever is behind the popup so the modal is fully opaque.
     f.render_widget(Clear, popup_area);
     f.render_widget(popup, popup_area);
 }

@@ -180,11 +180,11 @@ fn print_status_human(snap: &OpsSnapshot) {
     }
 
     if let Some(ws) = &snap.workstate {
-        println!("Workstate (snapshot as of {}):", ws.generated_at);
-        println!("  projects: {}", ws.project_count());
-        for p in ws.projects.iter().take(5) {
-            println!("  - {}", p.label());
-        }
+        println!("Workstate (v3 snapshot, built {}):", ws.built_at);
+        println!(
+            "  sections populated: {}/3 (scripts/tools/findings)",
+            ws.populated_section_count()
+        );
         println!();
     }
 

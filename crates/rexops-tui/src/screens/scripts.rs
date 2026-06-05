@@ -1,8 +1,7 @@
-//! scripts.rs — Scripts / ScriptVault screen (new 4th screen).
+//! scripts.rs — Scripts / ScriptVault screen (4th screen).
 //!
-//! Shows the structured ScriptVaultInfo from the snapshot (populated from
-//! ScriptVaultAdapter). Lists scripts with favorite markers, etc.
-//! Uses the adapter_item widget for rendering rows.
+//! Shows the structured ScriptVaultInfo from the Workstate snapshot.
+//! Lists scripts with favorite markers. Uses the adapter_item widget for rows.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

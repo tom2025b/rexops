@@ -25,6 +25,46 @@ use rexops_core::{AppConfig, OpsSnapshot};
 
 use crate::launcher::{self, ForegroundRunner};
 
+/// A mutating action that has been *requested* but not yet *confirmed*.
+///
+/// This is the reusable core of the Phase 8 safety layer. A mutating action
+/// never executes the moment the user asks for it: it first becomes a
+/// `PendingAction`, which the UI renders as an explicit confirmation modal.
+/// Only an explicit confirm (Enter) runs it; cancel (Esc) discards it.
+///
+/// It is deliberately a small enum, not a boxed trait object. The action set is
+/// known and fixed, so adding a future mutating action (e.g. delete/run) means
+/// adding one variant here plus arms in `prompt`/`preview` and the confirm
+/// handler — no framework, no abstraction tax. For now there is exactly one
+/// variant: launching a specialist tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingAction {
+    /// Launch a specialist tool by catalog id, shown to the user as `name`.
+    LaunchTool { id: String, name: String },
+}
+
+impl PendingAction {
+    /// The headline question shown in the confirmation modal.
+    pub fn prompt(&self) -> String {
+        match self {
+            PendingAction::LaunchTool { name, .. } => format!("Launch {name}?"),
+        }
+    }
+
+    /// A dry-run preview line: exactly what *would* happen, computed without
+    /// performing it. For a launch this resolves the command (PATH → config)
+    /// the same way the real launch does, but never spawns anything. Feed-only
+    /// tools (no executable) report that nothing would run.
+    pub fn preview(&self, config: &AppConfig) -> String {
+        match self {
+            PendingAction::LaunchTool { id, .. } => match launcher::resolve_command(id, config) {
+                Some(command) => format!("Will run:  {command}"),
+                None => "No launch command yet (nothing will run)".to_owned(),
+            },
+        }
+    }
+}
+
 /// The top-level application state.
 ///
 /// All data that the UI renders comes from (or is derived from) the
@@ -56,6 +96,13 @@ pub struct App {
     /// Selected row in the Launcher screen (index into launchpad::CATALOG).
     pub selected_tool: usize,
 
+    /// A mutating action awaiting explicit confirmation, if any.
+    ///
+    /// When `Some`, a confirmation modal is shown and ALL input is captured by
+    /// it (see the gate at the top of `on_action`) — no keys reach the
+    /// underlying screen until the user confirms (Enter) or cancels (Esc).
+    pub pending_action: Option<PendingAction>,
+
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
 
@@ -75,7 +122,7 @@ pub enum Screen {
     Adapters,
     System,
     Scripts,
-    /// Tools / inventory screen backed by ToolFoundryAdapter data (ownership, symlinks, health).
+    /// Tools / inventory screen backed by ToolFoundryInfo from the Workstate snapshot.
     Tools,
     /// Launcher screen: pick a tool from the static catalog and launch it.
     Launcher,
@@ -94,6 +141,7 @@ impl App {
             selected_adapter: None,
             filter: String::new(),
             selected_tool: 0,
+            pending_action: None,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -170,6 +218,35 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    /// Execute the pending action (the user confirmed). Clears `pending_action`
+    /// either way. This is the ONLY place a mutating action actually runs, so
+    /// every mutation is provably gated behind confirmation.
+    fn confirm_pending(&mut self, runner: &mut impl ForegroundRunner) {
+        let Some(action) = self.pending_action.take() else {
+            return;
+        };
+        match action {
+            PendingAction::LaunchTool { id, name } => {
+                let report = launcher::launch_tool(&id, &name, &self.config, runner);
+                self.log_event(report.message());
+                if report.should_refresh() {
+                    self.request_refresh();
+                }
+            }
+        }
+    }
+
+    /// Discard the pending action (the user cancelled). Logs that nothing ran.
+    fn cancel_pending(&mut self) {
+        if let Some(action) = self.pending_action.take() {
+            match action {
+                PendingAction::LaunchTool { name, .. } => {
+                    self.log_event(format!("{name}: launch cancelled (nothing ran)"));
+                }
+            }
+        }
+    }
+
     /// Handle a high-level Action.
     ///
     /// Returns true if the action means "quit now".
@@ -178,6 +255,19 @@ impl App {
         action: crate::action::Action,
         launcher: &mut impl ForegroundRunner,
     ) -> bool {
+        // Confirmation gate: while an action is pending, the modal is modal.
+        // Enter confirms (runs it), Esc cancels (discards it), and EVERY other
+        // key is swallowed so nothing leaks through to the underlying screen.
+        // We return early before normal dispatch — and never quit from here.
+        if self.pending_action.is_some() {
+            match action {
+                crate::action::Action::Activate => self.confirm_pending(launcher),
+                crate::action::Action::Cancel => self.cancel_pending(),
+                _ => {} // ignored: a modal swallows all other input
+            }
+            return false;
+        }
+
         match action {
             crate::action::Action::Quit => true,
             crate::action::Action::Refresh => {
@@ -186,15 +276,6 @@ impl App {
             }
             crate::action::Action::ToggleHelp => {
                 self.toggle_help();
-                false
-            }
-            crate::action::Action::Launch => {
-                let report =
-                    launcher::launch_tool("scriptvault", "ScriptVault", &self.config, launcher);
-                self.log_event(report.message());
-                if report.should_refresh() {
-                    self.request_refresh();
-                }
                 false
             }
             crate::action::Action::SwitchToDashboard => {
@@ -274,15 +355,19 @@ impl App {
                         ));
                     }
                 } else if self.current_screen == Screen::Launcher {
-                    // Launch the selected tool. launch_tool resolves a command
-                    // (which → config); feed-only tools degrade to a message.
+                    // Do NOT launch yet. Requesting a launch only *arms* a
+                    // pending action; the confirmation modal then requires an
+                    // explicit Enter to actually run it. This is the single
+                    // gated entry point for the (only) mutating action.
                     if let Some(tool) = crate::screens::launchpad::CATALOG.get(self.selected_tool) {
-                        let report =
-                            launcher::launch_tool(tool.id, tool.name, &self.config, launcher);
-                        self.log_event(report.message());
-                        if report.should_refresh() {
-                            self.request_refresh();
-                        }
+                        self.pending_action = Some(PendingAction::LaunchTool {
+                            id: tool.id.to_owned(),
+                            name: tool.name.to_owned(),
+                        });
+                        self.log_event(format!(
+                            "{}: confirm launch (Enter) or cancel (Esc)",
+                            tool.name
+                        ));
                     }
                 }
                 false
@@ -345,10 +430,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn launch_action_runs_scriptvault_and_requests_refresh() {
+    /// Build an App already on the Launcher screen for navigation tests.
+    fn launcher_app() -> App {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default());
+        app.current_screen = Screen::Launcher;
+        app
+    }
+
+    /// Pin scriptvault to an explicit binary so the launch path resolves
+    /// deterministically regardless of the host PATH.
+    fn launcher_app_with_scriptvault() -> App {
+        let mut app = launcher_app();
         app.config.adapters.insert(
             "scriptvault".to_owned(),
             rexops_core::AdapterConfig {
@@ -357,24 +450,129 @@ mod tests {
                 timeout_secs: None,
             },
         );
+        let idx = crate::screens::launchpad::CATALOG
+            .iter()
+            .position(|t| t.id == "scriptvault")
+            .expect("scriptvault in catalog");
+        app.selected_tool = idx;
+        app
+    }
+
+    #[test]
+    fn activate_on_launcher_arms_pending_without_spawning() {
+        // Enter on the Launcher must only *arm* a pending action — it must never
+        // spawn a process before the user confirms.
+        let mut app = launcher_app_with_scriptvault();
         let mut runner = FakeRunner { calls: 0 };
 
-        assert!(!app.on_action(Action::Launch, &mut runner));
+        let quit = app.on_action(Action::Activate, &mut runner);
 
-        assert_eq!(runner.calls, 1);
+        assert!(!quit);
+        assert_eq!(
+            app.pending_action,
+            Some(PendingAction::LaunchTool {
+                id: "scriptvault".to_owned(),
+                name: "ScriptVault".to_owned(),
+            })
+        );
+        assert_eq!(runner.calls, 0, "arming must not spawn a process");
+    }
+
+    #[test]
+    fn confirm_runs_pending_action_and_clears_it() {
+        // With a pending launch, Enter confirms: it runs once, requests refresh,
+        // and clears the pending action.
+        let mut app = launcher_app_with_scriptvault();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner); // arm
+        let quit = app.on_action(Action::Activate, &mut runner); // confirm
+
+        assert!(!quit);
+        assert_eq!(runner.calls, 1, "confirm must run exactly once");
+        assert!(app.pending_action.is_none(), "pending must be cleared");
         assert!(app.refreshing);
         assert!(app
             .recent_events
             .iter()
-            .any(|event| event == "ScriptVault exited successfully"));
+            .any(|e| e == "ScriptVault exited successfully"));
     }
 
-    /// Build an App already on the Launcher screen for navigation tests.
-    fn launcher_app() -> App {
-        let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
-        app.current_screen = Screen::Launcher;
-        app
+    #[test]
+    fn cancel_discards_pending_action_without_spawning() {
+        // Esc with a pending launch cancels: nothing runs, pending is cleared,
+        // and the app does not quit.
+        let mut app = launcher_app_with_scriptvault();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner); // arm
+        let quit = app.on_action(Action::Cancel, &mut runner); // cancel
+
+        assert!(!quit, "cancelling a pending action must not quit");
+        assert_eq!(runner.calls, 0, "cancel must not spawn a process");
+        assert!(app.pending_action.is_none(), "pending must be cleared");
+        assert!(app
+            .recent_events
+            .iter()
+            .any(|e| e.contains("launch cancelled")));
+    }
+
+    #[test]
+    fn other_keys_are_swallowed_while_pending() {
+        // The modal is modal: any non-confirm/cancel key while pending is
+        // ignored. It must not navigate, must not spawn, and must leave the
+        // pending action untouched.
+        let mut app = launcher_app_with_scriptvault();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner); // arm
+        let before = app.selected_tool;
+        let quit = app.on_action(Action::Down, &mut runner); // should be swallowed
+
+        assert!(!quit);
+        assert_eq!(runner.calls, 0, "swallowed key must not spawn");
+        assert_eq!(app.selected_tool, before, "navigation must be blocked");
+        assert!(
+            app.pending_action.is_some(),
+            "pending must survive a swallowed key"
+        );
+    }
+
+    #[test]
+    fn preview_shows_resolved_command_or_no_command() {
+        // The dry-run preview resolves the command without spawning. A pinned
+        // binary shows "Will run: <path>"; a feed-only tool shows that nothing
+        // would run.
+        //
+        // We pin an id that is NOT on PATH so the config-binary fallback is what
+        // resolves — otherwise a real `which scriptvault` hit on the dev box
+        // would win and make the assertion environment-dependent (same reason
+        // the launcher.rs tests use a fake id).
+        let mut app = launcher_app();
+        app.config.adapters.insert(
+            "definitely-not-a-real-tool-xyz".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/fake-tool".to_owned()),
+                timeout_secs: None,
+            },
+        );
+
+        let launch = PendingAction::LaunchTool {
+            id: "definitely-not-a-real-tool-xyz".to_owned(),
+            name: "FakeTool".to_owned(),
+        };
+        assert_eq!(launch.preview(&app.config), "Will run:  /tmp/fake-tool");
+
+        let feed_only = PendingAction::LaunchTool {
+            // A different id that is never on PATH and has no config binary.
+            id: "another-nonexistent-feed-tool-abc".to_owned(),
+            name: "Workstate".to_owned(),
+        };
+        assert_eq!(
+            feed_only.preview(&app.config),
+            "No launch command yet (nothing will run)"
+        );
     }
 
     #[test]
@@ -408,31 +606,29 @@ mod tests {
     }
 
     #[test]
-    fn launcher_enter_routes_selected_tool_to_launch() {
-        // Activate on the Launcher must route the *selected* catalog tool through
-        // launch_tool and log its report. We assert routing (a report mentioning
-        // the selected tool's name was logged) rather than launch outcome, since
-        // whether a real binary resolves depends on the host PATH. The graceful
-        // no-command behavior itself is covered deterministically in
-        // launcher.rs::launch_tool_without_command_reports_gracefully_and_skips_runner.
+    fn launcher_enter_arms_the_selected_tool() {
+        // Activate on the Launcher must arm a PendingAction for the *selected*
+        // catalog tool — carrying that tool's id and name — and must not spawn.
         let mut app = launcher_app();
         let idx = crate::screens::launchpad::CATALOG
             .iter()
             .position(|t| t.id == "toolfoundry")
             .expect("toolfoundry in catalog");
         app.selected_tool = idx;
-        let name = crate::screens::launchpad::CATALOG[idx].name;
+        let entry = &crate::screens::launchpad::CATALOG[idx];
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner);
 
-        assert!(
-            app.recent_events.iter().any(|e| e.contains(name)),
-            "Activate must log a launch report for the selected tool ({name})"
+        assert_eq!(
+            app.pending_action,
+            Some(PendingAction::LaunchTool {
+                id: entry.id.to_owned(),
+                name: entry.name.to_owned(),
+            }),
+            "Activate must arm the selected tool"
         );
-        // toolfoundry is a feed-only tool (never on PATH, no config binary), so
-        // Activate must degrade gracefully without spawning a process.
-        assert_eq!(runner.calls, 0, "feed-only tool must not spawn a process");
+        assert_eq!(runner.calls, 0, "arming must not spawn a process");
     }
 }
 
@@ -442,3 +638,19 @@ mod tests {
 //
 // The Learning Notes about "keeping logic in TUI for now" are obsolete — the
 // plan has been followed and the shared rexops-app layer is in place.
+//
+// Learning Notes (Phase 8 — confirmation layer):
+// - The confirmation flow is a tiny state machine in App (pending_action:
+//   Option<PendingAction>), not a terminal concern, so it is fully unit-testable
+//   with FakeRunner — no real TTY needed. Logic lives here; only rendering lives
+//   in ui.rs.
+// - The gate at the TOP of on_action makes the modal *modal*: while something is
+//   pending, Enter confirms, Esc cancels, every other key is swallowed. Nothing
+//   leaks to the underlying screen.
+// - Safety invariant: launch_tool has exactly one caller (confirm_pending),
+//   reachable only via the gate. So a mutation needs two keypresses (arm, then
+//   confirm) and the modal always renders between them — there is no
+//   single-key arm-and-fire path.
+// - PendingAction is a small enum, not a boxed trait. Adding a future mutating
+//   action is one variant + arms in prompt/preview/confirm_pending — reusable
+//   without an abstraction framework (KISS/YAGNI).

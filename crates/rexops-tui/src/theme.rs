@@ -41,6 +41,14 @@ pub fn help_style() -> Style {
     Style::default().fg(Color::Blue)
 }
 
+/// Attention style for the confirmation modal: bright yellow + bold so a
+/// pending mutating action is impossible to miss.
+pub fn confirm_style() -> Style {
+    Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD)
+}
+
 // Learning Notes:
 // - Having a dedicated theme module (even a small one) prevents "magic colors"
 //   scattered through ui code.
