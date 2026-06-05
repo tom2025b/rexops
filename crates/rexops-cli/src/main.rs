@@ -124,8 +124,8 @@ fn print_status_human(snap: &OpsSnapshot) {
         println!();
     }
 
-    if let Some(sv) = &snap.scriptvault {
-        println!("ScriptVault (export as of {}):", sv.generated_at);
+    if let Some(sv) = &snap.scripts {
+        println!("Scripts (as of {}):", sv.generated_at);
         println!(
             "  scripts: {} ({} favorites, {} recents)",
             sv.total(),
@@ -140,8 +140,8 @@ fn print_status_human(snap: &OpsSnapshot) {
         println!();
     }
 
-    if let Some(tf) = &snap.toolfoundry {
-        println!("ToolFoundry (feed as of {}):", tf.as_of);
+    if let Some(tf) = &snap.tools {
+        println!("Tools (as of {}):", tf.as_of);
         println!(
             "  tools: {} ({} need attention)",
             tf.tool_count, tf.attention_count
@@ -156,9 +156,9 @@ fn print_status_human(snap: &OpsSnapshot) {
         println!();
     }
 
-    if let Some(bw) = &snap.bulwark {
+    if let Some(bw) = &snap.findings {
         let t = bw.risk_tally();
-        println!("Bulwark scan (as of {}):", bw.generated_at);
+        println!("Findings (as of {}):", bw.generated_at);
         if t.has_risk_data() {
             println!(
                 "  {} items — critical={} high={} medium={} low={} info={}",

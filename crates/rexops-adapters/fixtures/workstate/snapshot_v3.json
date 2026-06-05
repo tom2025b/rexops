@@ -4,7 +4,7 @@
   "scripts": {
     "status": "Stale",
     "provenance": {
-      "feed_id": "scriptvault",
+      "feed_id": "scripts",
       "fetched_at": "2026-06-05T12:00:00Z",
       "source_observed_at": "2026-06-04T00:00:00Z"
     },
@@ -39,7 +39,7 @@
   "tools": {
     "status": "Stale",
     "provenance": {
-      "feed_id": "toolfoundry",
+      "feed_id": "tools",
       "fetched_at": "2026-06-05T12:00:00Z",
       "source_observed_at": "2026-06-02T00:00:00Z"
     },
@@ -82,7 +82,7 @@
   "findings": {
     "status": "Stale",
     "provenance": {
-      "feed_id": "bulwark",
+      "feed_id": "findings",
       "fetched_at": "2026-06-05T12:00:00Z",
       "source_observed_at": "2026-06-04T00:00:00Z"
     },

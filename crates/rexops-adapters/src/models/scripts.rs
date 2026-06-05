@@ -1,10 +1,6 @@
-//! scripts.rs — ScriptVault export data types.
+//! scripts.rs — Workstate scripts data types.
 //!
-//! These types are the canonical model for the ScriptVault export contract.
-//! The `ScriptVaultAdapter` (old `scriptvault.rs`) was the only consumer of the
-//! raw ScriptVault export; now that RexOps reads exclusively from the Workstate v3
-//! snapshot, the adapter is gone — but these types live on because `WorkstateInfo`
-//! embeds them as its `scripts.data` payload.
+//! These types model the `scripts.data` payload in the Workstate v3 snapshot.
 //!
 //! Read-only, serde-friendly, no execution logic.
 
@@ -39,16 +35,13 @@ impl Script {
     }
 }
 
-/// The whole ScriptVault export envelope.
+/// The whole scripts payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct ScriptVaultInfo {
+pub struct ScriptsInfo {
     /// `#[serde(default)]` because the Workstate v3 snapshot carries the version
     /// at the snapshot envelope level, not inside this `data` payload.
     #[serde(default)]
     pub schema_version: i64,
-    /// Lenient: should be "scriptvault" but we don't reject a mismatch.
-    #[serde(default)]
-    pub source_tool: String,
     #[serde(default)]
     pub generated_at: String,
     #[serde(default)]
@@ -61,7 +54,7 @@ pub struct ScriptVaultInfo {
     pub recents: Vec<String>,
 }
 
-impl ScriptVaultInfo {
+impl ScriptsInfo {
     /// Total scripts in the inventory.
     pub fn total(&self) -> usize {
         self.scripts.len()
@@ -88,9 +81,8 @@ impl ScriptVaultInfo {
 }
 
 // Learning Notes:
-// - `Script` keeps unknown keys in `rest` via `#[serde(flatten)]` because the
-//   ScriptVault contract is explicitly provisional. A future field addition won't
-//   break parsing or lose data.
+// - `Script` keeps unknown keys in `rest` via `#[serde(flatten)]` so future
+//   Workstate additions won't break parsing or lose data.
 // - favorites/recents are id arrays, not per-script booleans. is_favorite() is an
 //   opportunistic membership check for UI stars only — never relied on for
 //   correctness (provisional ids may not line up, yielding no stars).

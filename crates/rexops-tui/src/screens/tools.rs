@@ -1,6 +1,6 @@
-//! tools.rs — Tools / ToolFoundry screen (5th screen, key '5').
+//! tools.rs — Tools screen (5th screen, key '5').
 //!
-//! Shows the structured ToolFoundryInfo from the Workstate snapshot. Lists
+//! Shows the structured ToolsInfo from the Workstate snapshot. Lists
 //! each tool with owner, lifecycle state, and health-check tally, badging
 //! by the per-tool `status` (ok / attention).
 //!
@@ -33,12 +33,12 @@ pub fn render_tools(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_tools_header(f: &mut Frame, app: &App, area: Rect) {
-    // Look up the adapter health recorded for "toolfoundry" (set during build_snapshot).
+    // Look up the section health recorded for tools (set during build_snapshot).
     // Falls back to Unknown if not present (graceful degradation, per error handling doc).
     let health = app
         .snapshot
         .adapter_health
-        .get("toolfoundry")
+        .get("tools")
         .copied()
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health);
@@ -53,7 +53,7 @@ fn render_tools_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(header, area);
 }
 
-/// Map the per-tool aggregate `status` from the feed ("ok" / "attention") into
+/// Map the per-tool aggregate `status` ("ok" / "attention") into
 /// our AdapterHealth for badge rendering in the list. "attention" → Degraded so
 /// it stands out visually; "ok" → Healthy.
 fn tool_status_to_adapter_health(status: &str) -> rexops_core::AdapterHealth {
@@ -67,13 +67,13 @@ fn tool_status_to_adapter_health(status: &str) -> rexops_core::AdapterHealth {
 fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    if let Some(tf) = &app.snapshot.toolfoundry {
+    if let Some(tf) = &app.snapshot.tools {
         if tf.tools.is_empty() {
             lines.push(Line::from("No tools found."));
         } else {
             for t in &tf.tools {
                 // Compact info string: owner, lifecycle, and health-check tally
-                // from the contract feed.
+                // from the Workstate section.
                 let info = format!(
                     "owner: {}  lifecycle: {}  health: {}/{}{}",
                     t.owner,
@@ -92,13 +92,12 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
 
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
-            "Total: {} tools, {} need attention (feed as of {})",
+            "Total: {} tools, {} need attention (as of {})",
             tf.tool_count, tf.attention_count, tf.as_of
         )));
     } else {
-        // Excellent degraded state: clear message + hint what to do.
         lines.push(Line::from(
-            "No toolfoundry data yet — press 'r' to probe (or check config for toolfoundry.enabled).",
+            "No tools data yet — press 'r' to load Workstate.",
         ));
     }
 
@@ -123,11 +122,10 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
 // - Exact mirror of scripts.rs structure: split header + list, lookup adapter_health
 //   by string key, reuse render_adapter_item + health badge, fallback text when
 //   Option is None (respects "enabled" and probe failures).
-// - Small pure helper tool_status_to_adapter_health() bridges the feed's
+// - Small pure helper tool_status_to_adapter_health() bridges the section's
 //   stringly per-tool status ("ok"/"attention") into our typed AdapterHealth
 //   so the existing health badge widget can render it.
 // - No Up/Down/selection on this screen (yet); Scripts didn't have it either.
 //   Adding later is easy because Action::Up/Down already guard on screen==Adapters.
 // - Educational comments on nearly every line per project rules.
-// - The data here is now REAL: parsed from ToolFoundry's rexops-feed contract,
-//   not demo data. RexOps only reads it — it never writes back to ToolFoundry.
+// - The data here comes from Workstate; RexOps only reads it.

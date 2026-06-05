@@ -155,25 +155,23 @@ pub struct OpsSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<crate::SystemInfo>,
 
-    /// Structured scriptvault information from the ScriptVaultAdapter (if
-    /// successfully probed). Allows a dedicated Scripts screen to render
-    /// favorites/recents without parsing notes.
+    /// Structured scripts inventory from Workstate. Allows a dedicated Scripts
+    /// screen to render favorites/recents without parsing notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scriptvault: Option<crate::ScriptVaultInfo>,
+    pub scripts: Option<crate::ScriptsInfo>,
 
-    /// Structured toolfoundry information from the ToolFoundryAdapter (if
-    /// successfully probed). Enables a Tools screen showing ownership etc.
+    /// Structured tools inventory from Workstate. Enables a Tools screen showing
+    /// ownership etc.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toolfoundry: Option<crate::ToolFoundryInfo>,
+    pub tools: Option<crate::ToolsInfo>,
 
-    /// Structured Bulwark scan-export data from the BulwarkFeedAdapter (if a
-    /// supported-version feed was read). The risk counts also feed `risk` above.
+    /// Structured findings from Workstate. The risk counts also feed `risk`
+    /// above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bulwark: Option<crate::BulwarkScanInfo>,
+    pub findings: Option<crate::FindingsInfo>,
 
-    /// Structured Workstate snapshot data from the WorkstateAdapter (if a
-    /// supported-version feed was read). Per-project repo health; contributes
-    /// notes and a structured field only — no risk (the contract has none).
+    /// Full structured Workstate snapshot data when a supported-version snapshot
+    /// was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate: Option<crate::WorkstateInfo>,
 }
@@ -189,9 +187,9 @@ impl OpsSnapshot {
             jobs: std::collections::HashMap::new(),
             notes: Vec::new(),
             system: None,
-            scriptvault: None,
-            toolfoundry: None,
-            bulwark: None,
+            scripts: None,
+            tools: None,
+            findings: None,
             workstate: None,
         }
     }

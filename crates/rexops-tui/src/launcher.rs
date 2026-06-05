@@ -57,9 +57,8 @@ impl LaunchReport {
 /// `tool_id` keys both the `which <tool_id>` PATH lookup and the per-adapter
 /// config `binary` fallback; `name` is the display name used in messages.
 ///
-/// Not every tool is launchable: feed consumers (toolfoundry, workstate) have no
-/// executable. When no command resolves we return a no-refresh report saying so,
-/// and never call the runner — that is the graceful path, not an error.
+/// Not every entry is launchable. When no command resolves we return a
+/// no-refresh report saying so, and never call the runner.
 pub fn launch_tool(
     tool_id: &str,
     name: &str,
@@ -155,22 +154,19 @@ mod tests {
 
     #[test]
     fn command_from_config_uses_trimmed_binary() {
-        let config = config_with_binary("scriptvault", "  /tmp/scriptvault  ");
+        let config = config_with_binary("scripts", "  /tmp/scripts  ");
         assert_eq!(
-            command_from_config("scriptvault", &config),
-            Some("/tmp/scriptvault".to_owned())
+            command_from_config("scripts", &config),
+            Some("/tmp/scripts".to_owned())
         );
     }
 
     #[test]
     fn command_from_config_ignores_missing_or_empty_binary() {
-        assert_eq!(
-            command_from_config("scriptvault", &AppConfig::default()),
-            None
-        );
+        assert_eq!(command_from_config("scripts", &AppConfig::default()), None);
 
-        let config = config_with_binary("scriptvault", "   ");
-        assert_eq!(command_from_config("scriptvault", &config), None);
+        let config = config_with_binary("scripts", "   ");
+        assert_eq!(command_from_config("scripts", &config), None);
     }
 
     #[test]
@@ -220,7 +216,6 @@ mod tests {
 // - LaunchReport separates human-readable status from policy such as whether
 //   RexOps should refresh after returning from a specialist.
 // - launch_tool is generic over tool id: the id keys both `which` and the config
-//   binary fallback. Tools with no executable (feed consumers like toolfoundry,
-//   workstate) resolve to None and get a graceful "no launch command yet" report
-//   — the runner is never called, so non-launchable tools are a normal case,
-//   not an error.
+//   binary fallback. Entries with no executable resolve to None and get a
+//   graceful "no launch command yet" report. The runner is never called, so
+//   non-launchable entries are a normal case.

@@ -8,13 +8,13 @@ implementation. It intentionally does not choose answers yet.
 - **Keybinding(s):** Which key or keys should request a launch from the TUI?
   Should launch be global, screen-specific, or both?
 - **Launch scope:** Should the first launcher open a whole specialist tool from
-  an adapter, or launch a specific surfaced item such as a ScriptVault script,
-  ToolFoundry tool, or Bulwark scan?
+  an adapter, or launch a specific surfaced item such as a Scripts script,
+  Tools tool, or Bulwark scan?
 - **Initial surfaces:** Which screens should expose launch first: Adapters,
   Scripts, Tools, Dashboard, or another screen?
 - **Target resolution:** Should RexOps resolve specialist binaries from `PATH`,
   from config-declared paths, or from a priority order that uses both?
-- **First target:** What exact ScriptVault command should RexOps launch first:
+- **First target:** What exact Scripts command should RexOps launch first:
   its TUI, a specific CLI subcommand, or another entry point?
 - **Unavailable tools:** What message and hint should RexOps show when a target
   binary is missing or cannot be executed?

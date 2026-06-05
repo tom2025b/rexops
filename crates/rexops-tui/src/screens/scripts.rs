@@ -1,6 +1,6 @@
-//! scripts.rs — Scripts / ScriptVault screen (4th screen).
+//! scripts.rs — Scripts screen (4th screen).
 //!
-//! Shows the structured ScriptVaultInfo from the Workstate snapshot.
+//! Shows the structured scripts section from the Workstate snapshot.
 //! Lists scripts with favorite markers. Uses the adapter_item widget for rows.
 
 use ratatui::{
@@ -32,7 +32,7 @@ fn render_scripts_header(f: &mut Frame, app: &App, area: Rect) {
     let health = app
         .snapshot
         .adapter_health
-        .get("scriptvault")
+        .get("scripts")
         .copied()
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health);
@@ -49,7 +49,7 @@ fn render_scripts_header(f: &mut Frame, app: &App, area: Rect) {
 fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    if let Some(sv) = &app.snapshot.scriptvault {
+    if let Some(sv) = &app.snapshot.scripts {
         if sv.scripts.is_empty() {
             lines.push(Line::from("No scripts found."));
         } else {
@@ -83,7 +83,7 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
         )));
     } else {
         lines.push(Line::from(
-            "No scriptvault data yet — press 'r' to probe (or check config for scriptvault.enabled).",
+            "No scripts data yet — press 'r' to load Workstate.",
         ));
     }
 
@@ -108,6 +108,6 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
 //   (enum + action + key + dispatch + render fn + mod export).
 // - Reuses widgets::render_adapter_item for script rows (even though names
 //   are scripts, the widget is generic enough for name + info).
-// - Structured data from snapshot.scriptvault makes rendering clean; notes
+// - Structured data from snapshot.scripts makes rendering clean; notes
 //   are still there for fallback/CLI.
 // - Favorite marker is appended simply; a future widget could handle icons better.

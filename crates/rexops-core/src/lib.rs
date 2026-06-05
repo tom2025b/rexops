@@ -30,7 +30,7 @@
 //! - Newtypes: AdapterId, ToolId.
 //! - Health: AdapterHealth (re-exported for callers; ToolHealth may evolve here later).
 //! - Config: AppConfig + supporting types.
-//! - Snapshot: OpsSnapshot (includes optional SystemInfo, ScriptVaultInfo, ToolFoundryInfo, BulwarkScanInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
+//! - Snapshot: OpsSnapshot (includes optional SystemInfo, ScriptsInfo, ToolsInfo, FindingsInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
 //! - Registries: AdapterRegistry, ToolRegistry (data containers only).
 //!
 //! Everything else lives in focused modules. lib.rs is a table of contents only.
@@ -53,8 +53,7 @@ pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 // Re-export key adapter types so the rest of RexOps does not have to depend
 // directly on rexops-adapters everywhere (reduces coupling at call sites).
 pub use rexops_adapters::{
-    AdapterHealth, AdapterOutput, BulwarkScanInfo, ScriptVaultInfo, SystemInfo, ToolFoundryInfo,
-    WorkstateInfo,
+    AdapterHealth, AdapterOutput, FindingsInfo, ScriptsInfo, SystemInfo, ToolsInfo, WorkstateInfo,
 };
 
 // NOTE TO FUTURE EDITORS:

@@ -20,10 +20,9 @@ use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapsh
 ///
 /// Respects the per-adapter `enabled` flag (default true when key absent).
 /// Always adds a final "config loaded" note.
-/// Populates first-class structured fields (system, scriptvault, toolfoundry,
-/// bulwark) when the corresponding adapter succeeds, plus notes for the
-/// dashboard/logs. Feed consumers (toolfoundry/bulwark/scriptvault) share the
-/// single piped stdin, read once here and routed by content.
+/// Populates first-class structured fields from system probes and Workstate,
+/// plus notes for the dashboard/logs. Workstate is the only snapshot input for
+/// scripts/tools/findings.
 ///
 /// This is the single implementation used by both `rexops status` and the TUI
 /// refresh thread.
@@ -34,8 +33,8 @@ pub fn build_snapshot(config: &AppConfig) -> OpsSnapshot {
 }
 
 /// Core of `build_snapshot`, with the piped-stdin bytes (if any) passed in. Kept
-/// separate so the feed-routing glue is testable without touching real stdin or
-/// the standard feed paths.
+/// separate so the snapshot-routing glue is testable without touching real stdin or
+/// the filesystem.
 fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnapshot {
     let mut snap = OpsSnapshot::new();
 
@@ -86,24 +85,22 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         }
     }
 
-    // The Workstate v3 snapshot is the source of truth for scripts/tools/findings.
-    // Route piped stdin to the Workstate adapter when the content identifies as a
-    // v3 snapshot; otherwise fall back to the standard path on disk.
-    let route = piped.map(classify_feed);
-    if route == Some(FeedKind::Unknown) {
-        snap.add_note(
-            "stdin: piped feed not recognized — falling back to standard paths".to_owned(),
-        );
-    }
-
+    // Workstate v3 is the source of truth for scripts/tools/findings. Piped
+    // input is accepted only when it is a recognized Workstate snapshot; any
+    // other piped blob is ignored rather than falling back to another path.
+    let route = piped.map(classify_snapshot);
     let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
-    let ws_routed = if route == Some(FeedKind::Workstate) {
-        piped.map(str::to_owned)
-    } else {
-        None
-    };
     if ws_enabled {
-        populate_workstate(&mut snap, ws_routed);
+        match (piped, route) {
+            (Some(text), Some(SnapshotKind::Workstate)) => {
+                populate_workstate(&mut snap, Some(text.to_owned()));
+            }
+            (Some(_), Some(SnapshotKind::Unknown)) => {
+                snap.add_note("stdin: not a Workstate v3 snapshot — ignored".to_owned());
+            }
+            (None, _) => populate_workstate(&mut snap, None),
+            (Some(_), None) => unreachable!("route is always present when piped is Some"),
+        }
     }
 
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
@@ -114,7 +111,7 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
 
 /// Whether a blob of piped JSON is a Workstate v3 snapshot or something else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FeedKind {
+enum SnapshotKind {
     Workstate,
     Unknown,
 }
@@ -137,18 +134,18 @@ fn read_piped_stdin() -> Option<String> {
 /// Classify piped JSON: Workstate v3 snapshot (schema_version==3 plus the three
 /// Section keys) or Unknown. A positive match only — an unrecognized blob is
 /// Unknown, never silently misrouted.
-fn classify_feed(text: &str) -> FeedKind {
+fn classify_snapshot(text: &str) -> SnapshotKind {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return FeedKind::Unknown;
+        return SnapshotKind::Unknown;
     };
     let ws = v.get("schema_version").and_then(serde_json::Value::as_i64) == Some(3)
         && v.get("scripts").is_some()
         && v.get("tools").is_some()
         && v.get("findings").is_some();
     if ws {
-        FeedKind::Workstate
+        SnapshotKind::Workstate
     } else {
-        FeedKind::Unknown
+        SnapshotKind::Unknown
     }
 }
 
@@ -174,18 +171,18 @@ fn note_section_freshness(
 /// Read the Workstate v3 snapshot and fold it into the OpsSnapshot.
 ///
 /// The snapshot's three sections route into the structured fields RexOps renders:
-///   tools.data    -> snap.toolfoundry
-///   scripts.data  -> snap.scriptvault
-///   findings.data -> snap.bulwark (+ merged risk)
-/// Each section's freshness `status` is mapped to AdapterHealth (against the
-/// existing toolfoundry/scriptvault/bulwark-feed ids) and a provenance note is
-/// added. Unknown/missing versions and a missing snapshot degrade gracefully.
+///   tools.data    -> snap.tools
+///   scripts.data  -> snap.scripts
+///   findings.data -> snap.findings (+ merged risk)
+/// Each section's freshness `status` is mapped to AdapterHealth and a provenance
+/// note is added. Unknown/missing versions and a missing snapshot degrade
+/// gracefully.
 fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     let ws = match routed_stdin {
         Some(text) => WorkstateAdapter::with_text(text),
         None => WorkstateAdapter::new(),
     };
-    let (ws_health, feed) = match ws.read() {
+    let (ws_health, snapshot) = match ws.read() {
         Ok(pair) => pair,
         Err(e) => {
             snap.add_note(format!("workstate: snapshot unreadable ({e})"));
@@ -196,7 +193,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
         snap.set_adapter_health(&id, ws_health);
     }
 
-    let Some(out) = feed else {
+    let Some(out) = snapshot else {
         if ws_health == rexops_core::AdapterHealth::Degraded {
             snap.add_note(
                 "workstate: snapshot present but unknown/missing schema version — skipped"
@@ -220,7 +217,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     snap.workstate = Some(info);
 }
 
-/// Fold the snapshot's `tools` section into `snap.toolfoundry` (+ freshness/notes).
+/// Fold the snapshot's `tools` section into `snap.tools` (+ freshness/notes).
 fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
     let Some(tools) = &info.tools.data else {
         return;
@@ -228,12 +225,12 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) 
     note_section_freshness(
         snap,
         "tools",
-        "toolfoundry",
+        "tools",
         &info.tools.status,
         &info.tools.provenance,
     );
     snap.add_note(format!(
-        "toolfoundry: {} tools, {} need attention (as of {})",
+        "tools: {} total, {} need attention (as of {})",
         tools.tool_count, tools.attention_count, tools.as_of
     ));
     for t in tools.tools.iter().filter(|t| t.needs_attention()).take(3) {
@@ -242,10 +239,10 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) 
             t.display_name, t.status, t.lifecycle_state
         ));
     }
-    snap.toolfoundry = Some(tools.clone());
+    snap.tools = Some(tools.clone());
 }
 
-/// Fold the snapshot's `scripts` section into `snap.scriptvault` (+ freshness/notes).
+/// Fold the snapshot's `scripts` section into `snap.scripts` (+ freshness/notes).
 fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
     let Some(scripts) = &info.scripts.data else {
         return;
@@ -253,21 +250,21 @@ fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo
     note_section_freshness(
         snap,
         "scripts",
-        "scriptvault",
+        "scripts",
         &info.scripts.status,
         &info.scripts.provenance,
     );
     snap.add_note(format!(
-        "scriptvault: {} scripts, {} favorites, {} recents (as of {})",
+        "scripts: {} total, {} favorites, {} recents (as of {})",
         scripts.total(),
         scripts.favorites_count(),
         scripts.recents_count(),
         scripts.generated_at
     ));
-    snap.scriptvault = Some(scripts.clone());
+    snap.scripts = Some(scripts.clone());
 }
 
-/// Fold the snapshot's `findings` section into `snap.bulwark` and merge its risk.
+/// Fold the snapshot's `findings` section into `snap.findings` and merge its risk.
 fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
     let Some(findings) = &info.findings.data else {
         return;
@@ -275,7 +272,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
     note_section_freshness(
         snap,
         "findings",
-        "bulwark-feed",
+        "findings",
         &info.findings.status,
         &info.findings.provenance,
     );
@@ -292,7 +289,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
             max_severity: None,
         });
         snap.add_note(format!(
-            "bulwark: {} findings scanned — critical={} high={} medium={} low={} info={}",
+            "findings: {} scanned — critical={} high={} medium={} low={} info={}",
             findings.items.len(),
             t.critical,
             t.high,
@@ -306,11 +303,11 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
         }
     } else {
         snap.add_note(format!(
-            "bulwark: {} findings scanned — risk breakdown unavailable",
+            "findings: {} scanned — risk breakdown unavailable",
             findings.items.len()
         ));
     }
-    snap.bulwark = Some(findings.clone());
+    snap.findings = Some(findings.clone());
 }
 
 /// Build a simple AdapterRegistry from live probes (demo of registry usage).
@@ -367,9 +364,8 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
 // Learning Notes:
 // - Both builders are side-effecting (they call into adapters which may spawn
 //   processes or read /proc etc.). That's why they live in rexops-app, not core.
-// - The Workstate v3 snapshot is the single source of truth for scripts/tools/findings
-//   (Phase 2 strangler-fig complete). The three raw feed adapters are gone.
-// - stdin is read ONCE (read_piped_stdin) and routed by content (classify_feed),
+// - The Workstate v3 snapshot is the single source of truth for scripts/tools/findings.
+// - stdin is read ONCE (read_piped_stdin) and routed by content (classify_snapshot),
 //   because stdin is a process singleton. Only Workstate v3 snapshots are recognized
 //   via piped stdin; anything else is Unknown.
 // - The Adapter trait is used only for .health(), .version(), .info(), .binary().
@@ -385,20 +381,20 @@ mod tests {
 
     #[test]
     fn classify_recognizes_workstate_v3_snapshot() {
-        assert_eq!(classify_feed(WORKSTATE_FEED), FeedKind::Workstate);
+        assert_eq!(classify_snapshot(WORKSTATE_FEED), SnapshotKind::Workstate);
     }
 
     #[test]
     fn classify_unknown_blob_is_not_silently_misrouted() {
         assert_eq!(
-            classify_feed(r#"{"schema_version":1,"hello":"world"}"#),
-            FeedKind::Unknown
+            classify_snapshot(r#"{"schema_version":1,"hello":"world"}"#),
+            SnapshotKind::Unknown
         );
-        assert_eq!(classify_feed("not json"), FeedKind::Unknown);
+        assert_eq!(classify_snapshot("not json"), SnapshotKind::Unknown);
     }
 
     /// Config with bulwark + system disabled so the snapshot only reflects
-    /// feed routing (no binary probes in CI).
+    /// snapshot routing (no binary probes in CI).
     fn workstate_only_config() -> AppConfig {
         let mut cfg = AppConfig::default();
         for name in ["bulwark", "system"] {
@@ -414,12 +410,7 @@ mod tests {
     }
 
     /// Build via the REAL routing glue with `piped` passed straight in (no stdin).
-    /// Points XDG_DATA_HOME at a guaranteed-empty dir so standard-path reads find
-    /// nothing — keeps the test hermetic.
     fn build_via_pipe(piped: &str) -> OpsSnapshot {
-        let empty = std::env::temp_dir().join(format!("rexops-route-{}", std::process::id()));
-        std::fs::create_dir_all(&empty).unwrap();
-        std::env::set_var("XDG_DATA_HOME", &empty);
         build_snapshot_with_piped(&workstate_only_config(), Some(piped))
     }
 
@@ -427,17 +418,11 @@ mod tests {
     fn workstate_snapshot_fans_out_into_all_structured_fields() {
         let snap = build_via_pipe(WORKSTATE_FEED);
         assert!(snap.workstate.is_some(), "v3 snapshot kept in workstate");
+        assert!(snap.tools.is_some(), "tools.data must populate tools");
+        assert!(snap.scripts.is_some(), "scripts.data must populate scripts");
         assert!(
-            snap.toolfoundry.is_some(),
-            "tools.data must populate toolfoundry"
-        );
-        assert!(
-            snap.scriptvault.is_some(),
-            "scripts.data must populate scriptvault"
-        );
-        assert!(
-            snap.bulwark.is_some(),
-            "findings.data must populate bulwark"
+            snap.findings.is_some(),
+            "findings.data must populate findings"
         );
         assert!(
             snap.risk.critical >= 1,
@@ -450,7 +435,7 @@ mod tests {
     fn workstate_section_status_maps_to_adapter_health() {
         let snap = build_via_pipe(WORKSTATE_FEED);
         let degraded = rexops_core::AdapterHealth::Degraded;
-        for id in ["toolfoundry", "scriptvault", "bulwark-feed"] {
+        for id in ["tools", "scripts", "findings"] {
             assert_eq!(
                 snap.adapter_health.get(id).copied(),
                 Some(degraded),
@@ -475,8 +460,8 @@ mod tests {
             snap.workstate.is_none(),
             "non-snapshot must not populate workstate"
         );
-        assert!(snap.toolfoundry.is_none());
-        assert!(snap.scriptvault.is_none());
-        assert!(snap.bulwark.is_none());
+        assert!(snap.tools.is_none());
+        assert!(snap.scripts.is_none());
+        assert!(snap.findings.is_none());
     }
 }

@@ -26,7 +26,7 @@ src/
 │   ├── adapters.rs
 │   ├── system.rs
 │   ├── scripts.rs
-│   └── tools.rs       # render_tools (ToolFoundry ownership/lifecycle demo)
+│   └── tools.rs       # render_tools
 └── (widgets/ for future reusable components)
 ```
 
@@ -71,13 +71,13 @@ When no adapters registered or all unavailable:
 - `1` — Switch to Dashboard screen
 - `2` — Switch to Adapters screen (keyboard selectable list + side detail/preview pane)
 - `3` — Switch to System screen (structured SystemInfo from snapshot: hostname, kernel, uptime, disk + health)
-- `4` — Switch to Scripts screen (structured ScriptVaultInfo: list of scripts with favorites ★, total counts)
-- `5` — Switch to Tools screen (structured ToolFoundryInfo: list of tools with owner, per-tool health, symlink status)
+- `4` — Switch to Scripts screen (Workstate scripts section)
+- `5` — Switch to Tools screen (Workstate tools section)
 - In Adapters: j/k or up/down arrows to move selection, enter to activate (surfaces in notes + updates detail)
 - Live filter: type printable chars (non-command letters) to filter the adapters list live; backspace edits; esc clears filter (or quits if empty)
 - Status bar shows context-sensitive hints per screen.
 - `?` / `h` shows a nice centered popup help overlay (press again to close); also shows in messages.
-- Future: more screens (reports, jobs), mouse support, explicit '/' focus filter, etc. (Action + keymap + screens separation makes extension easy). Tools screen (5) added as part of the ToolFoundryAdapter increment.
+- Future: more screens (reports, jobs), mouse support, explicit '/' focus filter, etc. (Action + keymap + screens separation makes extension easy).
 
 All keys are handled in one place (event.rs or app.rs) so behavior is uniform.
 

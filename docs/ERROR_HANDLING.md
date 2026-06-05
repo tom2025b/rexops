@@ -44,7 +44,7 @@
 - "Binary 'bulwark' not found on PATH — install via `cargo install bulwark-inspect` or disable the 'bulwark' adapter in config."
 - "Config error: adapters.bulwark.binary must be a non-empty string (got empty)."
 - "Scan timed out after 30s. The tool may be busy or the input too large. Try with --timeout 60 or reduce payload size."
-- "ToolFoundry reports degraded health (version 0.9). Some features (symlink repair) will be unavailable."
+- "Tools reports degraded health (version 0.9). Some features (symlink repair) will be unavailable."
 
 ## Implementation Notes
 

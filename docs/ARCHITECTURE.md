@@ -57,7 +57,7 @@ rexops/
 - **rexops-app**:
   - Thin shared orchestration layer (the "app services").
   - `load_config()` — one implementation of the documented search + fallback.
-  - `build_snapshot(config)` — the single place that probes enabled adapters and assembles `OpsSnapshot` (including first-class system/scriptvault/toolfoundry data + notes).
+  - `build_snapshot(config)` — the single place that probes enabled adapters and assembles `OpsSnapshot` (including system plus Workstate scripts/tools/findings data).
   - `build_adapter_registry(config)` — used by the CLI `adapters` subcommand.
   - No UI, no mutation, no new domain rules. CLI and TUI are now trivial shells calling these.
 
@@ -92,11 +92,11 @@ cargo build --all
 - Every fallible public fn returns `Result<T, CrateSpecificError>`.
 - Tests alongside impl (fixture-based for parsers, error paths).
 
-## Future Adapters (After Core Stable)
+## Active Adapters
 
-- `ScriptVaultAdapter` (read-only metadata/favorites/recents) — **implemented** (demo data).
-- `ToolFoundryAdapter` (ownership/lifecycle/health/symlinks) — **implemented** (demo data + Tools screen).
+- `WorkstateAdapter` — **implemented**; the single source of truth for scripts/tools/findings.
 - Lightweight `SystemAdapter` (read-only ps/df/uptime/etc.) — **implemented**.
+- `BulwarkAdapter` — **implemented** as a live optional probe.
 - All degrade gracefully; adapters are optional by design.
 
 See ERROR_HANDLING.md for error strategy. See ROADMAP.md for timeline.

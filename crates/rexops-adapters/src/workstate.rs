@@ -1,25 +1,21 @@
 //! workstate.rs — Read-only consumer for the Workstate *snapshot* feed (v3).
 //!
-//! Workstate is the central state-compiler for the Linux Ops suite: it ingests
-//! the raw ScriptVault / ToolFoundry / Bulwark feeds, normalizes them, and emits
-//! ONE versioned `snapshot.json`. This adapter reads that snapshot so RexOps can
-//! consume a single source of truth instead of the three raw feeds directly.
+//! Workstate is the central state-compiler for the Linux Ops suite. It emits one
+//! versioned `snapshot.json`, and RexOps reads that snapshot as its single source
+//! of truth.
 //!
-//! Mirrors the other feed consumers exactly:
+//! Consumer contract:
 //! - never reads stdin directly (the snapshot layer reads it once and routes),
 //! - single read() returning (health, Option<data>),
 //! - a schema_version gate that SKIPS unknown versions instead of erroring.
 //!
 //! SHAPE (schema v3): an envelope (`schema_version`, `built_at`) wrapping three
 //! `Section`s — `scripts`, `tools`, `findings`. Each Section carries a `status`
-//! (Workstate's freshness verdict "Fresh"/"Stale"/...), a `provenance` (feed_id +
-//! fetched_at + source_observed_at), and `data` (the normalized payload, absent
-//! when the section is Missing/UnsupportedVersion).
+//! (Workstate's freshness verdict "Fresh"/"Stale"/...), `provenance`, and `data`
+//! (the normalized payload, absent when the section is Missing/UnsupportedVersion).
 //!
-//! The three `data` payloads are deliberately a SUPERSET of what RexOps already
-//! renders, so we reuse the existing `ScriptVaultInfo` / `ToolFoundryInfo` /
-//! `BulwarkScanInfo` types directly as the section data (see the serde `default` /
-//! `alias` attrs on those types that let them absorb the snapshot's payload).
+//! The three `data` payloads map directly to RexOps' scripts, tools, and findings
+//! section types.
 //!
 //! Read-only: never writes back, never spawns a binary. Workstate is itself
 //! strictly read-only, so there is nothing to mutate on our side either.
@@ -30,9 +26,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::adapter::Adapter;
 use crate::error::AdapterError;
-use crate::models::findings::BulwarkScanInfo;
-use crate::models::scripts::ScriptVaultInfo;
-use crate::models::tools::ToolFoundryInfo;
+use crate::models::findings::FindingsInfo;
+use crate::models::scripts::ScriptsInfo;
+use crate::models::tools::ToolsInfo;
 use crate::types::{AdapterHealth, AdapterOutput};
 
 /// The major schema version this consumer understands. Workstate emits v3.
@@ -85,16 +81,15 @@ pub struct WorkstateInfo {
     /// When this compile ran (UTC). Lenient string — purely informational here.
     #[serde(default)]
     pub built_at: String,
-    /// ScriptVault-derived scripts inventory. Reuses `ScriptVaultInfo`.
+    /// Scripts inventory.
     #[serde(default)]
-    pub scripts: Section<ScriptVaultInfo>,
-    /// ToolFoundry-derived tools inventory. Reuses `ToolFoundryInfo`.
+    pub scripts: Section<ScriptsInfo>,
+    /// Tools inventory.
     #[serde(default)]
-    pub tools: Section<ToolFoundryInfo>,
-    /// Bulwark-derived findings. Reuses `BulwarkScanInfo` (its `items` field
-    /// aliases the snapshot's `findings[]`).
+    pub tools: Section<ToolsInfo>,
+    /// Findings inventory.
     #[serde(default)]
-    pub findings: Section<BulwarkScanInfo>,
+    pub findings: Section<FindingsInfo>,
 }
 
 /// Translate a Workstate section `status` string into RexOps' AdapterHealth.
@@ -265,19 +260,19 @@ mod tests {
         assert_eq!(info.schema_version, 3);
         assert_eq!(info.populated_section_count(), 3);
 
-        // scripts.data reuses ScriptVaultInfo verbatim.
+        // scripts.data reuses ScriptsInfo verbatim.
         let scripts = info.scripts.data.as_ref().expect("scripts data present");
         assert_eq!(scripts.total(), 3);
         assert_eq!(scripts.favorites_count(), 1);
         assert_eq!(scripts.recents_count(), 2);
 
-        // tools.data reuses ToolFoundryInfo verbatim.
+        // tools.data reuses ToolsInfo verbatim.
         let tools = info.tools.data.as_ref().expect("tools data present");
         assert_eq!(tools.tool_count, 2);
         assert_eq!(tools.attention_count, 1);
         assert_eq!(tools.tools.len(), 2);
 
-        // findings.data reuses BulwarkScanInfo — its `items` aliases `findings[]`.
+        // findings.data reuses FindingsInfo — its `items` aliases `findings[]`.
         let findings = info.findings.data.as_ref().expect("findings data present");
         assert_eq!(findings.items.len(), 4);
         let t = findings.risk_tally();
@@ -321,7 +316,7 @@ mod tests {
     #[test]
     fn provenance_carries_source_observed_at() {
         let info = WorkstateAdapter::parse_feed(SNAPSHOT_V3).unwrap().unwrap();
-        assert_eq!(info.tools.provenance.feed_id, "toolfoundry");
+        assert_eq!(info.tools.provenance.feed_id, "tools");
         assert_eq!(
             info.tools.provenance.source_observed_at.as_deref(),
             Some("2026-06-02T00:00:00Z")
@@ -357,9 +352,9 @@ mod tests {
     fn missing_section_data_is_none_not_error() {
         // A section reported Missing carries no `data` — must parse to None.
         let feed = r#"{"schema_version": 3, "built_at": "x",
-            "scripts": {"status": "Missing", "provenance": {"feed_id": "scriptvault"}},
-            "tools":   {"status": "Missing", "provenance": {"feed_id": "toolfoundry"}},
-            "findings":{"status": "Missing", "provenance": {"feed_id": "bulwark"}}}"#;
+            "scripts": {"status": "Missing", "provenance": {"feed_id": "scripts"}},
+            "tools":   {"status": "Missing", "provenance": {"feed_id": "tools"}},
+            "findings":{"status": "Missing", "provenance": {"feed_id": "findings"}}}"#;
         let info = WorkstateAdapter::parse_feed(feed).unwrap().unwrap();
         assert_eq!(info.populated_section_count(), 0);
         assert!(info.scripts.data.is_none());
@@ -406,15 +401,11 @@ mod tests {
 //   Section-wrapped scripts/tools/findings envelope) instead of the obsolete
 //   provisional v1 `projects[]` stub. Workstate is becoming RexOps's single
 //   source of truth; this is the consumer side of that wiring.
-// - Type REUSE over re-modeling: the three section `data` payloads deserialize
-//   straight into the existing ScriptVaultInfo / ToolFoundryInfo / BulwarkScanInfo
-//   types RexOps already renders. That was possible because Workstate's normalized
-//   models are a deliberate superset of what RexOps consumes — so a couple of
-//   serde `default`/`alias` attrs on those types is all the glue needed, no new
-//   structs or From impls.
+// - The three section `data` payloads deserialize straight into the section
+//   types RexOps renders.
 // - `status` stays a String mapped by `status_to_health`, not a closed enum: an
 //   unanticipated Workstate status degrades to Unknown rather than hard-failing
 //   the parse — the same leniency every other feed consumer applies.
-// - Same consumer contract as the sibling feeds: text → path → standard-path
-//   acquisition (NEVER stdin directly), a single read() returning health + data,
-//   and a version gate that SKIPS unknown/old versions gracefully (v1 now skips).
+// - Workstate acquisition is text -> explicit path -> standard path (never stdin
+//   directly), with a single read() returning health + data and a version gate
+//   that skips unknown/old versions gracefully.

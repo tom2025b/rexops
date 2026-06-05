@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
 
-/// Stable identifier for an adapter implementation ("bulwark", "scriptvault", ...).
+/// Stable identifier for an adapter implementation or Workstate section.
 ///
 /// Newtype wrapper gives us type safety and a place to enforce invariants.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

@@ -1,11 +1,6 @@
-//! tools.rs — ToolFoundry feed data types.
+//! tools.rs — Workstate tools data types.
 //!
-//! These types are the canonical model for the ToolFoundry `rexops-feed` contract.
-//! The `ToolFoundryAdapter` in the old `toolfoundry.rs` was the only consumer of
-//! the raw ToolFoundry feed; now that RexOps reads exclusively from the Workstate v3
-//! snapshot, the adapter is gone — but these types live on because `WorkstateInfo`
-//! embeds them as its `tools.data` payload, and the rest of RexOps (core, app, TUI)
-//! renders them directly.
+//! These types model the `tools.data` payload in the Workstate v3 snapshot.
 //!
 //! Read-only, serde-friendly, no execution logic.
 
@@ -22,12 +17,12 @@ where
     Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(false))
 }
 
-/// One tool as reported by the ToolFoundry feed.
+/// One tool as reported by Workstate.
 ///
 /// Required-by-contract fields (`id`, `display_name`, `lifecycle_state`, `status`)
-/// are plain Strings; the rest use `#[serde(default)]` so a feed omitting an
-/// optional field still parses. `additionalProperties: true` means serde silently
-/// ignores any extra keys ToolFoundry may add later.
+/// are plain Strings; the rest use `#[serde(default)]` so a snapshot omitting an
+/// optional field still parses. Serde silently ignores any extra keys Workstate
+/// may add later.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Tool {
     pub id: String,
@@ -38,12 +33,8 @@ pub struct Tool {
     pub project: String,
     #[serde(default)]
     pub lifecycle_state: String,
-    /// "Is a review due?" flag. The raw ToolFoundry feed sends this as
-    /// `review_due: bool`. The Workstate v3 snapshot instead sends `review_due`
-    /// as a nullable due-DATE (with the real flag in a separate
-    /// `review_due_flag`, which serde ignores as an unknown field). We tolerate
-    /// the snapshot's explicit `null` here as `false` via `bool_or_null`. This
-    /// field is parse-only — nothing in RexOps reads it.
+    /// "Is a review due?" flag. Workstate may send `review_due` as null; treat
+    /// that as false. This field is parse-only — nothing in RexOps reads it.
     #[serde(default, deserialize_with = "bool_or_null")]
     pub review_due: bool,
     #[serde(default)]
@@ -66,9 +57,9 @@ impl Tool {
     }
 }
 
-/// The whole ToolFoundry feed payload, mirroring the contract exactly.
+/// The whole tools payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct ToolFoundryInfo {
+pub struct ToolsInfo {
     /// Integer major version. `#[serde(default)]` because the Workstate v3
     /// snapshot carries the version at the envelope level, not inside this
     /// `data` payload.
@@ -77,7 +68,7 @@ pub struct ToolFoundryInfo {
     /// Date the feed was generated (YYYY-MM-DD).
     #[serde(default)]
     pub as_of: String,
-    /// Total number of tools in the feed.
+    /// Total number of tools.
     #[serde(default)]
     pub tool_count: usize,
     /// Number of tools with status "attention".
@@ -88,7 +79,5 @@ pub struct ToolFoundryInfo {
 }
 
 // Learning Notes:
-// - `bool_or_null` is a targeted fix for a Workstate v3 snapshot quirk: the
-//   snapshot sends `review_due` as a nullable date string (not a bool), so we
-//   deserialize it as Option<bool> and unwrap to false. Marking it pub(crate)
-//   keeps it internal to the adapter crate.
+// - `bool_or_null` tolerates an explicit null from Workstate while keeping the
+//   public type simple.

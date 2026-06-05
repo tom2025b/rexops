@@ -122,7 +122,7 @@ pub enum Screen {
     Adapters,
     System,
     Scripts,
-    /// Tools / inventory screen backed by ToolFoundryInfo from the Workstate snapshot.
+    /// Tools / inventory screen backed by the Workstate snapshot.
     Tools,
     /// Launcher screen: pick a tool from the static catalog and launch it.
     Launcher,
@@ -438,22 +438,22 @@ mod tests {
         app
     }
 
-    /// Pin scriptvault to an explicit binary so the launch path resolves
+    /// Pin a catalog entry to an explicit binary so the launch path resolves
     /// deterministically regardless of the host PATH.
-    fn launcher_app_with_scriptvault() -> App {
+    fn launcher_app_with_scripts() -> App {
         let mut app = launcher_app();
         app.config.adapters.insert(
-            "scriptvault".to_owned(),
+            "scripts".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
-                binary: Some("/tmp/scriptvault".to_owned()),
+                binary: Some("/tmp/scripts".to_owned()),
                 timeout_secs: None,
             },
         );
         let idx = crate::screens::launchpad::CATALOG
             .iter()
-            .position(|t| t.id == "scriptvault")
-            .expect("scriptvault in catalog");
+            .position(|t| t.id == "scripts")
+            .expect("scripts in catalog");
         app.selected_tool = idx;
         app
     }
@@ -462,7 +462,7 @@ mod tests {
     fn activate_on_launcher_arms_pending_without_spawning() {
         // Enter on the Launcher must only *arm* a pending action — it must never
         // spawn a process before the user confirms.
-        let mut app = launcher_app_with_scriptvault();
+        let mut app = launcher_app_with_scripts();
         let mut runner = FakeRunner { calls: 0 };
 
         let quit = app.on_action(Action::Activate, &mut runner);
@@ -471,8 +471,8 @@ mod tests {
         assert_eq!(
             app.pending_action,
             Some(PendingAction::LaunchTool {
-                id: "scriptvault".to_owned(),
-                name: "ScriptVault".to_owned(),
+                id: "scripts".to_owned(),
+                name: "Scripts".to_owned(),
             })
         );
         assert_eq!(runner.calls, 0, "arming must not spawn a process");
@@ -482,7 +482,7 @@ mod tests {
     fn confirm_runs_pending_action_and_clears_it() {
         // With a pending launch, Enter confirms: it runs once, requests refresh,
         // and clears the pending action.
-        let mut app = launcher_app_with_scriptvault();
+        let mut app = launcher_app_with_scripts();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -495,14 +495,14 @@ mod tests {
         assert!(app
             .recent_events
             .iter()
-            .any(|e| e == "ScriptVault exited successfully"));
+            .any(|e| e == "Scripts exited successfully"));
     }
 
     #[test]
     fn cancel_discards_pending_action_without_spawning() {
         // Esc with a pending launch cancels: nothing runs, pending is cleared,
         // and the app does not quit.
-        let mut app = launcher_app_with_scriptvault();
+        let mut app = launcher_app_with_scripts();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -522,7 +522,7 @@ mod tests {
         // The modal is modal: any non-confirm/cancel key while pending is
         // ignored. It must not navigate, must not spawn, and must leave the
         // pending action untouched.
-        let mut app = launcher_app_with_scriptvault();
+        let mut app = launcher_app_with_scripts();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -545,7 +545,7 @@ mod tests {
         // would run.
         //
         // We pin an id that is NOT on PATH so the config-binary fallback is what
-        // resolves — otherwise a real `which scriptvault` hit on the dev box
+        // resolves — otherwise a real PATH hit on the dev box
         // would win and make the assertion environment-dependent (same reason
         // the launcher.rs tests use a fake id).
         let mut app = launcher_app();
@@ -612,8 +612,8 @@ mod tests {
         let mut app = launcher_app();
         let idx = crate::screens::launchpad::CATALOG
             .iter()
-            .position(|t| t.id == "toolfoundry")
-            .expect("toolfoundry in catalog");
+            .position(|t| t.id == "tools")
+            .expect("tools in catalog");
         app.selected_tool = idx;
         let entry = &crate::screens::launchpad::CATALOG[idx];
         let mut runner = FakeRunner { calls: 0 };

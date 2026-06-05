@@ -21,18 +21,11 @@ adapters:
     # Per-adapter timeout override (seconds). Default comes from adapter crate.
     # timeout_secs: 30
 
-  # Optional adapters. "system", "scriptvault", and "toolfoundry" are lightweight
-  # stubs that always surface demo data (no real external binary required for demo).
   # system:
   #   enabled: true
   #
-  # scriptvault:
+  # workstate:
   #   enabled: true
-  #   # binary would be used if we made the adapter call a real tool
-  #
-  # toolfoundry:   # ownership / lifecycle / health / symlinks (4th adapter)
-  #   enabled: true
-  #   # binary: "toolfoundry"
 
 # Global defaults (Phase 1 minimal surface; will grow)
 defaults:

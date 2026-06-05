@@ -1,10 +1,6 @@
-//! findings.rs — Bulwark scan export data types.
+//! findings.rs — Workstate findings data types.
 //!
-//! These types are the canonical model for the Bulwark scan export contract.
-//! The `BulwarkFeedAdapter` (old `bulwark_feed.rs`) was the only consumer of the
-//! raw Bulwark scan export; now that RexOps reads exclusively from the Workstate v3
-//! snapshot, the adapter is gone — but these types live on because `WorkstateInfo`
-//! embeds them as its `findings.data` payload.
+//! These types model the `findings.data` payload in the Workstate v3 snapshot.
 //!
 //! Read-only, serde-friendly, no execution logic.
 
@@ -74,21 +70,17 @@ impl Severity {
     }
 }
 
-/// The whole scan export envelope.
+/// The whole findings payload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct BulwarkScanInfo {
+pub struct FindingsInfo {
     /// `#[serde(default)]` because the Workstate v3 snapshot carries the version
     /// at the envelope level, not inside this `data` payload.
     #[serde(default)]
     pub schema_version: i64,
-    /// Lenient: should be "bulwark" but we don't reject a mismatch.
-    #[serde(default)]
-    pub source_tool: String,
     #[serde(default)]
     pub generated_at: String,
-    /// Scanned items. `alias = "findings"` lets this same type absorb the
-    /// Workstate v3 snapshot's `findings[]` array (same shape, different key) as
-    /// well as the raw Bulwark export's `items[]`.
+    /// Scanned findings. `alias = "findings"` lets this type absorb the
+    /// Workstate v3 snapshot's `findings[]` array.
     #[serde(default, alias = "findings")]
     pub items: Vec<ScanItem>,
 }
@@ -127,7 +119,7 @@ impl RiskTally {
     }
 }
 
-impl BulwarkScanInfo {
+impl FindingsInfo {
     /// Roll item severities into a RiskTally.
     pub fn risk_tally(&self) -> RiskTally {
         let mut t = RiskTally::default();

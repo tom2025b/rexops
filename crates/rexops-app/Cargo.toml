@@ -11,13 +11,12 @@ description = "Shared application layer for RexOps: config loading and snapshot 
 [dependencies]
 # Core domain models (OpsSnapshot, AppConfig, AdapterId, registries, etc.).
 rexops-core = { path = "../rexops-core" }
-# Adapters for the actual probes (Bulwark, System, ScriptVault, ToolFoundry).
+# Adapters for the actual probes and the Workstate snapshot consumer.
 # rexops-app is deliberately the only place that orchestrates multiple adapters
 # into a coherent snapshot for the front-ends (CLI and TUI).
 rexops-adapters = { path = "../rexops-adapters" }
 
 # YAML for loading AppConfig from disk (same as before in CLI/TUI).
 serde_yaml = "0.9"
-# JSON for classifying which feed a single piped stdin belongs to before routing
-# it to the right consumer (ToolFoundry vs Bulwark scan). Read-only inspection.
+# JSON for classifying piped stdin as a Workstate snapshot.
 serde_json = "1"

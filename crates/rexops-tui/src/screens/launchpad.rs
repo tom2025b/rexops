@@ -6,10 +6,9 @@
 //! screen to avoid confusion: `screens::launchpad` renders, `crate::launcher`
 //! resolves+spawns).
 //!
-//! The catalog is a small static list — the simplest fit for a fixed, known
-//! toolset. Not every tool is launchable: feed consumers (ToolFoundry,
-//! Workstate) have no executable, which `launcher::launch_tool` handles by
-//! reporting "no launch command yet" rather than erroring.
+//! The catalog is a small static list. Not every entry is launchable; sections
+//! sourced from Workstate have no executable, which `launcher::launch_tool`
+//! handles by reporting "no launch command yet" rather than erroring.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -42,19 +41,19 @@ pub const CATALOG: &[ToolEntry] = &[
         description: "Content/security inspection (live scan)",
     },
     ToolEntry {
-        id: "scriptvault",
-        name: "ScriptVault",
-        description: "Script inventory & launcher",
+        id: "scripts",
+        name: "Scripts",
+        description: "Script inventory from Workstate",
     },
     ToolEntry {
-        id: "toolfoundry",
-        name: "ToolFoundry",
-        description: "Tool ownership & lifecycle (feed)",
+        id: "tools",
+        name: "Tools",
+        description: "Tool ownership & lifecycle from Workstate",
     },
     ToolEntry {
         id: "workstate",
         name: "Workstate",
-        description: "Per-project repo health (feed)",
+        description: "Snapshot source of truth",
     },
 ];
 
@@ -110,7 +109,7 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
         theme::help_style(),
     )));
     lines.push(Line::from(Span::styled(
-        "Feed-only tools (ToolFoundry, Workstate) report 'no launch command yet'.",
+        "Workstate-sourced sections report 'no launch command yet'.",
         theme::help_style(),
     )));
 

@@ -30,7 +30,7 @@
 //! - BulwarkAdapter + Bulwark* types — the first concrete adapter.
 //! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
 //! - WorkstateAdapter + WorkstateInfo — read-only consumer of the Workstate v3 snapshot (source of truth for scripts/tools/findings).
-//! - models: ToolFoundryInfo/Tool, ScriptVaultInfo/Script, BulwarkScanInfo/ScanItem/Severity/RiskTally — domain types for the three snapshot sections.
+//! - models: ToolsInfo/Tool, ScriptsInfo/Script, FindingsInfo/ScanItem/Severity/RiskTally — domain types for the three snapshot sections.
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 
@@ -51,9 +51,9 @@ pub use bulwark::{
     BulwarkScanResult, BulwarkSeverity,
 };
 pub use error::AdapterError;
-pub use models::findings::{BulwarkScanInfo, RiskTally, ScanItem, Severity};
-pub use models::scripts::{Script, ScriptVaultInfo};
-pub use models::tools::{Tool, ToolFoundryInfo};
+pub use models::findings::{FindingsInfo, RiskTally, ScanItem, Severity};
+pub use models::scripts::{Script, ScriptsInfo};
+pub use models::tools::{Tool, ToolsInfo};
 pub use system::{SystemAdapter, SystemInfo};
 pub use types::{AdapterHealth, AdapterOutput};
 pub use workstate::{status_to_health, Provenance, Section, WorkstateAdapter, WorkstateInfo};

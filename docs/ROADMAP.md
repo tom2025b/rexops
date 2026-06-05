@@ -1,6 +1,6 @@
 # RexOps Roadmap
 
-Concise, incremental plan. We ship the "ops cockpit" that orchestrates/summarizes without duplicating Bulwark, ScriptVault, or ToolFoundry.
+Concise, incremental plan. We ship the "ops cockpit" that summarizes Workstate plus live adapter health.
 
 ## Guiding Principles
 - Keep It Simple.
@@ -10,13 +10,13 @@ Concise, incremental plan. We ship the "ops cockpit" that orchestrates/summarize
 - Graceful degradation everywhere; optional components never crash the system.
 
 ## Phase 1 — Foundation (Current)
-- [x] rexops-adapters complete (BulwarkAdapter + SystemAdapter + ScriptVaultAdapter + ToolFoundryAdapter + trait + types + error + exec; fixture tests).
+- [x] rexops-adapters complete (BulwarkAdapter + SystemAdapter + WorkstateAdapter + trait + types + error + exec; fixture tests).
 - [x] Expand docs + examples (ARCHITECTURE.md, ROADMAP.md, ERROR_HANDLING.md, examples/config.yaml, updated README, TUI_DESIGN.md).
-- [x] rexops-core: domain models, newtypes, OpsSnapshot (with system/scriptvault/toolfoundry), AppConfig, registries (pure data).
+- [x] rexops-core: domain models, newtypes, OpsSnapshot (with system/scripts/tools/findings/workstate), AppConfig, registries (pure data).
 - [x] rexops-cli (minimal): inspection commands (status, adapters), --json/--human, thin dispatch over core+adapters.
 - [x] rexops-tui shell + modular screens (Dashboard, Adapters, System, Scripts, Tools on '5').
 - [x] All changes pass 4 gates; crate-level boundaries + graceful enabled flags.
-- [x] examples/config.yaml matches AppConfig + documents the 4 adapters.
+- [x] examples/config.yaml matches AppConfig + documents the active adapters.
 
 ## Phase 2 — TUI Shell (When Foundation Solid)
 - rexops-tui crate. (Started — see docs/TUI_DESIGN.md)
@@ -28,10 +28,9 @@ Concise, incremental plan. We ship the "ops cockpit" that orchestrates/summarize
 - Widgets, keymap, layout, status bar, banners.
 - Later in phase: more screens, search/filter, detail panes, auto-tick refreshes.
 
-## Phase 3 — Orchestration & Next Adapters
+## Phase 3 — Orchestration
 - (Optional) rexops-app: snapshot builder, adapter registry, workflows, config loading, dry-run hooks. — **implemented** (deduped load_config + build_snapshot + build_adapter_registry; CLI and TUI now thin shells calling it).
-- ScriptVaultAdapter (read-only) — done (stub with favorites/recents).
-- ToolFoundryAdapter (ownership/lifecycle/health/symlinks) — done (stub with demo tools).
+- Workstate snapshot consumer — done; scripts/tools/findings come from Workstate only.
 - SystemAdapter (lightweight read-only) — done.
 - First mutating (or confirmation-wrapped) operations behind explicit flags. (future)
 
@@ -40,7 +39,7 @@ Concise, incremental plan. We ship the "ops cockpit" that orchestrates/summarize
 - Benchmarks if hot paths emerge.
 - Packaging (cargo install, optional binary releases).
 - Full docs (crate READMEs, man pages or --help quality).
-- Relations docs for how RexOps sits alongside the three tools it orchestrates.
+- Relations docs for how RexOps consumes Workstate and live probes.
 
 ## Out of Scope (for now)
 - Full async runtime in adapters or core (keep sync until proven needed).
@@ -49,6 +48,6 @@ Concise, incremental plan. We ship the "ops cockpit" that orchestrates/summarize
 - Heavy dependencies (tokio, ratatui, etc.) until the calling crate actually needs them.
 
 ## North Star
-RexOps is the single pane of glass: live health of your AI tooling surface, inventory of tools, risk summaries, and safe invocation surface — while Bulwark/ScriptVault/ToolFoundry remain the specialists.
+RexOps is the single pane of glass: live health of your AI tooling surface, inventory of tools, risk summaries, and safe invocation surface, with Workstate as the compiled state source.
 
 Update this file when phases complete or priorities shift. Keep dates minimal; focus on completed items.

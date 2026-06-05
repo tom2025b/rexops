@@ -13,7 +13,7 @@
 //!   missing binary, non-zero exit, JSON parse failure, timeout, and I/O.
 //!
 //! Why a single enum?
-//! - Makes error handling uniform across adapters (Bulwark, future ToolFoundry, etc.).
+//! - Makes error handling uniform across adapters.
 //! - Enables callers (executors, TUI) to decide policy per variant (e.g. treat
 //!   BinaryNotFound as "adapter unavailable" rather than hard failure).
 //! - Keeps the surface small; one import, one match.

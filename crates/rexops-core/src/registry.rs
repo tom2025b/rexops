@@ -108,7 +108,7 @@ impl AdapterRegistry {
 
 /// Container for known tools (scripts, binaries, logical tools).
 ///
-/// Populated by adapters (ToolFoundry, ScriptVault) + any manual inventory.
+/// Populated by Workstate sections, adapters, and any manual inventory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ToolRegistry {
     entries: Vec<ToolEntry>,
@@ -176,7 +176,7 @@ mod tests {
     fn adapter_registry_insert_get_list_and_available_count() {
         let mut reg = AdapterRegistry::new();
         let bul = AdapterId::new("bulwark").unwrap();
-        let sv = AdapterId::new("scriptvault").unwrap();
+        let scripts = AdapterId::new("scripts").unwrap();
 
         reg.insert(AdapterEntry {
             id: bul.clone(),
@@ -184,7 +184,7 @@ mod tests {
             label: Some("Bulwark".to_owned()),
         });
         reg.insert(AdapterEntry {
-            id: sv,
+            id: scripts,
             health: AdapterHealth::Unavailable,
             label: None,
         });
@@ -210,7 +210,7 @@ mod tests {
         let second = ToolEntry {
             id: t.clone(),
             health: Some("v2".to_owned()),
-            source: Some("toolfoundry".to_owned()),
+            source: Some("tools".to_owned()),
         };
         let old = reg.insert(second).unwrap();
         assert_eq!(old.health.as_deref(), Some("v1"));
