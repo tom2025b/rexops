@@ -29,21 +29,17 @@
 //! - Adapter, AdapterHealth, AdapterOutput — the common vocabulary.
 //! - BulwarkAdapter + Bulwark* types — the first concrete adapter.
 //! - SystemAdapter + SystemInfo — lightweight always-available system info (second adapter).
-//! - ScriptVaultAdapter + ScriptVaultInfo/Script — read-only consumer of the ScriptVault export feed (third adapter; provisional contract; reads in-memory text or standard path).
-//! - ToolFoundryAdapter + ToolFoundryInfo/Tool — read-only consumer of the ToolFoundry rexops-feed contract (fourth adapter, real).
-//! - BulwarkFeedAdapter + BulwarkScanInfo/ScanItem — read-only consumer of the Bulwark scan export feed (fifth adapter; provisional contract; reads in-memory text or standard path).
-//! - WorkstateAdapter + WorkstateInfo/Project — read-only consumer of the Workstate snapshot feed (sixth adapter; provisional contract; per-project repo health; reads in-memory text or standard path).
+//! - WorkstateAdapter + WorkstateInfo — read-only consumer of the Workstate v3 snapshot (source of truth for scripts/tools/findings).
+//! - models: ToolFoundryInfo/Tool, ScriptVaultInfo/Script, BulwarkScanInfo/ScanItem/Severity/RiskTally — domain types for the three snapshot sections.
 //!
 //! Everything else (exec, the private probe helpers) is `pub(crate)` or private.
 
 mod adapter;
 mod bulwark;
-mod bulwark_feed;
 mod error;
 mod exec;
-mod scriptvault;
+pub mod models;
 mod system;
-mod toolfoundry;
 mod types;
 mod workstate;
 
@@ -54,11 +50,11 @@ pub use bulwark::{
     BulwarkAction, BulwarkAdapter, BulwarkCategory, BulwarkFinding, BulwarkLocation,
     BulwarkScanResult, BulwarkSeverity,
 };
-pub use bulwark_feed::{BulwarkFeedAdapter, BulwarkScanInfo, RiskTally, ScanItem, Severity};
 pub use error::AdapterError;
-pub use scriptvault::{Script, ScriptVaultAdapter, ScriptVaultInfo};
+pub use models::findings::{BulwarkScanInfo, RiskTally, ScanItem, Severity};
+pub use models::scripts::{Script, ScriptVaultInfo};
+pub use models::tools::{Tool, ToolFoundryInfo};
 pub use system::{SystemAdapter, SystemInfo};
-pub use toolfoundry::{Tool, ToolFoundryAdapter, ToolFoundryInfo};
 pub use types::{AdapterHealth, AdapterOutput};
 pub use workstate::{status_to_health, Provenance, Section, WorkstateAdapter, WorkstateInfo};
 

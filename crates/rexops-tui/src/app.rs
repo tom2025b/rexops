@@ -122,7 +122,7 @@ pub enum Screen {
     Adapters,
     System,
     Scripts,
-    /// Tools / inventory screen backed by ToolFoundryAdapter data (ownership, symlinks, health).
+    /// Tools / inventory screen backed by ToolFoundryInfo from the Workstate snapshot.
     Tools,
     /// Launcher screen: pick a tool from the static catalog and launch it.
     Launcher,

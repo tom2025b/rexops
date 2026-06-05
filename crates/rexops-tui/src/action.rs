@@ -28,10 +28,10 @@ pub enum Action {
     /// Switch to the system info screen (using SystemAdapter data).
     SwitchToSystem,
 
-    /// Switch to the scripts/vault screen (using ScriptVaultAdapter data).
+    /// Switch to the scripts/vault screen (ScriptVaultInfo from Workstate snapshot).
     SwitchToScripts,
 
-    /// Switch to the tools/inventory screen (using ToolFoundryAdapter data for ownership/lifecycle/symlinks).
+    /// Switch to the tools/inventory screen (ToolFoundryInfo from Workstate snapshot).
     SwitchToTools,
 
     /// Switch to the Launcher screen (pick a tool and launch it).

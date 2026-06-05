@@ -30,7 +30,7 @@
 //! - Newtypes: AdapterId, ToolId.
 //! - Health: AdapterHealth (re-exported for callers; ToolHealth may evolve here later).
 //! - Config: AppConfig + supporting types.
-//! - Snapshot: OpsSnapshot (now includes optional SystemInfo, ScriptVaultInfo, ToolFoundryInfo, BulwarkScanInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
+//! - Snapshot: OpsSnapshot (includes optional SystemInfo, ScriptVaultInfo, ToolFoundryInfo, BulwarkScanInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
 //! - Registries: AdapterRegistry, ToolRegistry (data containers only).
 //!
 //! Everything else lives in focused modules. lib.rs is a table of contents only.

@@ -29,10 +29,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::Adapter;
-use crate::bulwark_feed::BulwarkScanInfo;
 use crate::error::AdapterError;
-use crate::scriptvault::ScriptVaultInfo;
-use crate::toolfoundry::ToolFoundryInfo;
+use crate::models::findings::BulwarkScanInfo;
+use crate::models::scripts::ScriptVaultInfo;
+use crate::models::tools::ToolFoundryInfo;
 use crate::types::{AdapterHealth, AdapterOutput};
 
 /// The major schema version this consumer understands. Workstate emits v3.
