@@ -20,6 +20,7 @@ pub fn handle_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('3') => Some(Action::SwitchToSystem),
         KeyCode::Char('4') => Some(Action::SwitchToScripts),
         KeyCode::Char('5') => Some(Action::SwitchToTools),
+        KeyCode::Char('6') => Some(Action::SwitchToLauncher),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char('j') | KeyCode::Down => Some(Action::Down),
         KeyCode::Char('k') | KeyCode::Up => Some(Action::Up),

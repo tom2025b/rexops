@@ -38,6 +38,9 @@ pub enum Action {
     /// Switch to the tools/inventory screen (using ToolFoundryAdapter data for ownership/lifecycle/symlinks).
     SwitchToTools,
 
+    /// Switch to the Launcher screen (pick a tool and launch it).
+    SwitchToLauncher,
+
     /// Navigate up in lists (k or up arrow).
     Up,
 

@@ -53,6 +53,9 @@ pub struct App {
     /// Current filter string for the adapters list (live search).
     pub filter: String,
 
+    /// Selected row in the Launcher screen (index into launchpad::CATALOG).
+    pub selected_tool: usize,
+
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
 
@@ -74,6 +77,8 @@ pub enum Screen {
     Scripts,
     /// Tools / inventory screen backed by ToolFoundryAdapter data (ownership, symlinks, health).
     Tools,
+    /// Launcher screen: pick a tool from the static catalog and launch it.
+    Launcher,
 }
 
 impl App {
@@ -88,6 +93,7 @@ impl App {
             adapter_names: Vec::new(),
             selected_adapter: None,
             filter: String::new(),
+            selected_tool: 0,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -183,7 +189,8 @@ impl App {
                 false
             }
             crate::action::Action::Launch => {
-                let report = launcher::launch_scriptvault(&self.config, launcher);
+                let report =
+                    launcher::launch_tool("scriptvault", "ScriptVault", &self.config, launcher);
                 self.log_event(report.message());
                 if report.should_refresh() {
                     self.request_refresh();
@@ -215,6 +222,11 @@ impl App {
                 self.log_event("Switched to Tools screen");
                 false
             }
+            crate::action::Action::SwitchToLauncher => {
+                self.current_screen = Screen::Launcher;
+                self.log_event("Switched to Launcher screen");
+                false
+            }
             crate::action::Action::Up => {
                 if self.current_screen == Screen::Adapters {
                     let visible = self.filtered_adapter_names();
@@ -225,6 +237,11 @@ impl App {
                                 self.selected_adapter = Some(visible[new_pos].clone());
                             }
                         }
+                    }
+                } else if self.current_screen == Screen::Launcher {
+                    let len = crate::screens::launchpad::CATALOG.len();
+                    if len > 0 {
+                        self.selected_tool = (self.selected_tool + len - 1) % len;
                     }
                 }
                 false
@@ -240,6 +257,11 @@ impl App {
                             }
                         }
                     }
+                } else if self.current_screen == Screen::Launcher {
+                    let len = crate::screens::launchpad::CATALOG.len();
+                    if len > 0 {
+                        self.selected_tool = (self.selected_tool + 1) % len;
+                    }
                 }
                 false
             }
@@ -251,6 +273,17 @@ impl App {
                             "selected adapter detail: {name} (press r to refresh for live)"
                         ));
                     }
+                } else if self.current_screen == Screen::Launcher {
+                    // Launch the selected tool. launch_tool resolves a command
+                    // (which → config); feed-only tools degrade to a message.
+                    if let Some(tool) = crate::screens::launchpad::CATALOG.get(self.selected_tool) {
+                        let report =
+                            launcher::launch_tool(tool.id, tool.name, &self.config, launcher);
+                        self.log_event(report.message());
+                        if report.should_refresh() {
+                            self.request_refresh();
+                        }
+                    }
                 }
                 false
             }
@@ -259,6 +292,11 @@ impl App {
                     self.filter.clear();
                     let visible = self.filtered_adapter_names();
                     self.selected_adapter = visible.first().cloned();
+                    false
+                } else if self.current_screen == Screen::Launcher {
+                    // Esc on the Launcher goes back to the Dashboard, not quit.
+                    self.current_screen = Screen::Dashboard;
+                    self.log_event("Launcher: back to Dashboard");
                     false
                 } else {
                     true // real quit
@@ -329,6 +367,72 @@ mod tests {
             .recent_events
             .iter()
             .any(|event| event == "ScriptVault exited successfully"));
+    }
+
+    /// Build an App already on the Launcher screen for navigation tests.
+    fn launcher_app() -> App {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+        app.current_screen = Screen::Launcher;
+        app
+    }
+
+    #[test]
+    fn launcher_down_and_up_wrap_around_catalog() {
+        let mut app = launcher_app();
+        let mut runner = FakeRunner { calls: 0 };
+        let last = crate::screens::launchpad::CATALOG.len() - 1;
+
+        // Down advances, then wraps from the last entry back to 0.
+        app.on_action(Action::Down, &mut runner);
+        assert_eq!(app.selected_tool, 1);
+        for _ in 1..crate::screens::launchpad::CATALOG.len() {
+            app.on_action(Action::Down, &mut runner);
+        }
+        assert_eq!(app.selected_tool, 0, "Down must wrap past the end");
+
+        // Up from 0 wraps to the last entry.
+        app.on_action(Action::Up, &mut runner);
+        assert_eq!(app.selected_tool, last, "Up must wrap before the start");
+    }
+
+    #[test]
+    fn launcher_esc_goes_back_to_dashboard_not_quit() {
+        let mut app = launcher_app();
+        let mut runner = FakeRunner { calls: 0 };
+
+        let quit = app.on_action(Action::Cancel, &mut runner);
+
+        assert!(!quit, "Esc on Launcher must not quit the app");
+        assert_eq!(app.current_screen, Screen::Dashboard);
+    }
+
+    #[test]
+    fn launcher_enter_routes_selected_tool_to_launch() {
+        // Activate on the Launcher must route the *selected* catalog tool through
+        // launch_tool and log its report. We assert routing (a report mentioning
+        // the selected tool's name was logged) rather than launch outcome, since
+        // whether a real binary resolves depends on the host PATH. The graceful
+        // no-command behavior itself is covered deterministically in
+        // launcher.rs::launch_tool_without_command_reports_gracefully_and_skips_runner.
+        let mut app = launcher_app();
+        let idx = crate::screens::launchpad::CATALOG
+            .iter()
+            .position(|t| t.id == "toolfoundry")
+            .expect("toolfoundry in catalog");
+        app.selected_tool = idx;
+        let name = crate::screens::launchpad::CATALOG[idx].name;
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner);
+
+        assert!(
+            app.recent_events.iter().any(|e| e.contains(name)),
+            "Activate must log a launch report for the selected tool ({name})"
+        );
+        // toolfoundry is a feed-only tool (never on PATH, no config binary), so
+        // Activate must degrade gracefully without spawning a process.
+        assert_eq!(runner.calls, 0, "feed-only tool must not spawn a process");
     }
 }
 

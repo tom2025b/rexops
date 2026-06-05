@@ -48,6 +48,9 @@ pub fn render(f: &mut Frame, app: &App) {
         crate::app::Screen::Tools => {
             screens::render_tools(f, app, chunks[1]);
         }
+        crate::app::Screen::Launcher => {
+            screens::render_launcher(f, app, chunks[1]);
+        }
     }
     render_status_bar(f, app, chunks[2]);
 
@@ -78,13 +81,16 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let count = app.snapshot.adapter_health.len();
 
     let left = match app.current_screen {
-        crate::app::Screen::Dashboard => "q quit  •  r refresh  •  ? help  •  1/2/3/4/5 screens",
+        crate::app::Screen::Dashboard => "q quit  •  r refresh  •  ? help  •  1/2/3/4/5/6 screens",
         crate::app::Screen::Adapters => {
             "q quit  •  r refresh  •  ? help  •  j/k nav  •  enter select  •  1 dashboard"
         }
         crate::app::Screen::System => "q quit  •  r refresh  •  ? help  •  1 dashboard",
         crate::app::Screen::Scripts => "q quit  •  r refresh  •  ? help  •  1 dashboard",
         crate::app::Screen::Tools => "q quit  •  r refresh  •  ? help  •  1 dashboard",
+        crate::app::Screen::Launcher => {
+            "q quit  •  ↑/↓ nav  •  enter launch  •  esc back  •  1 dashboard"
+        }
     };
     let right = if app.refreshing {
         "working..."
@@ -119,10 +125,13 @@ fn render_help_popup(f: &mut Frame, area: Rect) {
         Line::from("RexOps TUI Help"),
         Line::from(""),
         Line::from("Global: q/Esc/Ctrl-C quit  •  r refresh (bg thread)  •  ?/h toggle this"),
-        Line::from("Screens: 1 Dashboard (overview + risk + notes)  •  2 Adapters (list + detail)  •  3 System  •  4 Scripts  •  5 Tools"),
+        Line::from("Screens: 1 Dashboard (overview + risk + notes)  •  2 Adapters (list + detail)  •  3 System  •  4 Scripts  •  5 Tools  •  6 Launcher"),
         Line::from(""),
         Line::from(
             "In Adapters: j/k or ↑/↓ move  •  enter activate (note)  •  type to filter live",
+        ),
+        Line::from(
+            "In Launcher: ↑/↓ select a tool  •  enter launch  •  esc back to Dashboard",
         ),
         Line::from("             esc = clear filter (or quit if none)  •  backspace edit filter"),
         Line::from(""),

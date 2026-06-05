@@ -9,9 +9,6 @@ use std::process::Command;
 
 use rexops_core::AppConfig;
 
-const SCRIPTVAULT_ADAPTER_ID: &str = "scriptvault";
-const SCRIPTVAULT_COMMAND: &str = "scriptvault";
-
 /// Small abstraction over "run this with the user's real terminal".
 pub trait ForegroundRunner {
     fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit>;
@@ -55,37 +52,46 @@ impl LaunchReport {
     }
 }
 
-/// Resolve and launch ScriptVault using the supplied terminal runner.
-pub fn launch_scriptvault(config: &AppConfig, runner: &mut impl ForegroundRunner) -> LaunchReport {
-    let Some(command) = resolve_scriptvault_command(config) else {
-        return LaunchReport::no_refresh(
-            "ScriptVault launch unavailable: scriptvault not found on PATH and no config binary set",
-        );
+/// Resolve and launch any tool by id using the supplied terminal runner.
+///
+/// `tool_id` keys both the `which <tool_id>` PATH lookup and the per-adapter
+/// config `binary` fallback; `name` is the display name used in messages.
+///
+/// Not every tool is launchable: feed consumers (toolfoundry, workstate) have no
+/// executable. When no command resolves we return a no-refresh report saying so,
+/// and never call the runner — that is the graceful path, not an error.
+pub fn launch_tool(
+    tool_id: &str,
+    name: &str,
+    config: &AppConfig,
+    runner: &mut impl ForegroundRunner,
+) -> LaunchReport {
+    let Some(command) = resolve_command(tool_id, config) else {
+        return LaunchReport::no_refresh(format!("{name} has no launch command yet"));
     };
 
     match runner.run_foreground(&command) {
-        Ok(ChildExit::Success) => LaunchReport::refresh("ScriptVault exited successfully"),
+        Ok(ChildExit::Success) => LaunchReport::refresh(format!("{name} exited successfully")),
         Ok(ChildExit::Status(status)) => {
-            LaunchReport::refresh(format!("ScriptVault exited with status {status}"))
+            LaunchReport::refresh(format!("{name} exited with status {status}"))
         }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => LaunchReport::no_refresh(format!(
-            "ScriptVault launch failed: binary not found ({command})"
-        )),
-        Err(err) => LaunchReport::no_refresh(format!("ScriptVault launch failed: {err}")),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            LaunchReport::no_refresh(format!("{name} launch failed: binary not found ({command})"))
+        }
+        Err(err) => LaunchReport::no_refresh(format!("{name} launch failed: {err}")),
     }
 }
 
-/// Resolve the ScriptVault launch target for Stage 3.
-fn resolve_scriptvault_command(config: &AppConfig) -> Option<String> {
-    scriptvault_from_path().or_else(|| scriptvault_from_config(config))
+/// Resolve a tool's launch target: prefer the user's PATH, then the per-adapter
+/// configured binary. Returns None when neither yields a command (e.g. a
+/// feed-only tool with no executable).
+fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
+    command_from_path(tool_id).or_else(|| command_from_config(tool_id, config))
 }
 
 /// Prefer the user's PATH by asking the platform `which` command.
-fn scriptvault_from_path() -> Option<String> {
-    let output = Command::new("which")
-        .arg(SCRIPTVAULT_COMMAND)
-        .output()
-        .ok()?;
+fn command_from_path(tool_id: &str) -> Option<String> {
+    let output = Command::new("which").arg(tool_id).output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -98,11 +104,11 @@ fn scriptvault_from_path() -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Fall back to an explicit ScriptVault binary configured for the adapter.
-fn scriptvault_from_config(config: &AppConfig) -> Option<String> {
+/// Fall back to an explicit binary configured for this tool's adapter.
+fn command_from_config(tool_id: &str, config: &AppConfig) -> Option<String> {
     config
         .adapters
-        .get(SCRIPTVAULT_ADAPTER_ID)
+        .get(tool_id)
         .and_then(|adapter| adapter.binary.as_deref())
         .map(str::trim)
         .filter(|binary| !binary.is_empty())
@@ -130,62 +136,75 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scriptvault_from_config_uses_trimmed_binary() {
+    /// Build a config that pins a tool's binary to an explicit path.
+    fn config_with_binary(tool_id: &str, binary: &str) -> AppConfig {
         let mut config = AppConfig::default();
         config.adapters.insert(
-            SCRIPTVAULT_ADAPTER_ID.to_owned(),
+            tool_id.to_owned(),
             AdapterConfig {
                 enabled: true,
-                binary: Some("  /tmp/scriptvault  ".to_owned()),
+                binary: Some(binary.to_owned()),
                 timeout_secs: None,
             },
         );
+        config
+    }
 
+    #[test]
+    fn command_from_config_uses_trimmed_binary() {
+        let config = config_with_binary("scriptvault", "  /tmp/scriptvault  ");
         assert_eq!(
-            scriptvault_from_config(&config),
+            command_from_config("scriptvault", &config),
             Some("/tmp/scriptvault".to_owned())
         );
     }
 
     #[test]
-    fn scriptvault_from_config_ignores_missing_or_empty_binary() {
-        assert_eq!(scriptvault_from_config(&AppConfig::default()), None);
+    fn command_from_config_ignores_missing_or_empty_binary() {
+        assert_eq!(command_from_config("scriptvault", &AppConfig::default()), None);
 
-        let mut config = AppConfig::default();
-        config.adapters.insert(
-            SCRIPTVAULT_ADAPTER_ID.to_owned(),
-            AdapterConfig {
-                enabled: true,
-                binary: Some("   ".to_owned()),
-                timeout_secs: None,
-            },
-        );
-
-        assert_eq!(scriptvault_from_config(&config), None);
+        let config = config_with_binary("scriptvault", "   ");
+        assert_eq!(command_from_config("scriptvault", &config), None);
     }
 
     #[test]
-    fn launch_scriptvault_reports_success_and_refreshes() {
-        let mut config = AppConfig::default();
-        config.adapters.insert(
-            SCRIPTVAULT_ADAPTER_ID.to_owned(),
-            AdapterConfig {
-                enabled: true,
-                binary: Some("/tmp/scriptvault".to_owned()),
-                timeout_secs: None,
-            },
-        );
+    fn launch_tool_reports_success_and_refreshes() {
+        // Use an id that is NOT on PATH so the config-binary fallback is what
+        // resolves — otherwise a real `which <id>` hit on the dev/CI box would
+        // win and make the launched-command assertion environment-dependent.
+        let id = "definitely-not-a-real-tool-xyz";
+        let config = config_with_binary(id, "/tmp/fake-tool");
         let mut runner = FakeRunner {
             exit: Ok(ChildExit::Success),
             called_with: None,
         };
 
-        let report = launch_scriptvault(&config, &mut runner);
+        let report = launch_tool(id, "FakeTool", &config, &mut runner);
 
-        assert_eq!(report.message(), "ScriptVault exited successfully");
+        assert_eq!(report.message(), "FakeTool exited successfully");
         assert!(report.should_refresh());
-        assert!(runner.called_with.is_some());
+        assert_eq!(runner.called_with.as_deref(), Some("/tmp/fake-tool"));
+    }
+
+    #[test]
+    fn launch_tool_without_command_reports_gracefully_and_skips_runner() {
+        // A feed-only tool (no PATH binary, no config binary) must not error and
+        // must not invoke the runner.
+        let mut runner = FakeRunner {
+            exit: Ok(ChildExit::Success),
+            called_with: None,
+        };
+
+        let report = launch_tool(
+            "definitely-not-a-real-tool-xyz",
+            "Workstate",
+            &AppConfig::default(),
+            &mut runner,
+        );
+
+        assert_eq!(report.message(), "Workstate has no launch command yet");
+        assert!(!report.should_refresh());
+        assert!(runner.called_with.is_none(), "runner must not be called");
     }
 }
 
@@ -194,3 +213,8 @@ mod tests {
 //   That lets App handle user intent while main.rs remains the terminal owner.
 // - LaunchReport separates human-readable status from policy such as whether
 //   RexOps should refresh after returning from a specialist.
+// - launch_tool is generic over tool id: the id keys both `which` and the config
+//   binary fallback. Tools with no executable (feed consumers like toolfoundry,
+//   workstate) resolve to None and get a graceful "no launch command yet" report
+//   — the runner is never called, so non-launchable tools are a normal case,
+//   not an error.
