@@ -28,3 +28,23 @@ jobs:
 
       - name: Run tests
         run: cargo test
+
+  contract:
+    name: Validate Workstate fixture against hub schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install schema validator
+        run: pipx install 'check-jsonschema==0.29.4'
+
+      - name: Fetch hub schema
+        run: |
+          curl -fsSL -o workstate.snapshot.schema.json \
+            https://raw.githubusercontent.com/tom2025b/linux-ops-suite/main/contracts/workstate.snapshot.schema.json
+
+      - name: Validate the committed v3 fixture against hub schema
+        run: |
+          check-jsonschema --schemafile workstate.snapshot.schema.json \
+            crates/rexops-adapters/fixtures/workstate/snapshot_v3.json
