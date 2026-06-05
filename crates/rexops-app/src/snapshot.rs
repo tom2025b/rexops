@@ -100,18 +100,60 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         );
     }
 
+    // STRANGLER-FIG SWITCH (Phase 2, Step 4): Workstate is the source of truth.
+    // Probe it FIRST — from routed stdin OR its standard path — and if a valid v3
+    // snapshot is present, fold it in and SKIP the three raw feed populators
+    // entirely (the snapshot already carries scripts/tools/findings). Only when no
+    // usable snapshot exists do we fall back to reading the raw feeds directly.
+    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
+    let ws_routed = if route == Some(FeedKind::Workstate) {
+        piped.map(str::to_owned)
+    } else {
+        None
+    };
+    let snapshot_consumed = if ws_enabled {
+        populate_workstate(&mut snap, ws_routed)
+    } else {
+        false
+    };
+
+    if snapshot_consumed {
+        snap.add_note(
+            "source: Workstate v3 snapshot (raw feeds skipped — snapshot is source of truth)"
+                .to_owned(),
+        );
+    } else {
+        snap.add_note("source: raw feeds (no Workstate v3 snapshot available)".to_owned());
+        populate_raw_feeds(&mut snap, config, piped, route);
+    }
+
+    // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
+    snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
+
+    snap
+}
+
+/// Fallback path: read the three raw feeds directly (ToolFoundry, Bulwark scan,
+/// ScriptVault), honoring per-adapter `enabled` and routing the single piped blob
+/// to whichever consumer it was classified as. Used ONLY when no Workstate v3
+/// snapshot is available — the strangler-fig's "before" path, kept intact until
+/// Step 7 removes it.
+fn populate_raw_feeds(
+    snap: &mut OpsSnapshot,
+    config: &AppConfig,
+    piped: Option<&str>,
+    route: Option<FeedKind>,
+) {
     // ToolFoundry: read-only consumer of the `rexops-feed` contract.
     let tf_enabled = config
         .adapters
         .get("toolfoundry")
         .map_or(true, |c| c.enabled);
     if tf_enabled {
-        let routed = if route == Some(FeedKind::ToolFoundry) {
-            piped.map(str::to_owned)
-        } else {
-            None
-        };
-        populate_toolfoundry(&mut snap, routed);
+        let routed = (route == Some(FeedKind::ToolFoundry))
+            .then(|| piped.map(str::to_owned))
+            .flatten();
+        populate_toolfoundry(snap, routed);
     }
 
     // Bulwark scan feed: read-only consumer of the exported scan JSON (separate
@@ -121,12 +163,10 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         .get("bulwark-feed")
         .map_or(true, |c| c.enabled);
     if bwf_enabled {
-        let routed = if route == Some(FeedKind::Bulwark) {
-            piped.map(str::to_owned)
-        } else {
-            None
-        };
-        populate_bulwark_feed(&mut snap, routed);
+        let routed = (route == Some(FeedKind::Bulwark))
+            .then(|| piped.map(str::to_owned))
+            .flatten();
+        populate_bulwark_feed(snap, routed);
     }
 
     // ScriptVault export feed: read-only consumer of the script inventory JSON.
@@ -135,29 +175,11 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
         .get("scriptvault")
         .map_or(true, |c| c.enabled);
     if sv_enabled {
-        let routed = if route == Some(FeedKind::ScriptVault) {
-            piped.map(str::to_owned)
-        } else {
-            None
-        };
-        populate_scriptvault(&mut snap, routed);
+        let routed = (route == Some(FeedKind::ScriptVault))
+            .then(|| piped.map(str::to_owned))
+            .flatten();
+        populate_scriptvault(snap, routed);
     }
-
-    // Workstate snapshot feed: read-only consumer of per-project repo health.
-    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
-    if ws_enabled {
-        let routed = if route == Some(FeedKind::Workstate) {
-            piped.map(str::to_owned)
-        } else {
-            None
-        };
-        populate_workstate(&mut snap, routed);
-    }
-
-    // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
-    snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
-
-    snap
 }
 
 /// Which feed a blob of piped JSON belongs to. We match each feed *positively*
@@ -410,6 +432,10 @@ fn note_section_freshness(
 
 /// Read the Workstate v3 snapshot and fold it into the OpsSnapshot.
 ///
+/// Returns `true` when a usable v3 snapshot was consumed (the caller then SKIPS
+/// the raw feed populators — the snapshot is the source of truth), or `false`
+/// when no usable snapshot is present (caller falls back to the raw feeds).
+///
 /// This is the heart of the Phase 2 strangler-fig: the snapshot's three sections
 /// route into the SAME structured fields RexOps already renders —
 ///   tools.data    -> snap.toolfoundry
@@ -418,16 +444,16 @@ fn note_section_freshness(
 /// — with each section's freshness `status` mapped to AdapterHealth (against the
 /// existing toolfoundry/scriptvault/bulwark-feed ids) and a provenance note.
 ///
-/// ORDERING CONTRACT: this runs LAST in build_snapshot_with_piped, so when both a
-/// raw feed and the snapshot are present, the snapshot's values win (last writer).
-/// Because RiskSummary::merge ADDS counts, we reset snap.risk to default before
-/// merging the snapshot's findings — otherwise the raw bulwark feed's risk (added
-/// earlier) would be double-counted. This is the authoritative pass.
+/// ORDERING (Step 4): this runs FIRST in build_snapshot_with_piped and gates the
+/// raw feeds — when it returns true they don't run at all, so there is no longer
+/// a writer collision. fold_ws_findings still resets snap.risk before merging as
+/// defensive correctness (the live bulwark-inspect adapter above never touches
+/// snap.risk today, but the reset keeps this pass authoritative regardless).
 ///
 /// The full snapshot is also kept in `snap.workstate` (it carries built_at and the
 /// per-section provenance that the per-field structured types don't). Unknown/
-/// missing versions and a missing snapshot degrade gracefully.
-fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
+/// missing versions and a missing snapshot degrade gracefully (return false).
+fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) -> bool {
     let ws = match routed_stdin {
         Some(text) => WorkstateAdapter::with_text(text),
         None => WorkstateAdapter::new(),
@@ -444,7 +470,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     }
 
     // No usable snapshot: note a degraded (present-but-unsupported) case, else
-    // stay silent for a simply-absent snapshot. Both are graceful.
+    // stay silent for a simply-absent snapshot. Both are graceful → fall back.
     let Some(out) = feed else {
         if ws_health == rexops_core::AdapterHealth::Degraded {
             snap.add_note(
@@ -452,7 +478,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
                     .to_owned(),
             );
         }
-        return;
+        return false;
     };
 
     let info = out.data;
@@ -470,6 +496,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     // Keep the full snapshot too — it carries built_at + per-section provenance
     // that the per-field structured types don't.
     snap.workstate = Some(info);
+    true
 }
 
 /// Fold the snapshot's `tools` section into `snap.toolfoundry` (+ freshness/notes).
@@ -856,14 +883,84 @@ mod tests {
 
     #[test]
     fn workstate_findings_risk_is_not_double_counted() {
-        // populate_workstate runs LAST and resets risk before merging, so even
-        // though the raw bulwark feed and the snapshot both carry the same 4
-        // findings, the critical count is 1 (the snapshot's), not 2.
+        // After Step 4 the snapshot gates the raw feeds (they don't run when it's
+        // present), and fold_ws_findings still resets risk defensively — so the
+        // critical count is 1 (the snapshot's), never doubled.
         let snap = route_via_build(WORKSTATE_FEED);
         assert_eq!(
             snap.risk.critical, 1,
             "risk must come from the snapshot alone, not be doubled"
         );
         assert_eq!(snap.risk.high, 1);
+    }
+
+    /// Plant `contents` at the standard path a feed adapter reads, inside a fresh
+    /// XDG_DATA_HOME, then build with the given piped input. Returns the snapshot.
+    /// Lets a test prove the Step-4 switch: a raw feed file on disk is SKIPPED when
+    /// a valid snapshot is piped in, but USED when no snapshot is available.
+    fn build_with_feed_file(rel_path: &str, contents: &str, piped: Option<&str>) -> OpsSnapshot {
+        let xdg = std::env::temp_dir().join(format!(
+            "rexops-switch-{}-{}",
+            std::process::id(),
+            rel_path.replace('/', "_")
+        ));
+        let full = xdg.join(rel_path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, contents).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &xdg);
+        let snap = build_snapshot_with_piped(&feeds_only_config(), piped);
+        std::fs::remove_dir_all(&xdg).ok();
+        snap
+    }
+
+    #[test]
+    fn snapshot_present_skips_raw_feeds() {
+        // A raw ToolFoundry feed is on disk (tool_count=1, "backup-home"), but a v3
+        // Workstate snapshot is piped in (tool_count=2). The snapshot must WIN and
+        // the raw feed must be skipped entirely.
+        let snap = build_with_feed_file(
+            "rexops/feeds/toolfoundry.rexops-feed.json",
+            TOOLFOUNDRY_FEED,
+            Some(WORKSTATE_FEED),
+        );
+        let tf = snap.toolfoundry.expect("toolfoundry populated");
+        assert_eq!(
+            tf.tool_count, 2,
+            "snapshot's tools (2) must win over the raw feed's (1)"
+        );
+        assert!(
+            snap.notes.iter().any(|n| n.contains("raw feeds skipped")),
+            "must note that raw feeds were skipped"
+        );
+        assert!(
+            !snap
+                .notes
+                .iter()
+                .any(|n| n.contains("no Workstate v3 snapshot")),
+            "must NOT claim the fallback path ran"
+        );
+    }
+
+    #[test]
+    fn no_snapshot_falls_back_to_raw_feeds() {
+        // No snapshot anywhere (empty XDG, raw ToolFoundry feed piped). The raw
+        // path must run and populate toolfoundry from the piped feed.
+        let snap = build_with_feed_file(
+            // Plant an unrelated file just to get a fresh XDG; the real input is piped.
+            "rexops/feeds/.keep",
+            "{}",
+            Some(TOOLFOUNDRY_FEED),
+        );
+        let tf = snap
+            .toolfoundry
+            .expect("toolfoundry populated via raw fallback");
+        assert_eq!(tf.tool_count, 1, "raw feed (tool_count=1) must be used");
+        assert!(
+            snap.notes
+                .iter()
+                .any(|n| n.contains("no Workstate v3 snapshot")),
+            "must note the raw-feed fallback path ran"
+        );
+        assert!(snap.workstate.is_none(), "no snapshot was present");
     }
 }
