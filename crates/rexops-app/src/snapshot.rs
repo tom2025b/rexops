@@ -389,12 +389,44 @@ fn populate_scriptvault(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     }
 }
 
-/// Read the Workstate snapshot feed and fold it into the snapshot.
+/// Set a section's adapter health from its Workstate `status` and add a
+/// freshness/provenance note like `"tools: Stale (source observed 2026-06-02)"`.
+/// Shared by all three Workstate sections so the mapping stays consistent.
+fn note_section_freshness(
+    snap: &mut OpsSnapshot,
+    label: &str,
+    adapter_id: &str,
+    status: &str,
+    provenance: &rexops_adapters::Provenance,
+) {
+    if let Ok(id) = AdapterId::new(adapter_id) {
+        snap.set_adapter_health(&id, rexops_adapters::status_to_health(status));
+    }
+    match provenance.source_observed_at.as_deref() {
+        Some(src) => snap.add_note(format!("{label}: {status} (source observed {src})")),
+        None => snap.add_note(format!("{label}: {status}")),
+    }
+}
+
+/// Read the Workstate v3 snapshot and fold it into the OpsSnapshot.
 ///
-/// On a supported-version feed this populates `snap.workstate` and notes the
-/// project count plus the first couple of project labels. The Workstate contract
-/// carries NO risk fields, so this contributes no risk — notes + structured field
-/// only. Unknown/missing versions and missing feeds degrade gracefully.
+/// This is the heart of the Phase 2 strangler-fig: the snapshot's three sections
+/// route into the SAME structured fields RexOps already renders —
+///   tools.data    -> snap.toolfoundry
+///   scripts.data  -> snap.scriptvault
+///   findings.data -> snap.bulwark (+ merged risk)
+/// — with each section's freshness `status` mapped to AdapterHealth (against the
+/// existing toolfoundry/scriptvault/bulwark-feed ids) and a provenance note.
+///
+/// ORDERING CONTRACT: this runs LAST in build_snapshot_with_piped, so when both a
+/// raw feed and the snapshot are present, the snapshot's values win (last writer).
+/// Because RiskSummary::merge ADDS counts, we reset snap.risk to default before
+/// merging the snapshot's findings — otherwise the raw bulwark feed's risk (added
+/// earlier) would be double-counted. This is the authoritative pass.
+///
+/// The full snapshot is also kept in `snap.workstate` (it carries built_at and the
+/// per-section provenance that the per-field structured types don't). Unknown/
+/// missing versions and a missing snapshot degrade gracefully.
 fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     let ws = match routed_stdin {
         Some(text) => WorkstateAdapter::with_text(text),
@@ -410,27 +442,133 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
     if let Ok(id) = AdapterId::new("workstate") {
         snap.set_adapter_health(&id, ws_health);
     }
-    match feed {
-        Some(out) => {
-            let i = &out.data;
-            // Step 2: store the parsed v3 snapshot and note a summary. Routing
-            // each section into snap.toolfoundry/bulwark/scriptvault + merge_risk
-            // (and per-section freshness health) is Step 3.
-            snap.add_note(format!(
-                "workstate: v3 snapshot, {}/3 sections populated (built {})",
-                i.populated_section_count(),
-                i.built_at
-            ));
-            snap.workstate = Some(i.clone());
-        }
-        None if ws_health == rexops_core::AdapterHealth::Degraded => {
+
+    // No usable snapshot: note a degraded (present-but-unsupported) case, else
+    // stay silent for a simply-absent snapshot. Both are graceful.
+    let Some(out) = feed else {
+        if ws_health == rexops_core::AdapterHealth::Degraded {
             snap.add_note(
                 "workstate: snapshot present but unknown/missing schema version — skipped"
                     .to_owned(),
             );
         }
-        None => {}
+        return;
+    };
+
+    let info = out.data;
+    snap.add_note(format!(
+        "workstate: v3 snapshot, {}/3 sections populated (built {}) — source of truth",
+        info.populated_section_count(),
+        info.built_at
+    ));
+
+    // Each section folds into the structured field RexOps already renders.
+    fold_ws_tools(snap, &info);
+    fold_ws_scripts(snap, &info);
+    fold_ws_findings(snap, &info);
+
+    // Keep the full snapshot too — it carries built_at + per-section provenance
+    // that the per-field structured types don't.
+    snap.workstate = Some(info);
+}
+
+/// Fold the snapshot's `tools` section into `snap.toolfoundry` (+ freshness/notes).
+fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+    let Some(tools) = &info.tools.data else {
+        return;
+    };
+    note_section_freshness(
+        snap,
+        "tools",
+        "toolfoundry",
+        &info.tools.status,
+        &info.tools.provenance,
+    );
+    snap.add_note(format!(
+        "toolfoundry: {} tools, {} need attention (as of {})",
+        tools.tool_count, tools.attention_count, tools.as_of
+    ));
+    for t in tools.tools.iter().filter(|t| t.needs_attention()).take(3) {
+        snap.add_note(format!(
+            "  attention: {} ({}, {})",
+            t.display_name, t.status, t.lifecycle_state
+        ));
     }
+    snap.toolfoundry = Some(tools.clone());
+}
+
+/// Fold the snapshot's `scripts` section into `snap.scriptvault` (+ freshness/notes).
+fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+    let Some(scripts) = &info.scripts.data else {
+        return;
+    };
+    note_section_freshness(
+        snap,
+        "scripts",
+        "scriptvault",
+        &info.scripts.status,
+        &info.scripts.provenance,
+    );
+    snap.add_note(format!(
+        "scriptvault: {} scripts, {} favorites, {} recents (as of {})",
+        scripts.total(),
+        scripts.favorites_count(),
+        scripts.recents_count(),
+        scripts.generated_at
+    ));
+    snap.scriptvault = Some(scripts.clone());
+}
+
+/// Fold the snapshot's `findings` section into `snap.bulwark` and merge its risk.
+///
+/// Resets `snap.risk` to default first: `populate_workstate` runs LAST and
+/// `RiskSummary::merge` ADDS, so without the reset the raw bulwark feed's risk
+/// (merged earlier this build) would be double-counted. The snapshot is the
+/// authoritative risk source in this phase.
+fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+    let Some(findings) = &info.findings.data else {
+        return;
+    };
+    note_section_freshness(
+        snap,
+        "findings",
+        "bulwark-feed",
+        &info.findings.status,
+        &info.findings.provenance,
+    );
+    snap.risk = rexops_core::RiskSummary::default();
+    let t = findings.risk_tally();
+    if t.has_risk_data() {
+        snap.merge_risk(&RiskSummary {
+            critical: t.critical,
+            high: t.high,
+            medium: t.medium,
+            low: t.low,
+            info: t.info,
+            total_findings: t.rated_total() + t.unknown,
+            should_block: t.should_block(),
+            max_severity: None,
+        });
+        snap.add_note(format!(
+            "bulwark: {} findings scanned — critical={} high={} medium={} low={} info={}",
+            findings.items.len(),
+            t.critical,
+            t.high,
+            t.medium,
+            t.low,
+            t.info
+        ));
+        for item in findings.high_risk_items().take(5) {
+            let sev = item.severity.as_deref().unwrap_or("?");
+            snap.add_note(format!("  high-risk: {} ({})", item.label(), sev));
+        }
+    } else {
+        snap.add_note(format!(
+            "bulwark: {} findings scanned — risk breakdown unavailable",
+            findings.items.len()
+        ));
+    }
+    snap.bulwark = Some(findings.clone());
 }
 
 /// Build a simple AdapterRegistry from live probes (demo of registry usage).
@@ -675,23 +813,57 @@ mod tests {
     }
 
     #[test]
-    fn build_routes_workstate_feed_only_to_workstate() {
+    fn workstate_snapshot_fans_out_into_all_structured_fields() {
+        // Phase 2 Step 3: a v3 Workstate snapshot is the source of truth, so it
+        // populates the same structured fields the raw feeds used to — this is
+        // the intended behaviour change from the old "must not leak" contract.
         let snap = route_via_build(WORKSTATE_FEED);
+        assert!(snap.workstate.is_some(), "v3 snapshot kept in workstate");
         assert!(
-            snap.workstate.is_some(),
-            "workstate feed must populate workstate"
+            snap.toolfoundry.is_some(),
+            "tools.data must populate toolfoundry"
         );
         assert!(
-            snap.toolfoundry.is_none(),
-            "workstate feed must NOT leak into toolfoundry"
+            snap.scriptvault.is_some(),
+            "scripts.data must populate scriptvault"
         );
         assert!(
-            snap.bulwark.is_none(),
-            "workstate feed must NOT leak into bulwark"
+            snap.bulwark.is_some(),
+            "findings.data must populate bulwark"
         );
+        // findings carried a critical -> risk pane reflects it.
         assert!(
-            snap.scriptvault.is_none(),
-            "workstate feed must NOT leak into scriptvault"
+            snap.risk.critical >= 1,
+            "findings risk must merge into the risk pane"
         );
+        assert!(snap.risk.should_block, "a critical finding forces block");
+    }
+
+    #[test]
+    fn workstate_section_status_maps_to_adapter_health() {
+        // The v3 fixture's three sections are all Stale -> Degraded health on the
+        // existing per-feed adapter ids.
+        let snap = route_via_build(WORKSTATE_FEED);
+        let degraded = rexops_core::AdapterHealth::Degraded;
+        for id in ["toolfoundry", "scriptvault", "bulwark-feed"] {
+            assert_eq!(
+                snap.adapter_health.get(id).copied(),
+                Some(degraded),
+                "{id} health should be Degraded (section was Stale)"
+            );
+        }
+    }
+
+    #[test]
+    fn workstate_findings_risk_is_not_double_counted() {
+        // populate_workstate runs LAST and resets risk before merging, so even
+        // though the raw bulwark feed and the snapshot both carry the same 4
+        // findings, the critical count is 1 (the snapshot's), not 2.
+        let snap = route_via_build(WORKSTATE_FEED);
+        assert_eq!(
+            snap.risk.critical, 1,
+            "risk must come from the snapshot alone, not be doubled"
+        );
+        assert_eq!(snap.risk.high, 1);
     }
 }
