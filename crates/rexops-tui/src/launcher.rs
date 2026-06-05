@@ -75,9 +75,9 @@ pub fn launch_tool(
         Ok(ChildExit::Status(status)) => {
             LaunchReport::refresh(format!("{name} exited with status {status}"))
         }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            LaunchReport::no_refresh(format!("{name} launch failed: binary not found ({command})"))
-        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => LaunchReport::no_refresh(format!(
+            "{name} launch failed: binary not found ({command})"
+        )),
         Err(err) => LaunchReport::no_refresh(format!("{name} launch failed: {err}")),
     }
 }
@@ -85,7 +85,10 @@ pub fn launch_tool(
 /// Resolve a tool's launch target: prefer the user's PATH, then the per-adapter
 /// configured binary. Returns None when neither yields a command (e.g. a
 /// feed-only tool with no executable).
-fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
+///
+/// `pub(crate)` so the confirmation layer (PendingAction::preview) can show the
+/// resolved command as a dry-run *without* spawning anything.
+pub(crate) fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     command_from_path(tool_id).or_else(|| command_from_config(tool_id, config))
 }
 
@@ -161,7 +164,10 @@ mod tests {
 
     #[test]
     fn command_from_config_ignores_missing_or_empty_binary() {
-        assert_eq!(command_from_config("scriptvault", &AppConfig::default()), None);
+        assert_eq!(
+            command_from_config("scriptvault", &AppConfig::default()),
+            None
+        );
 
         let config = config_with_binary("scriptvault", "   ");
         assert_eq!(command_from_config("scriptvault", &config), None);

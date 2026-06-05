@@ -19,10 +19,6 @@ pub enum Action {
     /// Toggle the help text / overlay.
     ToggleHelp,
 
-    /// Request a specialist-tool launch. Stage 1 keeps this intentionally unbound.
-    #[allow(dead_code)]
-    Launch,
-
     /// Switch to the main dashboard view.
     SwitchToDashboard,
 
