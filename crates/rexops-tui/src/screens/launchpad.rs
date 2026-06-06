@@ -41,6 +41,11 @@ pub const CATALOG: &[ToolEntry] = &[
         description: "Content/security inspection (live scan)",
     },
     ToolEntry {
+        id: "proto",
+        name: "Proto",
+        description: "Guided protocol / checklist runner (interactive)",
+    },
+    ToolEntry {
         id: "scripts",
         name: "Scripts",
         description: "Script inventory from Workstate",
@@ -121,6 +126,33 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(list, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_includes_proto_as_launchable() {
+        // Proto is a real PATH binary (installed via `cargo install --path .`),
+        // so RexOps's `which proto` resolves it. It must be in the catalog to be
+        // offered on the Launcher screen.
+        let proto = CATALOG.iter().find(|t| t.id == "proto");
+        let proto = proto.expect("Proto must be registered in the launcher catalog");
+        assert_eq!(proto.name, "Proto");
+        assert!(!proto.description.is_empty());
+    }
+
+    #[test]
+    fn catalog_ids_are_unique() {
+        // Ids key both the `which` lookup and the config-binary fallback, so a
+        // duplicate id would make two rows resolve to the same command.
+        let mut ids: Vec<&str> = CATALOG.iter().map(|t| t.id).collect();
+        let total = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "catalog tool ids must be unique");
+    }
 }
 
 // Learning Notes:
