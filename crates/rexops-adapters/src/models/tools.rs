@@ -7,9 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Deserialize a bool that may arrive as JSON `null` (or be absent) as `false`.
-/// Needed because the Workstate v3 snapshot sends `review_due: null` (a nullable
-/// date, with the real flag in `review_due_flag`), and plain `#[serde(default)]`
-/// rejects an explicit `null` for a non-Option bool.
+/// Needed because Workstate v3 keeps `review_due` null for compatibility while
+/// carrying the concrete date as `review_after` and the live flag as
+/// `review_due_flag`; plain `#[serde(default)]` rejects an explicit `null` for a
+/// non-Option bool.
 pub(crate) fn bool_or_null<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: serde::Deserializer<'de>,
