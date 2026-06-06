@@ -75,9 +75,17 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
                 // Compact info string: owner, lifecycle, and health-check tally
                 // from the Workstate section.
                 let info = format!(
-                    "owner: {}  lifecycle: {}  health: {}/{}{}",
+                    "owner: {}  lifecycle: {}{}  health: {}/{}{}",
                     t.owner,
                     t.lifecycle_state,
+                    if t.review_due_flag {
+                        match t.review_after.as_deref() {
+                            Some(date) => format!("  review due since {date}"),
+                            None => "  review due".to_string(),
+                        }
+                    } else {
+                        String::new()
+                    },
                     t.health_passed,
                     t.health_total,
                     if t.drifted { "  (drifted)" } else { "" }

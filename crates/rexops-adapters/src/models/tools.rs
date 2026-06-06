@@ -38,6 +38,12 @@ pub struct Tool {
     /// that as false. This field is parse-only — nothing in RexOps reads it.
     #[serde(default, deserialize_with = "bool_or_null")]
     pub review_due: bool,
+    /// Concrete review date carried by ToolFoundry via Workstate.
+    #[serde(default)]
+    pub review_after: Option<String>,
+    /// Live "review is due" signal carried by ToolFoundry via Workstate.
+    #[serde(default)]
+    pub review_due_flag: bool,
     #[serde(default)]
     pub health_passed: u32,
     #[serde(default)]

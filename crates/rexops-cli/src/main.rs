@@ -148,9 +148,17 @@ fn print_status_human(snap: &OpsSnapshot) {
         );
         for t in tf.tools.iter().take(5) {
             let mark = if t.needs_attention() { "!" } else { "✓" };
+            let review = if t.review_due_flag {
+                match t.review_after.as_deref() {
+                    Some(date) => format!("; review due since {date}"),
+                    None => "; review due".to_string(),
+                }
+            } else {
+                String::new()
+            };
             println!(
-                "  {} {} — {} ({})",
-                mark, t.display_name, t.status, t.lifecycle_state
+                "  {} {} — {} ({}{})",
+                mark, t.display_name, t.status, t.lifecycle_state, review
             );
         }
         println!();

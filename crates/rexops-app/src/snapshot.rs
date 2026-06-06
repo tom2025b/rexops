@@ -234,9 +234,17 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) 
         tools.tool_count, tools.attention_count, tools.as_of
     ));
     for t in tools.tools.iter().filter(|t| t.needs_attention()).take(3) {
+        let review_note = if t.review_due_flag {
+            match t.review_after.as_deref() {
+                Some(date) => format!(", review due since {date}"),
+                None => ", review due".to_string(),
+            }
+        } else {
+            String::new()
+        };
         snap.add_note(format!(
-            "  attention: {} ({}, {})",
-            t.display_name, t.status, t.lifecycle_state
+            "  attention: {} ({}, {}{})",
+            t.display_name, t.status, t.lifecycle_state, review_note
         ));
     }
     snap.tools = Some(tools.clone());

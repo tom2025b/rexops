@@ -271,6 +271,10 @@ mod tests {
         assert_eq!(tools.tool_count, 2);
         assert_eq!(tools.attention_count, 1);
         assert_eq!(tools.tools.len(), 2);
+        assert_eq!(tools.tools[0].review_after.as_deref(), Some("2026-09-01"));
+        assert!(!tools.tools[0].review_due_flag);
+        assert_eq!(tools.tools[1].review_after.as_deref(), Some("2026-09-01"));
+        assert!(tools.tools[1].review_due_flag);
 
         // findings.data reuses FindingsInfo — its `items` aliases `findings[]`.
         let findings = info.findings.data.as_ref().expect("findings data present");
