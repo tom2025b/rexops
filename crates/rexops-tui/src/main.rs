@@ -37,14 +37,15 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use rexops_app::load_config;
 use rexops_core::OpsSnapshot;
+use suite_ui::{ColorChoice, Theme, ThemeChoice};
 
 mod action;
 mod app;
 mod event;
+mod health;
 mod keymap;
 mod launcher;
 mod screens;
-mod theme;
 mod ui;
 mod widgets;
 
@@ -82,9 +83,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new(tx, config);
     app.request_refresh(); // initial probe on startup
 
+    // Resolve the shared suite theme once: cyan accent, colour on unless
+    // NO_COLOR is set (Auto). RexOps has no --color/--theme flag, so this is the
+    // single place the suite's NO_COLOR-safe palette enters the TUI.
+    let theme = Theme::resolve(ColorChoice::Auto, ThemeChoice::Cyan);
+
     // Run the main event/draw loop. Any error from the loop is turned into
     // an Err so we still restore the terminal in the caller.
-    let result = run_app(&mut terminal, &mut app, &rx);
+    let result = run_app(&mut terminal, &mut app, &rx, theme);
 
     // Always restore the terminal, even on error.
     restore_terminal()?;
@@ -179,11 +185,12 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     rx: &mpsc::Receiver<OpsSnapshot>,
+    theme: Theme,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // Draw the current frame. This must be fast; all heavy work happens
         // off the UI thread.
-        terminal.draw(|f| ui::render(f, app))?;
+        terminal.draw(|f| ui::render(f, app, theme))?;
 
         // Drain any snapshots that background threads have finished producing.
         // try_recv is non-blocking so we never stall the draw loop.

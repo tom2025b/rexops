@@ -7,18 +7,19 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
+    widgets::{Cell, Paragraph, Row, Table, Wrap},
     Frame,
 };
 
 use rexops_core::AdapterHealth;
+use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::theme;
+use crate::health;
 use crate::widgets;
 
 /// Render the full dashboard into the given area.
-pub fn render_dashboard(f: &mut Frame, app: &App, area: Rect) {
+pub fn render_dashboard(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -29,13 +30,13 @@ pub fn render_dashboard(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    render_adapters_table(f, app, chunks[0]);
-    render_risk_summary(f, app, chunks[1]);
-    render_messages(f, app, chunks[2]);
-    render_logs(f, app, chunks[3]);
+    render_adapters_table(f, app, chunks[0], theme);
+    render_risk_summary(f, app, chunks[1], theme);
+    render_messages(f, app, chunks[2], theme);
+    render_logs(f, app, chunks[3], theme);
 }
 
-fn render_adapters_table(f: &mut Frame, app: &App, area: Rect) {
+fn render_adapters_table(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let header_cells = ["Adapter", "Health", "Info"]
         .into_iter()
         .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
@@ -45,7 +46,8 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect) {
     let rows: Vec<Row> = if app.snapshot.adapter_health.is_empty() {
         vec![Row::new(vec![
             Cell::from("bulwark (default)"),
-            Cell::from("Unavailable").style(theme::health_style(&AdapterHealth::Unavailable)),
+            Cell::from("Unavailable")
+                .style(theme.health(health::to_suite(AdapterHealth::Unavailable))),
             Cell::from("not probed yet — press 'r'"),
         ])]
     } else {
@@ -53,7 +55,7 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect) {
             .adapter_health
             .iter()
             .map(|(name, health)| {
-                let health_cell = Cell::from(widgets::render_health_badge(*health));
+                let health_cell = Cell::from(widgets::render_health_badge(*health, theme));
 
                 let info = if health.is_available() {
                     "healthy / degraded — version in notes if known"
@@ -79,17 +81,12 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect) {
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .title(" Adapters ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    .block(pane("Adapters", theme));
 
     f.render_widget(table, area);
 }
 
-fn render_risk_summary(f: &mut Frame, app: &App, area: Rect) {
+fn render_risk_summary(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let r = &app.snapshot.risk;
 
     let text = format!(
@@ -97,23 +94,18 @@ fn render_risk_summary(f: &mut Frame, app: &App, area: Rect) {
         r.critical, r.high, r.medium, r.low, r.info, r.total_findings, r.should_block
     );
 
-    let risk = Paragraph::new(text).block(
-        Block::default()
-            .title(" Risk Summary ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let risk = Paragraph::new(text).block(pane("Risk Summary", theme));
 
     f.render_widget(risk, area);
 }
 
-fn render_messages(f: &mut Frame, app: &App, area: Rect) {
+fn render_messages(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     if app.refreshing {
         lines.push(Line::from(Span::styled(
             "⟳ Refresh in progress — UI remains responsive. Press 'q' to quit anytime.",
-            theme::working_style(),
+            theme.working(),
         )));
     }
 
@@ -127,17 +119,14 @@ fn render_messages(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from("(no messages — press 'r' to probe adapters)"));
     }
 
-    let notes = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Messages / Notes ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let notes = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Messages / Notes", theme));
 
     f.render_widget(notes, area);
 }
 
-fn render_logs(f: &mut Frame, app: &App, area: Rect) {
+fn render_logs(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     if app.recent_events.is_empty() {
@@ -148,12 +137,9 @@ fn render_logs(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    let logs = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Events / Logs ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let logs = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Events / Logs", theme));
 
     f.render_widget(logs, area);
 }

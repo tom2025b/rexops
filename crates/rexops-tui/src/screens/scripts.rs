@@ -10,12 +10,13 @@ use ratatui::{
     Frame,
 };
 
+use suite_ui::{pane, Theme};
+
 use crate::app::App;
-use crate::theme;
 use crate::widgets;
 
 /// Render the Scripts screen.
-pub fn render_scripts(f: &mut Frame, app: &App, area: Rect) {
+pub fn render_scripts(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -24,29 +25,29 @@ pub fn render_scripts(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    render_scripts_header(f, app, chunks[0]);
-    render_scripts_list(f, app, chunks[1]);
+    render_scripts_header(f, app, chunks[0], theme);
+    render_scripts_list(f, app, chunks[1], theme);
 }
 
-fn render_scripts_header(f: &mut Frame, app: &App, area: Rect) {
+fn render_scripts_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let health = app
         .snapshot
         .adapter_health
         .get("scripts")
         .copied()
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
-    let badge = widgets::render_health_badge(health);
+    let badge = widgets::render_health_badge(health, theme);
 
     let header = Paragraph::new(Line::from(vec![Span::raw("Scripts / Vault "), badge])).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::border_style()),
+            .border_style(theme.dim()),
     );
 
     f.render_widget(header, area);
 }
 
-fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
+fn render_scripts_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(sv) = &app.snapshot.scripts {
@@ -62,15 +63,13 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
                     rexops_core::AdapterHealth::Healthy,
                     info,
                     false,
+                    theme,
                 );
                 lines.push(item);
                 // Opportunistic favorite star: only if this script's id/name is in
                 // the feed's favorites list. Never a correctness dependency.
                 if sv.is_favorite(s) {
-                    lines.push(Line::from(Span::styled(
-                        "   ★ favorite",
-                        theme::health_style(&rexops_core::AdapterHealth::Healthy),
-                    )));
+                    lines.push(Line::from(Span::styled("   ★ favorite", theme.live_marker())));
                 }
             }
         }
@@ -90,15 +89,12 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Tip: Press '1' for Dashboard, '2' for Adapters, '3' for System.",
-        theme::help_style(),
+        theme.dim(),
     )));
 
-    let list = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Scripts ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let list = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Scripts", theme));
 
     f.render_widget(list, area);
 }

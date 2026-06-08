@@ -500,6 +500,7 @@ dependencies = [
  "rexops-app",
  "rexops-core",
  "serde_yaml",
+ "suite-ui",
 ]
 
 [[package]]
@@ -658,6 +659,14 @@ dependencies = [
  "quote",
  "rustversion",
  "syn",
+]
+
+[[package]]
+name = "suite-ui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "ratatui",
 ]
 
 [[package]]

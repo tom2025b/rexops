@@ -6,20 +6,25 @@
 use ratatui::text::Span;
 
 use rexops_core::AdapterHealth;
+use suite_ui::Theme;
 
-use crate::theme;
+use crate::health;
 
 /// Renders a health badge as a Span (colored text).
 /// Example output: "✓ Healthy" in green, "✗ Unavailable" in red, etc.
 ///
-/// This is a pure function — pass the health, get a styled Span back.
-/// Callers can put it in a Cell, Line, etc.
-pub fn render_health_badge(health: AdapterHealth) -> Span<'static> {
+/// This is a pure function — pass the health + theme, get a styled Span back.
+/// Callers can put it in a Cell, Line, etc. Styling comes from the shared
+/// `suite_ui::Theme` (NO_COLOR-safe), via the local AdapterHealth→Health map.
+pub fn render_health_badge(health: AdapterHealth, theme: Theme) -> Span<'static> {
     let (symbol, text) = match health {
         AdapterHealth::Healthy => ("✓", "Healthy"),
         AdapterHealth::Degraded => ("!", "Degraded"),
         AdapterHealth::Unavailable => ("✗", "Unavailable"),
         AdapterHealth::Unknown => ("?", "Unknown"),
     };
-    Span::styled(format!("{symbol} {text}"), theme::health_style(&health))
+    Span::styled(
+        format!("{symbol} {text}"),
+        theme.health(health::to_suite(health)),
+    )
 }

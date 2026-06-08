@@ -17,8 +17,9 @@ use ratatui::{
     Frame,
 };
 
+use suite_ui::{pane, Theme};
+
 use crate::app::App;
-use crate::theme;
 use crate::widgets;
 
 /// One entry in the launcher catalog: the adapter/tool id (keys `which` and the
@@ -63,7 +64,7 @@ pub const CATALOG: &[ToolEntry] = &[
 ];
 
 /// Render the Launcher screen.
-pub fn render_launcher(f: &mut Frame, app: &App, area: Rect) {
+pub fn render_launcher(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -72,23 +73,23 @@ pub fn render_launcher(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    render_launcher_header(f, chunks[0]);
-    render_launcher_list(f, app, chunks[1]);
+    render_launcher_header(f, chunks[0], theme);
+    render_launcher_list(f, app, chunks[1], theme);
 }
 
-fn render_launcher_header(f: &mut Frame, area: Rect) {
+fn render_launcher_header(f: &mut Frame, area: Rect, theme: Theme) {
     let header = Paragraph::new(Line::from(Span::raw(
         "Launcher — pick a tool, Enter to launch",
     )))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::border_style()),
+            .border_style(theme.dim()),
     );
     f.render_widget(header, area);
 }
 
-fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
+fn render_launcher_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, tool) in CATALOG.iter().enumerate() {
@@ -104,6 +105,7 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
             health,
             tool.description,
             i == app.selected_tool,
+            theme,
         );
         lines.push(item);
     }
@@ -111,19 +113,16 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "↑/↓ select  •  Enter launch (asks to confirm)  •  Esc back to Dashboard",
-        theme::help_style(),
+        theme.dim(),
     )));
     lines.push(Line::from(Span::styled(
         "Workstate-sourced sections report 'no launch command yet'.",
-        theme::help_style(),
+        theme.dim(),
     )));
 
-    let list = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Tools ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let list = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Tools", theme));
 
     f.render_widget(list, area);
 }

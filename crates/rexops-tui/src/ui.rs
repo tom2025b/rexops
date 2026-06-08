@@ -5,23 +5,25 @@
 //! - Dispatching the main content area to the appropriate screen
 //!   (Dashboard or Adapters with selection).
 //!
-//! All actual widget construction and styling is delegated to
-//! `screens::dashboard` and `theme`.
+//! Styling comes from the shared `suite_ui::Theme`; the help and confirm
+//! overlays are the suite's `HelpSheet` / `ConfirmModal`. Per-screen widget
+//! construction is delegated to `screens::*`.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
+use suite_ui::{ConfirmModal, HelpSheet, Theme};
+
 use crate::app::{App, PendingAction};
 use crate::screens;
-use crate::theme;
 use rexops_core::AppConfig;
 
 /// Main render entry point called every frame.
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &App, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -31,60 +33,60 @@ pub fn render(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    render_header(f, app, chunks[0]);
+    render_header(f, app, chunks[0], theme);
     // Dispatch main content based on current screen (per plan's screens/ structure).
     match app.current_screen {
         crate::app::Screen::Dashboard => {
-            screens::render_dashboard(f, app, chunks[1]);
+            screens::render_dashboard(f, app, chunks[1], theme);
         }
         crate::app::Screen::Adapters => {
-            screens::render_adapters(f, app, chunks[1]);
+            screens::render_adapters(f, app, chunks[1], theme);
         }
         crate::app::Screen::System => {
-            screens::render_system(f, app, chunks[1]);
+            screens::render_system(f, app, chunks[1], theme);
         }
         crate::app::Screen::Scripts => {
-            screens::render_scripts(f, app, chunks[1]);
+            screens::render_scripts(f, app, chunks[1], theme);
         }
         crate::app::Screen::Tools => {
-            screens::render_tools(f, app, chunks[1]);
+            screens::render_tools(f, app, chunks[1], theme);
         }
         crate::app::Screen::Launcher => {
-            screens::render_launcher(f, app, chunks[1]);
+            screens::render_launcher(f, app, chunks[1], theme);
         }
     }
-    render_status_bar(f, app, chunks[2]);
+    render_status_bar(f, app, chunks[2], theme);
 
     // Nice help overlay popup (toggled with ?/h; press again to close).
     if app.show_help {
-        render_help_popup(f, f.area());
+        render_help_popup(f, f.area(), theme);
     }
 
     // Confirmation modal takes precedence over everything else: if a mutating
     // action is awaiting confirmation, it MUST be the thing the user sees and
     // acts on. Drawn last so it sits on top of the screen and the help popup.
     if let Some(pending) = &app.pending_action {
-        render_confirm_popup(f, pending, &app.config, f.area());
+        render_confirm_popup(f, pending, &app.config, f.area(), theme);
     }
 }
 
-fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect, theme: Theme) {
     let title = if app.refreshing {
         "RexOps  —  Dashboard  (refreshing...)"
     } else {
         "RexOps  —  Dashboard"
     };
 
-    let header = Paragraph::new(title).style(theme::title_style()).block(
+    let header = Paragraph::new(title).style(theme.title()).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::border_style()),
+            .border_style(theme.dim()),
     );
 
     f.render_widget(header, area);
 }
 
-fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, theme: Theme) {
     let available = app.snapshot.any_adapter_available();
     let count = app.snapshot.adapter_health.len();
 
@@ -108,119 +110,69 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             }
         }
     };
-    let right = if app.refreshing {
-        "working..."
+    // The right-hand state badge reuses the shared health styling so "available"
+    // vs "unavailable" reads the same way as every other health cue in the suite.
+    let (right, right_style) = if app.refreshing {
+        ("working...", theme.working())
     } else if count == 0 {
-        "no adapters probed"
+        ("no adapters probed", theme.dim())
     } else if available {
-        "adapters available"
+        ("adapters available", theme.health(suite_ui::Health::Healthy))
     } else {
-        "all adapters unavailable"
+        (
+            "all adapters unavailable",
+            theme.health(suite_ui::Health::Unavailable),
+        )
     };
 
     let status = Paragraph::new(Line::from(vec![
         Span::raw(left),
         Span::raw("   |   "),
-        Span::styled(
-            right,
-            ratatui::style::Style::default().fg(if available {
-                ratatui::style::Color::Green
-            } else {
-                ratatui::style::Color::Red
-            }),
-        ),
+        Span::styled(right, right_style),
     ]))
     .block(Block::default().borders(Borders::ALL));
 
     f.render_widget(status, area);
 }
 
-fn render_help_popup(f: &mut Frame, area: Rect) {
-    let popup_area = centered_rect(55, 45, area);
-    let help_text = vec![
-        Line::from("RexOps TUI Help"),
-        Line::from(""),
-        Line::from("Global: q/Esc/Ctrl-C quit  •  r refresh (bg thread)  •  ?/h toggle this"),
-        Line::from("Screens: 1 Dashboard (overview + risk + notes)  •  2 Adapters (list + detail)  •  3 System  •  4 Scripts  •  5 Tools  •  6 Launcher"),
-        Line::from(""),
-        Line::from(
-            "In Adapters: j/k or ↑/↓ move  •  enter activate (note)  •  type to filter live",
-        ),
-        Line::from(
-            "In Launcher: ↑/↓ select a tool  •  enter launch  •  esc back to Dashboard",
-        ),
-        Line::from("             esc = clear filter (or quit if none)  •  backspace edit filter"),
-        Line::from(""),
-        Line::from(
-            "Selection and filter persist across refreshes. System adapter is always healthy.",
-        ),
-        Line::from(""),
-        Line::from("Press ?/h again to close. See README and docs/TUI_DESIGN.md for more."),
+/// The keybinding help overlay, drawn with the suite's shared `HelpSheet`.
+fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
+    let rows = [
+        ("q / Esc / ^C", "quit (Esc clears a filter first)"),
+        ("r", "refresh (background thread)"),
+        ("? / h", "toggle this help"),
+        ("1", "Dashboard — overview, risk, notes"),
+        ("2", "Adapters — list + detail; type to filter"),
+        ("3", "System"),
+        ("4", "Scripts"),
+        ("5", "Tools"),
+        ("6", "Launcher"),
+        ("j / k · ↑ / ↓", "move the selection (Adapters / Launcher)"),
+        ("Enter", "activate selection / launch (asks to confirm)"),
+        ("backspace", "edit the Adapters filter"),
     ];
-    let popup = Paragraph::new(help_text).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Help Overlay (press ?/h to close) ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
-    f.render_widget(Clear, popup_area);
-    f.render_widget(popup, popup_area);
+    HelpSheet {
+        title: "RexOps Keybindings",
+        rows: &rows,
+    }
+    .render(f, area, theme);
 }
 
 /// Render the confirmation modal for a pending mutating action.
 ///
-/// Deliberately loud and explicit (hard to miss): a yellow bordered box, a
-/// bold ⚠ CONFIRM title, the action prompt, the dry-run preview of exactly what
-/// would run, and an unambiguous Enter = YES / Esc = no affordance.
-fn render_confirm_popup(f: &mut Frame, pending: &PendingAction, config: &AppConfig, area: Rect) {
-    let popup_area = centered_rect(60, 35, area);
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(pending.prompt(), theme::confirm_style())),
-        Line::from(""),
-        // The preview line IS the dry-run: what would happen, shown before it does.
-        Line::from(Span::raw(pending.preview(config))),
-        Line::from(""),
-        Line::from(Span::styled(
-            "[ Enter = YES, run it ]    [ Esc = no, cancel ]",
-            theme::confirm_style(),
-        )),
-        Line::from(Span::styled(
-            "Nothing runs until you press Enter.",
-            theme::help_style(),
-        )),
-    ];
-
-    let popup = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" ⚠ CONFIRM ")
-            .borders(Borders::ALL)
-            .border_style(theme::confirm_style()),
-    );
-
-    // Clear erases whatever is behind the popup so the modal is fully opaque.
-    f.render_widget(Clear, popup_area);
-    f.render_widget(popup, popup_area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-    let vert = popup_layout[1];
-    let horiz_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vert);
-    horiz_layout[1]
+/// The suite's `ConfirmModal` draws title + message; we fold the dry-run preview
+/// (exactly what would run) into the message so the safety affordance survives.
+fn render_confirm_popup(
+    f: &mut Frame,
+    pending: &PendingAction,
+    config: &AppConfig,
+    area: Rect,
+    theme: Theme,
+) {
+    let message = format!("{}   {}", pending.prompt(), pending.preview(config));
+    ConfirmModal {
+        title: "⚠ Confirm",
+        message: &message,
+    }
+    .render(f, area, theme);
 }

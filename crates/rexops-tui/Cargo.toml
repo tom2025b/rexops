@@ -22,3 +22,8 @@ serde_yaml = "0.9"
 # The heavy lifting (config + live snapshot building) now comes from rexops-app.
 rexops-core = { path = "../rexops-core" }
 rexops-app = { path = "../rexops-app" }
+
+# Shared suite-wide TUI chrome (theme/palette + rounded panes + overlays), so
+# RexOps and ScriptVault present the same look from one source. Local path dep
+# for now (the suite crate is unpublished).
+suite-ui = { path = "../../../linux-ops-suite/crates/suite-ui" }

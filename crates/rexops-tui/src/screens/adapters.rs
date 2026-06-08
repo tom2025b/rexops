@@ -11,28 +11,30 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
+use suite_ui::{pane, Theme};
+
 use crate::app::App;
-use crate::theme;
+use crate::health;
 use crate::widgets;
 
 use rexops_core::AdapterHealth;
 
 /// Render the Adapters screen into the given area.
-pub fn render_adapters(f: &mut Frame, app: &App, area: Rect) {
+pub fn render_adapters(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(area);
 
-    render_adapter_list(f, app, chunks[0]);
-    render_adapter_detail(f, app, chunks[1]);
+    render_adapter_list(f, app, chunks[0], theme);
+    render_adapter_detail(f, app, chunks[1], theme);
 }
 
-fn render_adapter_list(f: &mut Frame, app: &App, area: Rect) {
+fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let visible = app.filtered_adapter_names();
     let mut lines: Vec<Line> = Vec::new();
 
@@ -62,26 +64,23 @@ fn render_adapter_list(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 "binary not found or probe failed"
             };
-            let item = widgets::render_adapter_item(name, health, info, is_selected);
+            let item = widgets::render_adapter_item(name, health, info, is_selected, theme);
             lines.push(item);
         }
     }
 
     let title = format!(
-        " Adapters{} (j/k/arrows, enter, chars to filter, esc/backspace) ",
+        "Adapters{} (j/k/arrows, enter, chars to filter, esc/backspace)",
         filter_suffix
     );
-    let list = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let list = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane(&title, theme));
 
     f.render_widget(list, area);
 }
 
-fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect) {
+fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     let visible = app.filtered_adapter_names();
@@ -91,11 +90,11 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect) {
     if let Some(name) = visible.get(sel_pos) {
         lines.push(Line::from(Span::styled(
             format!("Detail for: {name}"),
-            theme::title_style(),
+            theme.title(),
         )));
 
         if let Some(health) = app.snapshot.adapter_health.get(name) {
-            let style = theme::health_style(health);
+            let style = theme.health(health::to_suite(*health));
             lines.push(Line::from(vec![
                 Span::raw("Health: "),
                 Span::styled(format!("{:?}", health), style),
@@ -129,18 +128,15 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Tip: 'enter' surfaces selection. Press ?/h for full help popup.",
-            theme::help_style(),
+            theme.dim(),
         )));
     } else {
         lines.push(Line::from("No adapter selected."));
     }
 
-    let detail = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Preview / Detail ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let detail = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Preview / Detail", theme));
 
     f.render_widget(detail, area);
 }

@@ -14,12 +14,13 @@ use ratatui::{
     Frame,
 };
 
+use suite_ui::{pane, Theme};
+
 use crate::app::App;
-use crate::theme;
 use crate::widgets;
 
 /// Render the Tools screen.
-pub fn render_tools(f: &mut Frame, app: &App, area: Rect) {
+pub fn render_tools(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,11 +29,11 @@ pub fn render_tools(f: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    render_tools_header(f, app, chunks[0]);
-    render_tools_list(f, app, chunks[1]);
+    render_tools_header(f, app, chunks[0], theme);
+    render_tools_list(f, app, chunks[1], theme);
 }
 
-fn render_tools_header(f: &mut Frame, app: &App, area: Rect) {
+fn render_tools_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     // Look up the section health recorded for tools (set during build_snapshot).
     // Falls back to Unknown if not present (graceful degradation, per error handling doc).
     let health = app
@@ -41,13 +42,13 @@ fn render_tools_header(f: &mut Frame, app: &App, area: Rect) {
         .get("tools")
         .copied()
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
-    let badge = widgets::render_health_badge(health);
+    let badge = widgets::render_health_badge(health, theme);
 
     // Header shows the conceptual name + live badge (same pattern as scripts/system headers).
     let header = Paragraph::new(Line::from(vec![Span::raw("Tools / Inventory "), badge])).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(theme::border_style()),
+            .border_style(theme.dim()),
     );
 
     f.render_widget(header, area);
@@ -64,7 +65,7 @@ fn tool_status_to_adapter_health(status: &str) -> rexops_core::AdapterHealth {
     }
 }
 
-fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
+fn render_tools_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(tf) = &app.snapshot.tools {
@@ -93,7 +94,8 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
 
                 // Main row: display_name + badge (from status) + info.
                 let item_health = tool_status_to_adapter_health(&t.status);
-                let item = widgets::render_adapter_item(&t.display_name, item_health, &info, false);
+                let item =
+                    widgets::render_adapter_item(&t.display_name, item_health, &info, false, theme);
                 lines.push(item);
             }
         }
@@ -112,16 +114,13 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Tip: Press '1' for Dashboard, '2' for Adapters, '3' for System, '4' for Scripts.",
-        theme::help_style(),
+        theme.dim(),
     )));
 
     // The block title and border match the style of other list screens.
-    let list = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .title(" Tools ")
-            .borders(Borders::ALL)
-            .border_style(theme::border_style()),
-    );
+    let list = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .block(pane("Tools", theme));
 
     f.render_widget(list, area);
 }
