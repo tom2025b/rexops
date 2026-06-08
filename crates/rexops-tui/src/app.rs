@@ -260,7 +260,17 @@ impl App {
         self.log_event("Snapshot updated from adapter probes");
     }
 
-    /// Returns the current filtered view of adapter names (live search in Adapters screen).
+    /// Whether the current screen accepts live-filter typing. The shared `filter`
+    /// string drives the Adapters list and the Dashboard adapters table, so both
+    /// screens take character / backspace / esc input into it; every other screen
+    /// leaves those keys for their own bindings. This is the single place the
+    /// filter's scope is defined.
+    fn filter_screen(&self) -> bool {
+        matches!(self.current_screen, Screen::Adapters | Screen::Dashboard)
+    }
+
+    /// Returns the current filtered view of adapter names (live search shared by
+    /// the Adapters screen and the Dashboard adapters table).
     pub fn filtered_adapter_names(&self) -> Vec<String> {
         if self.filter.is_empty() {
             self.adapter_names.clone()
@@ -642,7 +652,7 @@ impl App {
                 false
             }
             crate::action::Action::Cancel => {
-                if self.current_screen == Screen::Adapters && !self.filter.is_empty() {
+                if self.filter_screen() && !self.filter.is_empty() {
                     self.filter.clear();
                     let visible = self.filtered_adapter_names();
                     self.selected_adapter = visible.first().cloned();
@@ -657,7 +667,7 @@ impl App {
                 }
             }
             crate::action::Action::InputChar(c) => {
-                if self.current_screen == Screen::Adapters && c.is_ascii_graphic() {
+                if self.filter_screen() && c.is_ascii_graphic() {
                     self.filter.push(c);
                     let visible = self.filtered_adapter_names();
                     self.selected_adapter = visible.first().cloned();
@@ -665,7 +675,7 @@ impl App {
                 false
             }
             crate::action::Action::Backspace => {
-                if self.current_screen == Screen::Adapters && !self.filter.is_empty() {
+                if self.filter_screen() && !self.filter.is_empty() {
                     self.filter.pop();
                     let visible = self.filtered_adapter_names();
                     if let Some(cur) = &self.selected_adapter {
@@ -711,6 +721,76 @@ mod tests {
     fn bare_app() -> App {
         let (tx, _rx) = mpsc::channel();
         App::new(tx, AppConfig::default())
+    }
+
+    /// An App whose snapshot carries the given adapter names, on the Dashboard
+    /// screen, for the live-filter tests. Names are applied via `apply_snapshot`
+    /// so `adapter_names` is derived exactly as it is in production.
+    fn dashboard_app_with_adapters(names: &[&str]) -> App {
+        let mut app = bare_app();
+        let mut snap = OpsSnapshot::new();
+        for name in names {
+            snap.adapter_health
+                .insert((*name).to_owned(), rexops_core::AdapterHealth::Healthy);
+        }
+        app.apply_snapshot(snap);
+        app.current_screen = Screen::Dashboard;
+        app
+    }
+
+    #[test]
+    fn typing_on_the_dashboard_drives_the_shared_filter() {
+        // Before this change, InputChar was a no-op off the Adapters screen. Now
+        // the Dashboard takes filter input too, narrowing the adapter view.
+        let mut app = dashboard_app_with_adapters(&["bulwark", "scripts", "system"]);
+        let mut runner = FakeRunner { calls: 0 };
+        for c in "bul".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        assert_eq!(app.filter, "bul");
+        assert_eq!(app.filtered_adapter_names(), vec!["bulwark".to_owned()]);
+    }
+
+    #[test]
+    fn esc_clears_the_dashboard_filter_without_quitting() {
+        let mut app = dashboard_app_with_adapters(&["bulwark", "scripts"]);
+        let mut runner = FakeRunner { calls: 0 };
+        for c in "bul".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        assert_eq!(app.filter, "bul");
+        // Esc with a non-empty filter clears it and does NOT request quit.
+        let quit = app.on_action(Action::Cancel, &mut runner);
+        assert!(!quit, "esc must clear the filter, not quit, while filtering");
+        assert!(app.filter.is_empty());
+        assert_eq!(app.filtered_adapter_names().len(), 2);
+    }
+
+    #[test]
+    fn backspace_edits_the_dashboard_filter() {
+        let mut app = dashboard_app_with_adapters(&["bulwark", "scripts"]);
+        let mut runner = FakeRunner { calls: 0 };
+        for c in "bulx".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        assert_eq!(app.filter, "bulx");
+        assert!(app.filtered_adapter_names().is_empty(), "'bulx' matches nothing");
+        app.on_action(Action::Backspace, &mut runner);
+        assert_eq!(app.filter, "bul");
+        assert_eq!(app.filtered_adapter_names(), vec!["bulwark".to_owned()]);
+    }
+
+    #[test]
+    fn filter_typing_is_inert_on_a_non_filter_screen() {
+        // System is not a filter screen, so characters there must NOT mutate the
+        // shared filter (they stay available for that screen's own bindings).
+        let mut app = dashboard_app_with_adapters(&["bulwark", "scripts"]);
+        app.current_screen = Screen::System;
+        let mut runner = FakeRunner { calls: 0 };
+        for c in "bul".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        assert!(app.filter.is_empty(), "typing on System must not filter");
     }
 
     #[test]

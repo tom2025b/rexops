@@ -48,17 +48,24 @@ No tokio/async in the TUI; the current workload is covered by a short-lived refr
 ## Dashboard Screen
 Layout (top to bottom):
 
-1. Title / header: "RexOps" + current timestamp or "last refresh"
-2. Adapters section:
+1. Search / filter bar (`suite_ui::SearchBar`): a one-line live filter for the
+   adapters table below it. Shows a dim placeholder when empty and the query +
+   match count once typing starts. Type to narrow; `esc` clears. Backed by the
+   shared `App::filter` string (the same one the Adapters screen uses), so a
+   query carries consistently between the two.
+2. Adapters section (filtered by the search bar):
    - Table or list: Name | Health (colored) | Version | Notes
    - Color: Green=Healthy, Yellow=Degraded, Red=Unavailable, Gray=Unknown
    - Symbol prefix: ✓ ! ✗ ?
+   - When a filter matches nothing, a single dim "(no matches)" row replaces the
+     table body rather than leaving it blank.
 3. Risk summary (from snapshot.risk): counts by severity + should_block flag
 4. Notes / messages area: adapter notes + "Refreshing..." + errors
 5. Status bar (bottom, full width):
-   - Left: "RexOps TUI  |  q quit  r refresh  ? help"
-   - Right: "adapters: 1/3 healthy" or similar
-   - Center or overlay: "Refreshing..." spinner text when active
+   - Left: context-sensitive keybind hints per screen
+   - Middle: the shared `suite_ui::StatusBar` job-status segment
+     (running / done / failed / cancelled / idle)
+   - Right: adapter availability badge ("adapters available" / "all unavailable")
 
 When no adapters registered or all unavailable:
 - Prominent banner: "No healthy adapters detected."
@@ -74,7 +81,7 @@ When no adapters registered or all unavailable:
 - `4` — Switch to Scripts screen (Workstate scripts section)
 - `5` — Switch to Tools screen (Workstate tools section)
 - In Adapters: j/k or up/down arrows to move selection, enter to activate (surfaces in notes + updates detail)
-- Live filter: type printable chars (non-command letters) to filter the adapters list live; backspace edits; esc clears filter (or quits if empty)
+- Live filter: on the **Dashboard and Adapters** screens, type printable chars (non-command letters) to filter the adapters view live; backspace edits; esc clears the filter (or, when already empty, quits / goes back). Other screens leave those keys for their own bindings. The set of filter-accepting screens is defined in one place: `App::filter_screen()`.
 - Status bar shows context-sensitive hints per screen.
 - `?` / `h` shows a nice centered popup help overlay (press again to close); also shows in messages.
 All keys are handled in one place (event.rs or app.rs) so behavior is uniform.

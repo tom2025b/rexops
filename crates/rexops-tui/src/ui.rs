@@ -133,7 +133,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     } else {
         match app.current_screen {
             crate::app::Screen::Dashboard => {
-                "q quit  •  ^P palette  •  r refresh  •  ? help  •  1-7 screens"
+                "q quit  •  ^P palette  •  type to filter  •  esc clear  •  r refresh  •  ? help  •  1-7 screens"
             }
             crate::app::Screen::Adapters => {
                 "q quit  •  ^P palette  •  j/k nav  •  enter select  •  1 dashboard"
