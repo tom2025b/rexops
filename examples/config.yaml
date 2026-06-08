@@ -1,12 +1,11 @@
 # RexOps sample configuration (examples/config.yaml)
 # This is the shape that AppConfig in rexops-core will deserialize.
 #
-# Typical locations (future loader will search in order):
-#   1. --config /path/to/file
-#   2. $REXOPS_CONFIG
-#   3. ./rexops.yaml or ./rexops.yml
-#   4. $XDG_CONFIG_HOME/rexops/config.yaml (~/.config/rexops/config.yaml)
-#   5. Built-in defaults (all adapters optional + enabled if present)
+# Current loader locations:
+#   1. ./examples/config.yaml
+#   2. ./rexops.yaml
+#   3. ./rexops.yml
+#   4. Built-in defaults
 
 version: 1
 
@@ -27,32 +26,9 @@ adapters:
   # workstate:
   #   enabled: true
 
-# Global defaults (Phase 1 minimal surface; will grow)
+# Global defaults
 defaults:
   # Default timeout for adapter probes and data fetches (if not overridden)
   timeout_secs: 30
   # Whether to include detailed stderr in error reports / JSON output
   include_stderr_in_errors: true
-
-# Future sections (documented here so the sample stays forward-compatible)
-# tools:
-#   # Extra directories to scan for "found" tools (beyond PATH and known locations)
-#   extra_paths: []
-#
-# reports:
-#   # Where to write local report summaries (JSON snapshots)
-#   output_dir: "~/.local/share/rexops/reports"
-#   retention_days: 30
-#
-# tui:
-#   # Keyboard-first; mouse optional
-#   theme: "dark"   # or "light", "high_contrast"
-#   # How often the dashboard auto-refreshes adapter health (ms)
-#   refresh_interval_ms: 5000
-#   # Show help overlay on first run
-#   show_help_on_start: true
-
-# Learning note for maintainers:
-# Keep the top-level keys stable. Add new optional sections with defaults
-# in the Rust AppConfig struct so old configs continue to load.
-# Use #[serde(default)] liberally on structs and Vecs.

@@ -4,7 +4,7 @@
 //! adapter names with tool names, makes function signatures self-documenting,
 //! and allows us to centralize validation/normalization rules in one place.
 //!
-//! Rules for all ids in RexOps (Phase 1):
+//! Rules for all ids in RexOps:
 //! - Must be non-empty after trimming whitespace.
 //! - Are stored in normalized form (trimmed, original case preserved for display).
 //! - Implement the usual traits for use in HashMap keys, sorting, etc.
@@ -97,16 +97,6 @@ impl AsRef<str> for ToolId {
         self.as_str()
     }
 }
-
-// Learning Notes:
-// - #[serde(transparent)] makes the JSON/YAML look like a plain string:
-//     "adapter": "bulwark"   instead of   "adapter": {"0": "bulwark"}
-//   This is the expected UX for config and snapshot files.
-// - Private inner String + constructor is the classic Rust newtype pattern
-//   for "make invalid states unrepresentable".
-// - We implement AsRef<str> + Display so that call sites can use &*id or
-//   format!("{}", id) without having to invent accessor names everywhere.
-// - No Default impl on purpose — an empty id is never valid.
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

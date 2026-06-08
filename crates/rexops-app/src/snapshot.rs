@@ -3,9 +3,7 @@
 //! This module contains the *only* place that knows how to turn a loaded
 //! AppConfig into a live OpsSnapshot by probing the enabled adapters.
 //!
-//! Previously this logic (and the nearly-identical registry builder) was
-//! copy-pasted between CLI and TUI. That was temporary scaffolding per the
-//! architecture plan. Now it lives in rexops-app so:
+//! Snapshot and registry construction lives here so:
 //! - There is one source of truth for "what does a snapshot contain?"
 //! - The Workstate v3 snapshot is the single source of truth for scripts/tools/findings.
 //! - CLI and TUI stay thin (they just call these fns and render).
@@ -318,7 +316,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
     snap.findings = Some(findings.clone());
 }
 
-/// Build a simple AdapterRegistry from live probes (demo of registry usage).
+/// Build an AdapterRegistry from live probes.
 /// Only includes adapters enabled in config.
 ///
 /// This is intentionally separate from build_snapshot because the `rexops adapters`
@@ -368,16 +366,6 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
 
     reg
 }
-
-// Learning Notes:
-// - Both builders are side-effecting (they call into adapters which may spawn
-//   processes or read /proc etc.). That's why they live in rexops-app, not core.
-// - The Workstate v3 snapshot is the single source of truth for scripts/tools/findings.
-// - stdin is read ONCE (read_piped_stdin) and routed by content (classify_snapshot),
-//   because stdin is a process singleton. Only Workstate v3 snapshots are recognized
-//   via piped stdin; anything else is Unknown.
-// - The Adapter trait is used only for .health(), .version(), .info(), .binary().
-//   No other adapter internals leak out of this crate.
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

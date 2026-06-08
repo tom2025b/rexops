@@ -2,9 +2,6 @@
 //!
 //! Used by the Adapters screen to render each item with name, health badge,
 //! and optional info. Keeps rendering logic reusable and out of the screen.
-//!
-//! For now, returns a Line (suitable for Paragraph or List items). In future
-//! could return a Table row or custom widget.
 
 use ratatui::text::{Line, Span};
 
@@ -37,10 +34,3 @@ pub fn render_adapter_item(
         Span::raw(format!(" — {info}")),
     ])
 }
-
-// Learning Notes:
-// - This widget composes the HealthBadge, demonstrating reuse.
-// - Selection highlight is simple (bold + prefix) — easy to extend with
-//   background colors or ratatui's ListState later.
-// - Info is a short string; real version could take more structured data
-//   from snapshot (e.g. version from notes).

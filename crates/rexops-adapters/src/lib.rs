@@ -21,7 +21,7 @@
 //! - No God files. Every .rs stays well under 300 lines (ideally < 200).
 //! - Every fallible public function returns `Result<T, AdapterError>`.
 //! - Zero `unwrap()` / `expect()` in non-test code (denied at the crate root).
-//! - No Tokio, no async, no execution/mutation logic in phase 1.
+//! - No Tokio, no async, no execution/mutation logic.
 //! - The only thing that ever calls std::process::Command is inside exec.rs.
 //!
 //! Public surface (re-exports):
@@ -58,8 +58,4 @@ pub use system::{SystemAdapter, SystemInfo};
 pub use types::{AdapterHealth, AdapterOutput};
 pub use workstate::{status_to_health, Provenance, Section, WorkstateAdapter, WorkstateInfo};
 
-// NOTE TO FUTURE EDITORS:
-// Do NOT add any functions, constants, or re-exports that contain logic in this
-// file. lib.rs is intentionally a directory of contents only. All behavior
-// lives in the modules above. This makes the crate easy to audit and keeps
-// the root under 50 lines forever.
+// lib.rs stays as a directory of contents. Behavior lives in the modules above.

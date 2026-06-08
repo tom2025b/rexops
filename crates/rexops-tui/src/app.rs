@@ -27,16 +27,12 @@ use crate::launcher::{self, ForegroundRunner};
 
 /// A mutating action that has been *requested* but not yet *confirmed*.
 ///
-/// This is the reusable core of the Phase 8 safety layer. A mutating action
-/// never executes the moment the user asks for it: it first becomes a
+/// A mutating action never executes the moment the user asks for it: it first becomes a
 /// `PendingAction`, which the UI renders as an explicit confirmation modal.
 /// Only an explicit confirm (Enter) runs it; cancel (Esc) discards it.
 ///
 /// It is deliberately a small enum, not a boxed trait object. The action set is
-/// known and fixed, so adding a future mutating action (e.g. delete/run) means
-/// adding one variant here plus arms in `prompt`/`preview` and the confirm
-/// handler — no framework, no abstraction tax. For now there is exactly one
-/// variant: launching a specialist tool.
+/// known and fixed. Launching a specialist tool is the current confirmed action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     /// Launch a specialist tool by catalog id, shown to the user as `name`.
@@ -81,7 +77,6 @@ pub struct App {
     pub show_help: bool,
 
     /// Which top-level screen is currently active.
-    /// This demonstrates the screens/ modularity from the plan.
     pub current_screen: Screen,
 
     /// Sorted list of adapter ids from the current snapshot (for stable ordering in lists).
@@ -114,7 +109,7 @@ pub struct App {
     tx: mpsc::Sender<OpsSnapshot>,
 }
 
-/// Simple screen selector (more can be added later: Tools, Reports, etc.).
+/// Top-level screen selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Screen {
     #[default]
@@ -349,7 +344,7 @@ impl App {
             crate::action::Action::Activate => {
                 if self.current_screen == Screen::Adapters {
                     if let Some(name) = &self.selected_adapter {
-                        // Demo: surface selection in notes (real detail pane in render).
+                        // Surface the selected adapter in the event stream.
                         self.snapshot.add_note(format!(
                             "selected adapter detail: {name} (press r to refresh for live)"
                         ));
@@ -631,26 +626,3 @@ mod tests {
         assert_eq!(runner.calls, 0, "arming must not spawn a process");
     }
 }
-
-// The local build_snapshot was removed in this increment. We now call the
-// shared rexops_app::build_snapshot (re-exported/used at top of file) from
-// request_refresh. This eliminates the previous duplication with the CLI.
-//
-// The Learning Notes about "keeping logic in TUI for now" are obsolete — the
-// plan has been followed and the shared rexops-app layer is in place.
-//
-// Learning Notes (Phase 8 — confirmation layer):
-// - The confirmation flow is a tiny state machine in App (pending_action:
-//   Option<PendingAction>), not a terminal concern, so it is fully unit-testable
-//   with FakeRunner — no real TTY needed. Logic lives here; only rendering lives
-//   in ui.rs.
-// - The gate at the TOP of on_action makes the modal *modal*: while something is
-//   pending, Enter confirms, Esc cancels, every other key is swallowed. Nothing
-//   leaks to the underlying screen.
-// - Safety invariant: launch_tool has exactly one caller (confirm_pending),
-//   reachable only via the gate. So a mutation needs two keypresses (arm, then
-//   confirm) and the modal always renders between them — there is no
-//   single-key arm-and-fire path.
-// - PendingAction is a small enum, not a boxed trait. Adding a future mutating
-//   action is one variant + arms in prompt/preview/confirm_pending — reusable
-//   without an abstraction framework (KISS/YAGNI).

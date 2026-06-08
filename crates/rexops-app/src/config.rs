@@ -3,9 +3,7 @@
 //! This is the single implementation of "find a config file in the documented
 //! search order, deserialize, validate, or fall back to defaults".
 //!
-//! Previously duplicated (almost byte-for-byte) between rexops-cli and
-//! rexops-tui. Now lives here so both front-ends (and future ones) stay in
-//! sync and we have one place to evolve search paths / XDG / env var logic.
+//! Shared by rexops-cli and rexops-tui so both front-ends stay in sync.
 
 use std::path::Path;
 
@@ -42,15 +40,3 @@ pub fn load_config() -> AppConfig {
     }
     AppConfig::default()
 }
-
-// Learning Notes:
-// - The function is pure from the caller's POV (no side effects except FS reads
-//   which are expected for config).
-// - We deliberately do *not* use anyhow here; the signature returns AppConfig
-//   (never fails). Errors are swallowed into the default, which is the graceful
-//   behavior wanted for an ops cockpit.
-// - serde_yaml is only a dependency of the binaries + this app layer, never of
-//   the pure core or thin adapters crates. Good separation.
-// - Future evolution: add $REXOPS_CONFIG, XDG paths, --config CLI flag (the
-//   flag would live in the CLI crate and pass a Path to a new
-//   `load_config_from(path: &Path)` helper).

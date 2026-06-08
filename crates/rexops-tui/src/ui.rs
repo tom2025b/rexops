@@ -224,9 +224,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(vert);
     horiz_layout[1]
 }
-
-// Learning Notes:
-// - ui.rs now only does "frame layout + header/status chrome".
-// - The interesting content lives in screens/ (dashboard + adapters with list+detail).
-// - This matches the plan's desire for screens/ + theme/keymap separation.
-// - If we add more screens (tools, reports) we dispatch here based on app.current_screen.

@@ -207,12 +207,3 @@ fn run_app(
         }
     }
 }
-
-// Learning Notes:
-// - Using a short poll timeout + try_recv is the classic "cooperative
-//   multitasking" trick for single-threaded TUIs when you have blocking I/O
-//   work that must not freeze the screen.
-// - The panic hook + explicit restore pair is non-negotiable for any
-//   full-screen terminal app. Users hate having to run `reset` after a crash.
-// - We keep main.rs small and delegate state + rendering to dedicated modules
-//   so the entry point stays easy to audit.

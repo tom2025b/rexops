@@ -12,7 +12,7 @@
 
 //! rexops-core — single source of truth for domain models, state, and config.
 //!
-//! This crate owns *all* shared types used by CLI, TUI, and future app layers.
+//! This crate owns all shared types used by CLI, TUI, and the app layer.
 //! It contains zero execution logic, zero UI, and zero knowledge of how to spawn
 //! external processes. It only defines data, newtypes, transformations, and
 //! validation that can be tested in complete isolation.
@@ -28,7 +28,7 @@
 //! Public surface (re-exports for convenience):
 //! - CoreError — the only error type exported from this crate.
 //! - Newtypes: AdapterId, ToolId.
-//! - Health: AdapterHealth (re-exported for callers; ToolHealth may evolve here later).
+//! - Health: AdapterHealth (re-exported for callers).
 //! - Config: AppConfig + supporting types.
 //! - Snapshot: OpsSnapshot (includes optional SystemInfo, ScriptsInfo, ToolsInfo, FindingsInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
 //! - Registries: AdapterRegistry, ToolRegistry (data containers only).
@@ -56,7 +56,5 @@ pub use rexops_adapters::{
     AdapterHealth, AdapterOutput, FindingsInfo, ScriptsInfo, SystemInfo, ToolsInfo, WorkstateInfo,
 };
 
-// NOTE TO FUTURE EDITORS:
-// Do NOT add behavior, constructors with side effects, or rendering code here.
-// lib.rs must stay a pure directory of contents (< 60 lines forever).
-// All logic and data definitions live in the modules listed above.
+// lib.rs stays as a directory of contents. Logic and data definitions live in
+// the modules listed above.

@@ -4,8 +4,8 @@
 //! answer to the questions "is the tool installed?" and "is it healthy right
 //! now?" without any domain-specific knowledge.
 //!
-//! This trait is synchronous by design. The adapters crate in this phase
-//! performs no I/O except short-lived blocking calls to external CLIs.
+//! This trait is synchronous by design. The adapters crate performs no I/O
+//! except short-lived blocking calls to external CLIs.
 //! Adding async would multiply complexity (and pull in tokio) for zero gain
 //! at the scale RexOps currently targets.
 //!
@@ -51,12 +51,3 @@ pub trait Adapter {
     ///   }
     fn health(&self) -> AdapterHealth;
 }
-
-// Learning Notes:
-// - Trait objects are not used here; we prefer concrete types + generics at
-//   the call sites (e.g. fn foo<A: Adapter>(a: &A)) so monomorphization keeps
-//   the binary small and we avoid vtables in hot paths.
-// - No associated types or GATs — we want 1.75 compatibility and simplicity.
-// - The trait does *not* own the "run a domain command" surface. That lives on
-//   the concrete type so that adding a new adapter never requires touching this
-//   file.

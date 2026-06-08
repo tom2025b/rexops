@@ -1,8 +1,8 @@
-# RexOps TUI Design (Phase 2 start)
+# RexOps TUI Design
 
-Minimal, keyboard-first TUI using `ratatui` + `crossterm`. Built on top of `rexops-core` (for `OpsSnapshot`, health, registries) and `rexops-adapters` (for live probes). Never duplicates domain logic.
+Minimal, keyboard-first TUI using `ratatui` + `crossterm`. It calls `rexops-app` for config loading and snapshot refresh, uses `rexops-core` models for state, and never duplicates domain logic.
 
-## Goals for Initial Shell + Dashboard
+## Goals
 - Fast startup (< 100ms ideal when no work).
 - Never freezes the UI during adapter calls (which can take seconds or timeout).
 - Excellent empty, error, and degraded states (banners, not crashes or blank screens).
@@ -27,10 +27,10 @@ src/
 │   ├── system.rs
 │   ├── scripts.rs
 │   └── tools.rs       # render_tools
-└── (widgets/ for future reusable components)
+└── widgets/
 ```
 
-Keep initial files small. Split further only when a file approaches 200-250 LOC.
+Keep files small. Split further only when a file approaches 200-250 LOC.
 
 ## High-Level Architecture (Non-Blocking)
 - Main thread owns the `ratatui::Terminal<CrosstermBackend>` and draws at ~10-15 fps or on events.
@@ -38,15 +38,15 @@ Keep initial files small. Split further only when a file approaches 200-250 LOC.
 - On user action that needs I/O ("r" refresh):
   - Set `app.refreshing = true`
   - `spawn` a std thread (cheap for our use case)
-  - Thread does the work: construct `BulwarkAdapter`, call health/version, build `OpsSnapshot` (same pattern as cli)
-  - Send the result over a `std::sync::mpsc::channel` (or a small `Message` enum later)
+  - Thread does the work through `rexops_app::build_snapshot`
+  - Send the result over a `std::sync::mpsc::channel`
 - Main loop: after draw or on tick, `while let Ok(msg) = rx.try_recv() { app.apply(msg); }`
 - This guarantees the draw loop stays responsive even if a probe hits the 30s timeout.
 
-No tokio/async in the first TUI iteration (matches the "keep adapters phase simple" spirit and avoids pulling in a runtime until we have a clear need for many concurrent things).
+No tokio/async in the TUI; the current workload is covered by a short-lived refresh thread.
 
-## Dashboard Screen (Initial View)
-Single view for Phase 2 start. Layout (top to bottom):
+## Dashboard Screen
+Layout (top to bottom):
 
 1. Title / header: "RexOps" + current timestamp or "last refresh"
 2. Adapters section:
@@ -54,7 +54,7 @@ Single view for Phase 2 start. Layout (top to bottom):
    - Color: Green=Healthy, Yellow=Degraded, Red=Unavailable, Gray=Unknown
    - Symbol prefix: ✓ ! ✗ ?
 3. Risk summary (from snapshot.risk): counts by severity + should_block flag
-4. Notes / messages area (scrollable later): adapter notes + "Refreshing..." + errors
+4. Notes / messages area: adapter notes + "Refreshing..." + errors
 5. Status bar (bottom, full width):
    - Left: "RexOps TUI  |  q quit  r refresh  ? help"
    - Right: "adapters: 1/3 healthy" or similar
@@ -77,8 +77,6 @@ When no adapters registered or all unavailable:
 - Live filter: type printable chars (non-command letters) to filter the adapters list live; backspace edits; esc clears filter (or quits if empty)
 - Status bar shows context-sensitive hints per screen.
 - `?` / `h` shows a nice centered popup help overlay (press again to close); also shows in messages.
-- Future: more screens (reports, jobs), mouse support, explicit '/' focus filter, etc. (Action + keymap + screens separation makes extension easy).
-
 All keys are handled in one place (event.rs or app.rs) so behavior is uniform.
 
 ## State (App)
@@ -87,15 +85,16 @@ pub struct App {
     pub snapshot: OpsSnapshot,
     pub refreshing: bool,
     pub last_message: Option<String>,   // "refreshed at ...", errors, etc.
-    // later: current_screen: Screen, filter: String, selected: usize, ...
+    pub current_screen: Screen,
+    pub filter: String,
+    pub selected_adapter: usize,
 }
 ```
 
 `OpsSnapshot` comes from core and is the only "live" data. UI derives everything else.
 
-## Theming / Styling (Minimal)
-- Use ratatui's `Style`, `Color::Green` etc. directly at first.
-- Later (if grows): `theme.rs` with a `Theme` struct + helpers like `health_style(h: AdapterHealth) -> Style`.
+## Theming / Styling
+- Use `theme.rs` helpers for shared styles such as `health_style(h: AdapterHealth) -> Style`.
 - Borders: `Block::bordered().title("Adapters")`
 - Widgets extracted to `widgets/` (HealthBadge, AdapterItem, LogLine) for reuse across screens. Compose `Table`, `Paragraph`, `Gauge`, `Clear` for overlays. See `src/widgets/`.
 
@@ -106,28 +105,25 @@ pub struct App {
 - On panic in app code: best-effort terminal restore via `std::panic::set_hook`.
 
 ## Startup Flow
-1. Parse any future args (e.g. --config) — none for v0.
+1. Load config through rexops-app.
 2. Create channel (tx, rx).
 3. Setup terminal (enable mouse? no for keyboard-first; raw, alternate screen).
 4. Create initial `App { snapshot: OpsSnapshot::new(), refreshing: false, ... }`
-5. Optional: kick off an initial background refresh on start (or wait for user 'r').
+5. Kick off refresh from user input.
 6. Enter event/draw loop.
 7. On exit: restore terminal, then propagate any error.
 
 ## Testing Strategy (Light for UI)
 - Unit test pure functions: health color mapping, snapshot merging (already in core).
-- No heavy integration UI tests in first pass (hard without a real terminal or snapshot testing libs).
+- Keep integration UI tests light unless snapshot testing is added.
 - Manual dogfood: run, press r repeatedly, kill bulwark mid-run, resize, etc.
 - The four cargo gates still apply (clippy will be noisy on ratatui; allow a few targeted pedantic lints in ui code like adapters did).
 
-## Future Increments (Not for This Step)
-- Multiple screens (Reports, Jobs, detail panes). Tools (5) + Scripts (4) + System (3) + Adapters (2) now implemented.
+## Remaining Increments
+- Reports, jobs, and detail panes if the snapshot model grows to need them.
 - Live auto-refresh ticker (background thread that periodically sends new snapshots)
-- Search/filter, vim keys, mouse support (optional)
-- Help overlay as real popup widget
-- Theming + config driven colors
-- Extract common widgets (HealthBadge, RiskBar)
-- Use `rexops-app` layer (done): snapshot building is now shared; CLI + TUI are thin (see the rexops-app increment).
+- Mouse support if it proves useful.
+- Config-driven colors.
 
 ## Non-Goals (Keep It Simple)
 - No webview, no ratatui + tokio full async executor yet.

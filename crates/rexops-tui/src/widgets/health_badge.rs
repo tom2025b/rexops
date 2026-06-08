@@ -23,10 +23,3 @@ pub fn render_health_badge(health: AdapterHealth) -> Span<'static> {
     };
     Span::styled(format!("{symbol} {text}"), theme::health_style(&health))
 }
-
-// Learning Notes:
-// - Using Span<'static> keeps it simple (no lifetime hassle for callers).
-// - Symbol + text is more accessible than color alone (good for terminals
-//   without color or for screen readers).
-// - The actual color comes from theme::health_style so changing the theme
-//   updates all badges automatically.

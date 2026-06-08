@@ -125,15 +125,3 @@ fn render_tools_list(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(list, area);
 }
-
-// Learning Notes:
-// - Exact mirror of scripts.rs structure: split header + list, lookup adapter_health
-//   by string key, reuse render_adapter_item + health badge, fallback text when
-//   Option is None (respects "enabled" and probe failures).
-// - Small pure helper tool_status_to_adapter_health() bridges the section's
-//   stringly per-tool status ("ok"/"attention") into our typed AdapterHealth
-//   so the existing health badge widget can render it.
-// - No Up/Down/selection on this screen (yet); Scripts didn't have it either.
-//   Adding later is easy because Action::Up/Down already guard on screen==Adapters.
-// - Educational comments on nearly every line per project rules.
-// - The data here comes from Workstate; RexOps only reads it.

@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Core domain models, OpsSnapshot, AppConfig, registries, and pure data transformations for RexOps. Single source of truth. No UI, no execution."
 
 [dependencies]
-# Keep deps minimal per project rules. No async, no tokio, no anyhow in foundation phases.
+# Keep deps minimal per project rules. No async, no tokio, no anyhow.
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 

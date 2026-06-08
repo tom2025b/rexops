@@ -28,13 +28,6 @@ pub fn handle_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Esc => Some(Action::Cancel),
         KeyCode::Backspace => Some(Action::Backspace),
         KeyCode::Char(c) => Some(Action::InputChar(c)),
-        // Future: '/' to explicitly enter filter mode, etc.
         _ => None,
     }
 }
-
-// Learning Notes:
-// - Centralizing keybindings here makes it trivial to document them,
-//   support multiple input methods (vim vs arrow), or even load from config later.
-// - We match on the combination of code + modifiers for chords like Ctrl-C.
-// - Returning Option<Action> lets unknown keys be silently ignored (common in TUIs).

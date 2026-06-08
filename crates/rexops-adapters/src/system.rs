@@ -4,11 +4,7 @@
 //! No single external "system" binary required; commands are usually present
 //! on Unix-like systems. Degrades gracefully if individual commands fail.
 //!
-//! This is the second adapter (after Bulwark) to demonstrate the pattern
-//! and give the TUI/CLI more data to show in the "ops cockpit".
-//!
-//! Follows exact same rules as BulwarkAdapter: small, Result<AdapterOutput<T>, AdapterError>,
-//! uses exec helpers, implements Adapter trait, has tests, educational comments.
+//! Gives the TUI and CLI local host facts for the ops cockpit.
 
 use serde::{Deserialize, Serialize};
 
@@ -125,7 +121,7 @@ impl Adapter for SystemAdapter {
 
     fn health(&self) -> AdapterHealth {
         if self.check_available() {
-            // Even if some cmds fail later, the adapter itself is healthy.
+            // Individual command failures do not make the adapter unavailable.
             AdapterHealth::Healthy
         } else {
             AdapterHealth::Unavailable
@@ -176,12 +172,3 @@ mod tests {
         assert_eq!(info, back);
     }
 }
-
-// Learning Notes:
-// - SystemAdapter shows how an adapter doesn't need a single "binary" name;
-//   it can orchestrate several common tools and still present a clean
-//   AdapterOutput<SystemInfo>.
-// - Graceful degradation is explicit: missing hostname just leaves the field None.
-// - We reuse the exact same exec helpers and AdapterError surface so callers
-//   (core, cli, tui) treat it uniformly with Bulwark.
-// - File kept tiny (< 150 LOC) per project rules.

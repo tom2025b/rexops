@@ -209,13 +209,3 @@ mod tests {
         assert!(runner.called_with.is_none(), "runner must not be called");
     }
 }
-
-// Learning Notes:
-// - ForegroundRunner keeps terminal mechanics outside launch orchestration.
-//   That lets App handle user intent while main.rs remains the terminal owner.
-// - LaunchReport separates human-readable status from policy such as whether
-//   RexOps should refresh after returning from a specialist.
-// - launch_tool is generic over tool id: the id keys both `which` and the config
-//   binary fallback. Entries with no executable resolve to None and get a
-//   graceful "no launch command yet" report. The runner is never called, so
-//   non-launchable entries are a normal case.

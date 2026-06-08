@@ -1,7 +1,7 @@
 //! models.rs — Core domain aggregates: RiskSummary, ReportSummary, OpsSnapshot, etc.
 //!
-//! These types are the "vocabulary" that the rest of RexOps (CLI, TUI, future
-//! app) uses to talk about the observed state of the world. They are pure data
+//! These types are the "vocabulary" that the rest of RexOps uses to talk about
+//! the observed state of the world. They are pure data
 //! — no methods that perform I/O or call adapters.
 //!
 //! OpsSnapshot is the central object: a point-in-time, serializable picture
@@ -23,8 +23,8 @@ use crate::AdapterHealth;
 
 /// High-level risk rollup derived from one or more adapter scans (e.g. Bulwark).
 ///
-/// In Phase 1 this is populated from BulwarkScanResult. Later adapters can
-/// contribute to the same counters so the dashboard has a unified "risk" view.
+/// Adapters can contribute to the same counters so the dashboard has a unified
+/// risk view.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RiskSummary {
     #[serde(default)]
@@ -74,7 +74,7 @@ impl RiskSummary {
     }
 }
 
-/// Status of a background or long-running job (placeholder for future use).
+/// Status of a background or long-running job.
 ///
 /// Included now so that snapshots and UIs have a stable place to surface
 /// "something is still computing" without inventing ad-hoc strings.
@@ -140,7 +140,7 @@ pub struct OpsSnapshot {
     #[serde(default)]
     pub reports: Vec<ReportSummary>,
 
-    /// Active or recent jobs (future: scans, syncs, etc.).
+    /// Active or recent jobs such as scans or syncs.
     #[serde(default)]
     pub jobs: std::collections::HashMap<String, JobStatus>,
 
@@ -238,22 +238,6 @@ fn current_unix_millis() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-// Learning Notes:
-// - Using HashMap<String, Health> (with String keys) is pragmatic for serde
-//   and for TUI that wants to iterate "all adapters" without knowing the
-//   full set of AdapterId values at compile time. We still use AdapterId for
-//   the *set* API to keep call sites type-safe.
-// - RiskSummary::merge is a tiny pure function — easy to test and to extend
-//   when new adapters contribute new risk dimensions.
-// - We deliberately avoid embedding full AdapterOutput<T> or raw findings
-//   inside OpsSnapshot. The snapshot is for "at a glance"; detail panes ask
-//   the adapter again or read a cached full result. This keeps memory and
-//   wire size small.
-// - current_unix_millis is a private helper so that tests can later inject
-//   deterministic times if needed (by adding a builder that takes a ts).
-// - JobStatus and ReportSummary are present even in Phase 1 so that the
-//   shape of snapshots is stable; empty collections serialize cleanly.
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -264,7 +248,7 @@ mod tests {
     #[test]
     fn new_snapshot_has_now_timestamp_and_is_available_false_when_empty() {
         let snap = OpsSnapshot::new();
-        // timestamp should be "recent" (not zero, not in future by much)
+        // Timestamp should be initialized to a plausible current epoch value.
         assert!(snap.generated_at_ms > 1_700_000_000_000); // after 2023
         assert!(!snap.any_adapter_available());
         assert!(snap.notes.is_empty());

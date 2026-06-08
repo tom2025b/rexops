@@ -10,8 +10,8 @@
 //! - Type-safe keys via ToolId / AdapterId.
 //! - No I/O, no mutation of external state.
 //!
-//! In Phase 1 they are intentionally tiny (Vec + HashMap). If hot paths
-//! appear later we can swap the backing store without changing the API.
+//! They are intentionally tiny (Vec + HashMap), which is enough for the current
+//! adapter and tool counts.
 
 use std::collections::HashMap;
 
@@ -152,19 +152,6 @@ impl ToolRegistry {
         self.entries.is_empty()
     }
 }
-
-// Learning Notes:
-// - Dual storage (Vec + index HashMap) is a classic pattern for "stable order +
-//   fast lookup" when the set is small (dozens of adapters/tools). It avoids
-//   the ordering nondeterminism of HashMap iteration.
-// - We store indices rather than references so that the struct remains
-//   serializable and Send without lifetime headaches.
-// - insert returns Option<old> so callers can detect replacement if they care
-//   (e.g. health changed since last snapshot).
-// - No remove() in Phase 1; registries are rebuilt from scratch on each
-//   refresh cycle. Add removal later only if incremental update is required.
-// - The registries do *not* own the "how to refresh" logic. That lives in
-//   rexops-app (or cli for simple cases) so that core stays pure data.
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

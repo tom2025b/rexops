@@ -3,9 +3,7 @@
 //! The event loop (main.rs) turns raw crossterm key events (via keymap) into
 //! these Actions. The App then handles them in on_action.
 //!
-//! This separation makes keybindings easy to change (in keymap.rs) without
-//! touching app logic, and makes it simple to add non-key sources of actions
-//! later (e.g. mouse, external messages, timers).
+//! This separation keeps keybindings in keymap.rs without touching app logic.
 
 /// Actions the user or system can trigger.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +20,7 @@ pub enum Action {
     /// Switch to the main dashboard view.
     SwitchToDashboard,
 
-    /// Switch to a secondary "adapters" focused view (demo of screens/).
+    /// Switch to the adapters view.
     SwitchToAdapters,
 
     /// Switch to the system info screen (using SystemAdapter data).
@@ -55,11 +53,3 @@ pub enum Action {
     /// Backspace for editing filter.
     Backspace,
 }
-
-// Learning Notes:
-// - Using a small enum for actions is a classic "Elm/Redux-like" architecture
-//   pattern in TUIs and games. It decouples input from behavior.
-// - We derive the usual traits so Actions can be logged, matched easily, or
-//   queued if we ever want an action queue.
-// - Keep this enum small and focused on *intent*, not on *how* the key was
-//   pressed.

@@ -210,7 +210,7 @@ fn print_status_human(snap: &OpsSnapshot) {
     }
 
     println!();
-    println!("(Tip: try --json for machine output. Full TUI and richer commands coming next.)");
+    println!("(Tip: try --json for machine output.)");
 }
 
 fn print_adapters_human(reg: &AdapterRegistry) {
@@ -231,16 +231,3 @@ fn print_adapters_human(reg: &AdapterRegistry) {
         println!("  (no adapters registered)");
     }
 }
-
-// Learning Notes (for the CLI binary):
-// - We deliberately keep main.rs under ~180 lines. All interesting data types
-//   and logic live in the crates below us.
-// - Using ExitCode + a fallible run() fn is the modern, clean way to have
-//   proper exit codes while still using ? for errors inside.
-// - No anyhow dep: the Box<dyn Error> is sufficient for a tiny binary and
-//   keeps the dependency count at zero beyond clap + the workspace crates.
-// - The snapshot building here is the first real usage of rexops-core +
-//   rexops-adapters together — exactly what the architecture intended.
-// - Human printers are intentionally naive (no tables crate). Polish comes
-//   in TUI or with a small formatting helper later if needed.
-// - Global --json flag via clap's global arg is ergonomic for users.

@@ -36,7 +36,7 @@ const SUPPORTED_SCHEMA_VERSION: i64 = 3;
 
 /// Provenance Workstate attaches to each section: who produced it and when it
 /// was fetched / observed at the source. All fields are lenient strings/optionals
-/// so a future provenance change never breaks the parse.
+/// so provenance metadata changes do not break the parse.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Provenance {
     #[serde(default)]
@@ -99,8 +99,8 @@ pub struct WorkstateInfo {
 /// - `"Missing"` → Unavailable
 /// - anything else → Unknown (conservative: we don't pretend it's fine)
 ///
-/// This is the agreed freshness mapping for Phase 2: reuse the health the TUI
-/// already renders rather than adding new freshness types to core.
+/// Reuses the health states the TUI already renders instead of adding separate
+/// freshness types to core.
 pub fn status_to_health(status: &str) -> AdapterHealth {
     match status {
         "Fresh" => AdapterHealth::Healthy,
@@ -167,7 +167,7 @@ impl WorkstateAdapter {
         Some(base.join("rexops/feeds/workstate.snapshot.json"))
     }
 
-    /// Acquire raw feed text by precedence: in-memory text → explicit path →
+    /// Acquire snapshot text by precedence: in-memory text → explicit path →
     /// standard path. Ok(None) means "no feed available". Never reads stdin.
     fn read_feed_text(&self) -> Result<Option<String>, AdapterError> {
         if let Some(text) = &self.text_override {
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn old_v1_version_is_graceful_skip() {
-        // The obsolete v1 projects[] shape is no longer supported — skip, not error.
+        // Unsupported v1 projects[] snapshots are skipped rather than treated as errors.
         let v1 = r#"{"schema_version": 1, "source_tool": "workstate", "projects": []}"#;
         assert!(WorkstateAdapter::parse_feed(v1)
             .expect("must not error")
@@ -399,17 +399,3 @@ mod tests {
         assert_eq!(a.health(), AdapterHealth::Unavailable);
     }
 }
-
-// Learning Notes:
-// - Phase 2 pivot: this adapter now consumes Workstate's REAL v3 snapshot (the
-//   Section-wrapped scripts/tools/findings envelope) instead of the obsolete
-//   provisional v1 `projects[]` stub. Workstate is becoming RexOps's single
-//   source of truth; this is the consumer side of that wiring.
-// - The three section `data` payloads deserialize straight into the section
-//   types RexOps renders.
-// - `status` stays a String mapped by `status_to_health`, not a closed enum: an
-//   unanticipated Workstate status degrades to Unknown rather than hard-failing
-//   the parse — the same leniency every other feed consumer applies.
-// - Workstate acquisition is text -> explicit path -> standard path (never stdin
-//   directly), with a single read() returning health + data and a version gate
-//   that skips unknown/old versions gracefully.

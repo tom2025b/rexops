@@ -2,10 +2,6 @@
 //!
 //! This is the primary view shown on startup: adapter health table,
 //! risk summary, messages, and status hints.
-//!
-//! It is deliberately self-contained so that later we can have other
-//! screens (e.g. a focused Adapters list or a Tools inventory) that
-//! reuse the same App state and theme.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -161,13 +157,3 @@ fn render_logs(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(logs, area);
 }
-
-// Learning Notes:
-// - By moving the dashboard into its own file under screens/ we follow the
-//   plan's recommended layout.
-// - The render functions are still pure (take &App, write to Frame).
-// - We delegate all style decisions to theme:: so this file doesn't contain
-//   Color::Green etc.
-// - For a real multi-screen app we would have a trait `Screen { fn render(...) }`
-//   or an enum dispatch in a top-level render. For now a simple function is
-//   the simplest thing that works.

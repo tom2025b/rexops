@@ -1,6 +1,4 @@
 {
-  "_comment": "PROVISIONAL — hand-authored sample because the real `bulwark` binary was not present in the build environment. Structure mirrors the real InspectionResult from bulwark-inspect (see https://github.com/bpolania/bulwark). Update with live `bulwark inspect scan --format json` output when possible.",
-  "_source": "hand-authored from public Bulwark source types (InspectionResult / InspectionFinding)",
   "findings": [
     {
       "rule_id": "aws-key",

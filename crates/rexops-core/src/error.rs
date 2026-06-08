@@ -62,15 +62,3 @@ pub enum CoreError {
     #[error("invalid identifier: {0}")]
     InvalidId(String),
 }
-
-// Learning Notes:
-// - Using struct variants with named fields makes error construction and
-//   matching self-documenting at every call site.
-// - We deliberately do not implement From<AdapterError> here. Lifting adapter
-//   results into snapshots is a *domain decision* done in app/cli layers;
-//   core only sees the already-normalized AdapterOutput or health values.
-// - ConfigLoad carries an optional source so that the original serde_json or
-//   io error is available for `error.chain()` style logging without losing
-//   the nice top-level message.
-// - Keep this enum small. New failure modes get their own variant so that
-//   match arms in CLI/TUI can give tailored UX (banner vs fatal exit).

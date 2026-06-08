@@ -13,7 +13,7 @@
 //!   asked it for the scan?" without making a second call.
 //! - It makes logging/telemetry uniform: one place to attach adapter name +
 //!   version to any result.
-//! - It stays serializable for future caching or wire transport.
+//! - It stays serializable for cached or transported results.
 //!
 //! Constraints:
 //! - All types here are Sync + Send + 'static by default (no lifetimes).
@@ -60,9 +60,8 @@ impl AdapterHealth {
 /// Every adapter method that can succeed with a payload returns
 /// `Result<AdapterOutput<ConcreteType>, AdapterError>`.
 ///
-/// The envelope is deliberately small and stable so that adding new fields
-/// later is a non-breaking change for most callers (new fields can be
-/// Option + skip_serializing_if).
+/// The envelope is deliberately small and stable so additive fields can remain
+/// non-breaking for most callers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterOutput<T> {
     /// Stable identifier for the adapter implementation ("bulwark", ...).
@@ -99,12 +98,3 @@ impl<T> AdapterOutput<T> {
         self
     }
 }
-
-// Learning Notes:
-// - Using a generic envelope + small health enum is a classic "context object"
-//   pattern that avoids a proliferation of *Result structs.
-// - serde attributes keep the JSON clean (no nulls for absent version).
-// - Copy + Eq on Health makes it trivial to store in maps or use as match
-//   discriminants without cloning strings everywhere.
-// - The envelope owns the data; we do not use references here because the
-//   adapter layer is intentionally synchronous and short-lived.

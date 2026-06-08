@@ -9,9 +9,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// One script entry. Provisional contract: only a few fields are named;
-/// everything else is preserved in `rest` so we never lose data and never reject
-/// unknown keys.
+/// One script entry. Known fields are named; everything else is preserved in
+/// `rest` so RexOps never loses data or rejects unknown keys.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Script {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,18 +70,11 @@ impl ScriptsInfo {
     }
 
     /// Opportunistic membership check: is this script flagged as a favorite?
-    /// Matches by id, falling back to name. Never a correctness dependency — a
-    /// provisional feed without matching ids simply yields no stars.
+    /// Matches by id, falling back to name. Never a correctness dependency;
+    /// feeds without matching ids simply yield no stars.
     pub fn is_favorite(&self, script: &Script) -> bool {
         self.favorites.iter().any(|f| {
             Some(f.as_str()) == script.id.as_deref() || Some(f.as_str()) == script.name.as_deref()
         })
     }
 }
-
-// Learning Notes:
-// - `Script` keeps unknown keys in `rest` via `#[serde(flatten)]` so future
-//   Workstate additions won't break parsing or lose data.
-// - favorites/recents are id arrays, not per-script booleans. is_favorite() is an
-//   opportunistic membership check for UI stars only — never relied on for
-//   correctness (provisional ids may not line up, yielding no stars).

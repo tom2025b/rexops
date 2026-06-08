@@ -2,7 +2,7 @@
 
 This document is the single source of truth for RexOps workspace layout, crate boundaries, and data flow. It is intentionally kept concise.
 
-## Workspace Layout (Current + Planned)
+## Workspace Layout
 
 ```
 rexops/
@@ -17,30 +17,29 @@ rexops/
 │   ├── ARCHITECTURE.md
 │   ├── ROADMAP.md
 │   ├── ERROR_HANDLING.md
-│   └── TUI_DESIGN.md (future)
+│   └── TUI_DESIGN.md
 ├── examples/
 │   └── config.yaml               # Sample AppConfig
 ├── README.md
-└── (future: tests/, benches/ at workspace root if needed)
 ```
 
 ## Crate Responsibilities (Strict Boundaries)
 
-- **rexops-adapters** (existing, do not touch in Phase 1+ without explicit reason):
+- **rexops-adapters**:
   - Thin integration layer only.
-  - Adapter trait + concrete impls (Bulwark first).
+  - Adapter trait + concrete impls for Bulwark, System, and Workstate.
   - Outputs `AdapterOutput<T>`.
   - Graceful degradation for missing bins, timeouts, parse errors.
   - No domain models from core. No UI. No exec outside exec.rs (private).
 
-- **rexops-core** (Phase 1 target):
+- **rexops-core**:
   - Single source of truth for all shared domain types.
   - Newtypes: `ToolId`, `AdapterId`.
   - Models: `ToolHealth`, `RiskSummary`, `JobStatus`, `ReportSummary`, `OpsSnapshot`, `AppConfig`.
-  - Registries: `ToolRegistry`, `AdapterRegistry` (orchestration via app layer later).
+  - Registries: `ToolRegistry`, `AdapterRegistry`.
   - Pure data + transformations. Serde + thiserror.
   - NO ratatui, NO `std::process`, NO direct CLI rendering, NO TUI widgets.
-  - Depends on rexops-adapters for lifting `AdapterOutput` into snapshots (thin dep).
+  - Does not depend on adapter execution or UI crates.
 
 - **rexops-cli**:
   - Argument parsing (clap), command dispatch.
@@ -48,10 +47,10 @@ rexops/
   - Calls rexops-app for load_config / build_snapshot / registry. Tiny `main.rs`.
   - No domain logic, no config loading, no adapter construction.
 
-- **rexops-tui** (much later):
+- **rexops-tui**:
   - Ratatui app shell only.
-  - Screens (Dashboard, Adapters/Status, Tools/Inventory, Detail), widgets, keymap, event loop.
-  - Never owns domain logic — calls services from core/app.
+  - Screens for Dashboard, Adapters, System, Scripts, Tools, and Launcher; widgets, keymap, event loop.
+  - Never owns domain logic; calls services from rexops-app.
   - Fast startup, keyboard-first, graceful degradation, excellent empty/error states.
 
 - **rexops-app**:
@@ -69,12 +68,12 @@ rexops/
 - Avoid duplication: adapters return normalized `AdapterOutput<T>`; core lifts/transforms into snapshots.
 - Config is loaded in core (or app), validated once, passed down.
 
-## Data Flow (Read-Only Phase)
+## Data Flow
 
-1. Adapters (e.g. BulwarkAdapter) run external CLIs → `AdapterOutput<Concrete>`.
-2. Core consumes adapter outputs + any persisted state → `OpsSnapshot`.
-3. CLI / TUI query snapshot or registries for read views.
-4. Later: app layer owns snapshot refresh, caching, scheduling.
+1. rexops-app loads config and probes enabled adapters.
+2. Workstate snapshots populate scripts, tools, and findings; live probes populate adapter health and system facts.
+3. Core models hold the normalized `OpsSnapshot`.
+4. CLI and TUI render the snapshot or adapter registry without owning adapter logic.
 
 ## Quality Gates (Non-Negotiable)
 

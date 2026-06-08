@@ -154,12 +154,3 @@ mod tests {
         assert_eq!(ids.len(), total, "catalog tool ids must be unique");
     }
 }
-
-// Learning Notes:
-// - New screen via the established path: enum variant + action + key + ui
-//   dispatch + render fn + mod export. Nothing exotic.
-// - CATALOG is `pub const` so app.rs shares the exact same list for navigation
-//   and launching — the renderer and the behavior can never disagree.
-// - We reuse widgets::render_adapter_item (name + health badge + info + selected
-//   highlight) so the Launcher looks identical in style to the other list
-//   screens for free.

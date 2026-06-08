@@ -1,11 +1,9 @@
-//! system.rs — System info screen (stub per TUI plan).
+//! system.rs — System info screen.
 //!
 //! Shows health and details for the "system" adapter (from SystemAdapter).
-//! Uses notes for detailed info (hostname, kernel, uptime, disk) since
-//! the snapshot stores them there for now.
+//! Uses structured system data from the snapshot.
 //!
-//! Simple render: health badge + list of system facts. Can be expanded
-//! later with dedicated SystemInfo struct in snapshot.
+//! Simple render: health badge + list of system facts.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -109,10 +107,3 @@ fn render_system_details(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(details, area);
 }
-
-// Learning Notes:
-// - This screen demonstrates adding new screens easily (just enum + action +
-//   render + dispatch).
-// - Uses existing data (adapter_health + notes) to avoid changing core models
-//   yet. Later we can lift full SystemInfo into OpsSnapshot.
-// - Reuses widgets::render_health_badge for consistency.

@@ -21,12 +21,12 @@ use crate::error::CoreError;
 
 /// Top-level RexOps configuration.
 ///
-/// This struct is the single source of truth for "what adapters are enabled
-/// and how should we talk to them?" It is intentionally small in Phase 1.
+/// This struct is the single source of truth for which adapters are enabled and
+/// how RexOps should talk to them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     /// Schema version. Start at 1; bump only on breaking changes.
-    /// The loader may warn (but not fail) on unknown future versions.
+    /// Version 0 is rejected during validation.
     pub version: u32,
 
     /// Per-adapter configuration. Key is the adapter id ("bulwark").
@@ -70,10 +70,10 @@ impl AppConfig {
                     }
                 }
             }
-            // Future: validate timeout_secs > 0 if present, etc.
+            // Adapter-specific validation belongs here.
         }
 
-        // Version sanity (allow 1; future may accept >=1 with compat layer).
+        // Version sanity: zero is never valid.
         if self.version == 0 {
             return Err(CoreError::ConfigValidation(
                 "version must be >= 1".to_owned(),
@@ -139,19 +139,6 @@ fn default_true() -> bool {
 fn default_timeout() -> u64 {
     30
 }
-
-// Learning Notes:
-// - Using HashMap<String, AdapterConfig> lets the config be open-ended:
-//   adding a new adapter never requires touching this file until you want
-//   typed helpers for that adapter.
-// - The validate() method is intentionally *after* deserialization. This
-//   separates "I can parse it" from "it makes sense for RexOps".
-// - serde defaults via helper fns (default_enabled) are the idiomatic way
-//   to get "true when key present but field omitted" without a custom
-//   Deserialize impl. The functions are tiny and testable indirectly.
-// - skip_serializing_if keeps the written config files clean (no "binary": null).
-// - PartialEq is derived so that tests can assert `config == AppConfig { ... }`
-//   after round-tripping through yaml/json.
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

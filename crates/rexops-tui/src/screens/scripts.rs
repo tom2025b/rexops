@@ -102,12 +102,3 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(list, area);
 }
-
-// Learning Notes:
-// - New screen added with minimal code by following the established pattern
-//   (enum + action + key + dispatch + render fn + mod export).
-// - Reuses widgets::render_adapter_item for script rows (even though names
-//   are scripts, the widget is generic enough for name + info).
-// - Structured data from snapshot.scripts makes rendering clean; notes
-//   are still there for fallback/CLI.
-// - Favorite marker is appended simply; a future widget could handle icons better.

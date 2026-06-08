@@ -1,14 +1,12 @@
 //! screens/adapters.rs — Adapters screen with keyboard-selectable list and detail preview.
 //!
-//! This implements one of the modular screens from the plan (adapters_status style).
 //! Uses the adapter_names + selected_adapter (name) + filter from App (populated from snapshot).
 //! Shows a left list (highlighted selection) + right detail pane for the selected adapter.
 //!
 //! Navigation (j/k, arrows, enter) is handled in App::on_action; this just renders state.
-//! Selection wraps; detail shows health, and any recent notes mentioning the adapter (simple demo).
+//! Selection wraps; detail shows health and recent notes mentioning the adapter.
 //!
-//! Keeps things simple: no full ListState (to avoid ratatui widget state in App for now),
-//! uses manual highlight with a marker. Easy to swap to stateful List later.
+//! Uses manual highlight with a marker to keep render state simple.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -104,7 +102,7 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect) {
             ]));
         }
 
-        // Show any notes that seem related to this adapter (simple demo filter).
+        // Show notes that mention this adapter.
         let related: Vec<&String> = app
             .snapshot
             .notes
@@ -146,14 +144,3 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(detail, area);
 }
-
-// Learning Notes:
-// - Horizontal split (list + detail) is a classic "master-detail" pattern for
-//   inventory screens. Keeps the UI responsive and scannable.
-// - Selection state lives in App (simple usize + vec) so render stays pure
-//   and easy to test. We can promote to ratatui's ListState + StatefulWidget
-//   later without changing much.
-// - Filtering notes by name is a cheap way to give "context" without extra
-//   data structures. Real impl could tag notes or have per-adapter events.
-// - Screen is independent of the refresh thread; new snapshots just update
-//   the names list and clamp selection.

@@ -1,7 +1,6 @@
 //! theme.rs — Colors, styles, and theming helpers for the TUI.
 //!
-//! All "what color is healthy?" decisions live here so they are consistent
-//! and easy to change or make configurable later.
+//! All health color decisions live here so they are consistent.
 
 use ratatui::style::{Color, Modifier, Style};
 
@@ -48,11 +47,3 @@ pub fn confirm_style() -> Style {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD)
 }
-
-// Learning Notes:
-// - Having a dedicated theme module (even a small one) prevents "magic colors"
-//   scattered through ui code.
-// - We can later extend this to a full Theme struct loaded from config or
-//   with dark/light variants without touching every render function.
-// - health_style is the most important one because AdapterHealth is the
-//   primary status signal the whole app is built around.

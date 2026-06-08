@@ -9,12 +9,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// One scanned item. Provisional: only a few fields are named; everything else
-/// is preserved in `rest` so we never lose data and never reject unknown keys.
+/// One scanned item. Known fields are named; everything else is preserved in
+/// `rest` so RexOps never loses data or rejects unknown keys.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ScanItem {
-    /// Risk severity as a free string (e.g. "critical", "high"). Optional because
-    /// the provisional contract does not require it.
+    /// Risk severity as a free string (e.g. "critical", "high").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub severity: Option<String>,
     /// Stable id-like label, if present.
@@ -45,8 +44,8 @@ impl ScanItem {
     }
 }
 
-/// Closed bucket set we tally into. `Unknown` absorbs anything unrecognized so a
-/// provisional/unexpected severity string never breaks parsing or counting.
+/// Closed bucket set we tally into. `Unknown` absorbs anything unrecognized so
+/// an unexpected severity string never breaks parsing or counting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Critical,
@@ -147,12 +146,3 @@ impl FindingsInfo {
         })
     }
 }
-
-// Learning Notes:
-// - Severity is a closed enum bucketing free-form strings: an unexpected value
-//   falls into Unknown rather than breaking the parse — the same leniency every
-//   other type in this crate applies to unrecognized variants.
-// - RiskTally is intentionally local to the adapter crate (must not depend on
-//   rexops-core). The app layer translates it into core's RiskSummary.
-// - has_risk_data() distinguishes "no items" from "items without severity data"
-//   so the cockpit can show "risk breakdown unavailable" instead of misleading zeros.

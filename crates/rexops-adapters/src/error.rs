@@ -75,13 +75,3 @@ pub enum AdapterError {
     #[error("I/O error while running adapter command: {0}")]
     Io(#[from] std::io::Error),
 }
-
-// Learning Notes (for future maintainers / learners):
-// - thiserror::Error gives us std::error::Error impl + Display for free.
-// - Using struct variants (not tuple) makes pattern matching self-documenting.
-// - BinaryNotFound is intentionally not "fatal" — the adapter layer is read-only
-//   and adapters are expected to be optional at runtime.
-// - We do *not* include a catch-all "Other(String)" variant. If a new mode
-//   appears, add a typed variant so callers can react specifically.
-// - From<serde_json::Error> and From<io::Error> let the exec helpers stay small
-//   and still surface precise root causes.

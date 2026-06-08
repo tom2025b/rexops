@@ -7,7 +7,7 @@ RexOps is the **ops cockpit** for your AI tooling surface: it observes live adap
 ## What RexOps Is
 
 - A thin orchestration + observability layer.
-- Read-only by default (Phase 1); later adds safe, confirmed mutating workflows.
+- Read-only by default, with confirmed launcher actions in the TUI.
 - Single pane of glass for health, risk, inventory, and reports across adapters.
 - Strict modular Rust workspace: tiny crates with hard boundaries.
 - Built for keyboard-first TUI + scriptable CLI + JSON output.
@@ -44,7 +44,7 @@ Crates:
 - **rexops-cli** — `rexops` binary with `status` and `adapters` commands, `--json` support. Thin shell: clap + formatting only. Delegates to rexops-app. Try: `cargo run -p rexops-cli -- status --json`.
 - **rexops-tui** — Keyboard-first ratatui TUI. Screens: Dashboard, Adapters, System, Scripts, Tools, and Launcher. Scripts/tools/findings render from Workstate. Widgets/ extracted (HealthBadge, AdapterItem, LogLine). Logs/events pane, help popup. 'r' non-blocking (threads call rexops-app::build_snapshot). Run with: `cargo run -p rexops-tui`
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md) for boundaries and what's next.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md) for boundaries and remaining work.
 
 ## Quality Gates (Non-Negotiable)
 
@@ -90,19 +90,19 @@ cargo run -p rexops-tui
 
 - `cargo test -p rexops-adapters` — Run only adapter tests (fixture-based Bulwark parsing).
 - `cargo run -p rexops-cli -- status` — Human status (adapter health + snapshot).
-- `cargo run -p rexops-cli -- status --json` — Same as JSON (for scripts / TUI later).
+- `cargo run -p rexops-cli -- status --json` — Same snapshot as JSON for scripts and other automation.
 - `cargo run -p rexops-cli -- adapters` — List adapters from the registry.
 - `cargo run -p rexops-tui` — Launch the ratatui dashboard. Keys: r=refresh, q/Esc/Ctrl-C=quit, ?=help, 1=Dashboard, 2=Adapters, 3=System, 4=Scripts, 5=Tools, 6=Launcher.
 - The four gate commands (`fmt --check`, `clippy -D warnings`, `test --all`, `build --all`) are mandatory for every change.
 
 ## Development Notes
 
-- See `crates/rexops-adapters/` for the reference implementation of style (small modules, private exec, exhaustive errors, educational comments, Learning Notes at bottom of files).
-- The fixture `crates/rexops-adapters/fixtures/bulwark/scan_sample.json` is PROVISIONAL (hand-authored; update with real `bulwark inspect scan --format json` output when the binary is available).
-- New crates follow the same discipline: educational comments, small files, tests for happy + error paths.
+- See `crates/rexops-adapters/` for the reference implementation of style: small modules, private exec, typed errors, and fixture-backed tests.
+- The fixture `crates/rexops-adapters/fixtures/bulwark/scan_sample.json` documents the Bulwark scan shape consumed by tests.
+- New crates follow the same discipline: small files, clear boundaries, and tests for happy and error paths.
 - Config sample: see `examples/config.yaml`.
 - Full error strategy: `docs/ERROR_HANDLING.md`.
-- Roadmap and phase status: `docs/ROADMAP.md`.
+- Roadmap and current status: `docs/ROADMAP.md`.
 
 ## License
 
