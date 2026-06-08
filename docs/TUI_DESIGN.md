@@ -74,6 +74,28 @@ When no adapters registered or all unavailable:
 - Prominent banner: "No healthy adapters detected."
 - Helpful text: "Press 'r' to retry. Run `rexops status` from CLI for details. Install bulwark with `cargo install bulwark-inspect` if needed."
 
+## Launcher Screen
+Three stacked rounded panes (`suite_ui::pane`):
+
+1. **Launcher** header — a one-line dim subtitle ("Pick a tool with ↑/↓, then Enter…").
+2. **Tools** list — one row per `CATALOG` entry, rendered by `render_launcher_row`:
+   - The selected row shows the suite accent rail `▌` (`Theme::selected_rail`) and a
+     tinted name (`Theme::selection`); other rows use a plain gutter. This is the
+     same selection look the rest of the suite chrome uses, replacing the old ad-hoc
+     "▶ " + bold prefix.
+   - The tool name is padded to a fixed column (`NAME_COL`) so the health badges and
+     tags line up.
+   - A dim run-mode / install tag ends each row: `· interactive` (foreground
+     hand-over), `· streams` (background job), or `· not installed` when no command
+     resolves — derived from `app::is_streamable` and `launcher::resolve_command`
+     (read-only; nothing is spawned to render the screen).
+3. **Detail** — the full description of the currently selected tool (so a long one is
+   never clipped in its row), plus the standing note that Workstate-sourced sections
+   aren't launchable.
+
+Navigation (↑/↓ over `app.selected_tool`) and launch (Enter → `arm_tool` → confirm)
+are unchanged; this screen is presentation only.
+
 ## Keymap (Start Small, Consistent)
 - `q`, `Esc`, `Ctrl-C` — Quit (always, even while refreshing)
 - `r` — Refresh / re-probe adapters (idempotent; ignored while already refreshing)
