@@ -16,7 +16,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{ConfirmModal, HelpSheet, PaletteFrame, PaletteItem, StatusBar, Theme};
+use suite_ui::{ConfirmModal, HelpSheet, KeyHints, PaletteFrame, PaletteItem, StatusBar, Theme};
 
 use crate::app::{App, PendingAction};
 use crate::screens;
@@ -120,35 +120,79 @@ fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect, theme: T
     f.render_widget(header, area);
 }
 
+/// The `(key, label)` shortcut hints for the current context, rendered by the
+/// shared `suite_ui::KeyHints` in the footer. Confirm and palette modes override
+/// the per-screen hints because, while they're active, they own all input — every
+/// other binding is irrelevant until the user acts on the modal / palette.
+///
+/// Keeping every footer hint as a `(key, label)` slice (rather than a flat
+/// string) is what lets one widget style them identically on every screen, and
+/// keeps them the same shape as the `HelpSheet` popup's rows.
+fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)] {
+    if app.pending_action.is_some() {
+        return &[("Enter", "run"), ("Esc", "cancel")];
+    }
+    if app.palette_open {
+        return &[
+            ("type", "filter"),
+            ("↑/↓", "move"),
+            ("Enter", "run"),
+            ("Esc", "close"),
+        ];
+    }
+    match app.current_screen {
+        crate::app::Screen::Dashboard => &[
+            ("q", "quit"),
+            ("^P", "palette"),
+            ("type", "filter"),
+            ("esc", "clear"),
+            ("r", "refresh"),
+            ("?", "help"),
+            ("1-7", "screens"),
+        ],
+        crate::app::Screen::Adapters => &[
+            ("q", "quit"),
+            ("^P", "palette"),
+            ("type", "filter"),
+            ("j/k", "nav"),
+            ("enter", "select"),
+            ("1", "dashboard"),
+        ],
+        crate::app::Screen::System
+        | crate::app::Screen::Scripts
+        | crate::app::Screen::Tools => &[
+            ("q", "quit"),
+            ("^P", "palette"),
+            ("r", "refresh"),
+            ("1", "dashboard"),
+        ],
+        crate::app::Screen::Launcher => &[
+            ("q", "quit"),
+            ("↑/↓", "nav"),
+            ("enter", "run"),
+            ("esc", "back"),
+            ("1", "dashboard"),
+        ],
+        crate::app::Screen::Jobs => &[
+            ("q", "quit"),
+            ("^P", "palette"),
+            ("x", "cancel job"),
+            ("1", "dashboard"),
+        ],
+    }
+}
+
 fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, theme: Theme) {
     let available = app.snapshot.any_adapter_available();
     let count = app.snapshot.adapter_health.len();
 
-    // While confirming, the status bar speaks only to the modal — every other
-    // hint is irrelevant until the user confirms or cancels.
-    let left = if app.pending_action.is_some() {
-        "CONFIRM:  Enter = run  •  Esc = cancel"
-    } else if app.palette_open {
-        "PALETTE:  type to filter  •  ↑/↓ move  •  Enter run  •  Esc close"
-    } else {
-        match app.current_screen {
-            crate::app::Screen::Dashboard => {
-                "q quit  •  ^P palette  •  type to filter  •  esc clear  •  r refresh  •  ? help  •  1-7 screens"
-            }
-            crate::app::Screen::Adapters => {
-                "q quit  •  ^P palette  •  j/k nav  •  enter select  •  1 dashboard"
-            }
-            crate::app::Screen::System => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
-            crate::app::Screen::Scripts => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
-            crate::app::Screen::Tools => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
-            crate::app::Screen::Launcher => {
-                "q quit  •  ↑/↓ nav  •  enter run (confirm)  •  esc back  •  1 dashboard"
-            }
-            crate::app::Screen::Jobs => {
-                "q quit  •  ^P palette  •  x cancel job  •  1 dashboard"
-            }
-        }
-    };
+    // Per-screen shortcut hints, styled by the shared KeyHints widget so the
+    // key/label distinction looks the same on every screen.
+    let hints_line = KeyHints {
+        hints: screen_hints(app),
+    }
+    .line(theme);
+
     // The right-hand state badge reuses the shared health styling so "available"
     // vs "unavailable" reads the same way as every other health cue in the suite.
     let (right, right_style) = if app.refreshing {
@@ -169,7 +213,8 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     // gives us the styled spans so the whole footer stays one bordered row.
     let job_line = StatusBar { job: app.job_state() }.line(theme);
 
-    let mut spans = vec![Span::raw(left), Span::raw("   |   ")];
+    let mut spans = hints_line.spans;
+    spans.push(Span::raw("   |   "));
     spans.extend(job_line.spans);
     spans.push(Span::raw("   |   "));
     spans.push(Span::styled(right, right_style));
@@ -223,4 +268,72 @@ fn render_confirm_popup(
         message: &message,
     }
     .render(f, area, theme);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Screen;
+    use std::sync::mpsc;
+
+    fn app_on(screen: Screen) -> App {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+        app.current_screen = screen;
+        app
+    }
+
+    #[test]
+    fn every_screen_has_non_empty_hints() {
+        for screen in [
+            Screen::Dashboard,
+            Screen::Adapters,
+            Screen::System,
+            Screen::Scripts,
+            Screen::Tools,
+            Screen::Launcher,
+            Screen::Jobs,
+        ] {
+            let app = app_on(screen);
+            let hints = screen_hints(&app);
+            assert!(!hints.is_empty(), "{screen:?} must show footer hints");
+            // Every screen offers a way out (quit) as its first hint.
+            assert_eq!(hints[0].0, "q", "{screen:?} should lead with quit");
+        }
+    }
+
+    #[test]
+    fn a_pending_action_overrides_the_screen_hints_with_confirm() {
+        let mut app = app_on(Screen::Dashboard);
+        app.pending_action = Some(PendingAction::RunJob {
+            id: "x".to_owned(),
+            name: "x".to_owned(),
+        });
+        let hints = screen_hints(&app);
+        // Confirm mode owns input: only the modal's keys, not the screen's.
+        assert_eq!(hints, &[("Enter", "run"), ("Esc", "cancel")]);
+    }
+
+    #[test]
+    fn an_open_palette_overrides_the_screen_hints() {
+        let mut app = app_on(Screen::Adapters);
+        app.palette_open = true;
+        let hints = screen_hints(&app);
+        assert!(hints.iter().any(|(_, l)| *l == "close"), "palette hints shown");
+        // And the per-screen "select" hint is suppressed while the palette owns input.
+        assert!(!hints.iter().any(|(_, l)| *l == "select"));
+    }
+
+    #[test]
+    fn confirm_takes_precedence_over_an_open_palette() {
+        // If both are somehow set, the confirm modal is the topmost focus, so its
+        // hints win — matching the render order (confirm drawn last / on top).
+        let mut app = app_on(Screen::Jobs);
+        app.palette_open = true;
+        app.pending_action = Some(PendingAction::LaunchTool {
+            id: "x".to_owned(),
+            name: "x".to_owned(),
+        });
+        assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    }
 }

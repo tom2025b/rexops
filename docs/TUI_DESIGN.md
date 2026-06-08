@@ -62,7 +62,10 @@ Layout (top to bottom):
 3. Risk summary (from snapshot.risk): counts by severity + should_block flag
 4. Notes / messages area: adapter notes + "Refreshing..." + errors
 5. Status bar (bottom, full width):
-   - Left: context-sensitive keybind hints per screen
+   - Left: context-sensitive keybind hints, rendered by the shared
+     `suite_ui::KeyHints` widget from a per-screen `(key, label)` slice (keys
+     accented, labels dim). Confirm and palette modes replace the per-screen
+     hints with their own while they own input.
    - Middle: the shared `suite_ui::StatusBar` job-status segment
      (running / done / failed / cancelled / idle)
    - Right: adapter availability badge ("adapters available" / "all unavailable")
@@ -82,7 +85,7 @@ When no adapters registered or all unavailable:
 - `5` — Switch to Tools screen (Workstate tools section)
 - In Adapters: j/k or up/down arrows to move selection, enter to activate (surfaces in notes + updates detail)
 - Live filter: on the **Dashboard and Adapters** screens, type printable chars (non-command letters) to filter the adapters view live; backspace edits; esc clears the filter (or, when already empty, quits / goes back). Other screens leave those keys for their own bindings. The set of filter-accepting screens is defined in one place: `App::filter_screen()`.
-- Status bar shows context-sensitive hints per screen.
+- Status bar shows context-sensitive hints per screen via the shared `suite_ui::KeyHints` widget. The per-screen hint lists live in one place: `ui::screen_hints()`.
 - `?` / `h` shows a nice centered popup help overlay (press again to close); also shows in messages.
 All keys are handled in one place (event.rs or app.rs) so behavior is uniform.
 
