@@ -16,7 +16,9 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{ConfirmModal, HelpSheet, KeyHints, PaletteFrame, PaletteItem, StatusBar, Theme};
+use suite_ui::{
+    ConfirmModal, HelpSheet, KeyHints, PaletteFrame, PaletteItem, StatusBar, Theme, Toast,
+};
 
 use crate::app::{App, PendingAction};
 use crate::screens;
@@ -214,6 +216,13 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     let job_line = StatusBar { job: app.job_state() }.line(theme);
 
     let mut spans = hints_line.spans;
+    // A live job-event toast (just-finished flash) sits next, when present, styled
+    // by the shared `Toast` so success/failure/cancelled read the same as
+    // everywhere else. It clears on the next keypress (see `App::clear_toast`).
+    if let Some((text, kind)) = &app.toast {
+        spans.push(Span::raw("   |   "));
+        spans.extend(Toast { text, kind: *kind }.line(theme).spans);
+    }
     spans.push(Span::raw("   |   "));
     spans.extend(job_line.spans);
     spans.push(Span::raw("   |   "));

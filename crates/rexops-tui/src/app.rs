@@ -85,6 +85,25 @@ pub struct LastOutcome {
     pub cancelled: bool,
 }
 
+/// One entry in the Jobs screen's history: a finished job's name, how it ended,
+/// and the exact exit summary already shown for `last_job`. Output lines are NOT
+/// retained — only the live/last run keeps its buffer (history is a roll-up of
+/// outcomes, not a log archive), which keeps memory bounded regardless of how
+/// chatty a tool is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobRecord {
+    /// The tool's display name.
+    pub name: String,
+    /// How it ended (drives the glyph/colour, same mapping as the status bar).
+    pub outcome: LastOutcome,
+    /// The one-line exit summary (e.g. "backup: finished (exit 0)").
+    pub summary: String,
+}
+
+/// How many finished jobs the Jobs-screen history keeps (newest last). Bounded so
+/// a long session can't grow the history without limit; older entries roll off.
+const JOB_HISTORY_CAP: usize = 50;
+
 /// Whether a tool runs as a streamed background job (non-interactive) or as a
 /// foreground hand-over (interactive). Interactive TUIs can't be piped into a
 /// pane, so they keep the foreground path. This is the single place that draws
@@ -94,6 +113,22 @@ pub fn is_streamable(tool_id: &str) -> bool {
     // terminal. Everything else in the catalog (bulwark scan, workstate snapshot,
     // the Workstate-backed sections) emits output and exits, so it streams.
     !matches!(tool_id, "proto")
+}
+
+/// Map a finished job's outcome to a footer toast (message + kind), reusing the
+/// suite's job-event toast kinds so a flash reads the same as the status bar:
+/// clean exit → `Success` (`✓`), non-zero exit → `Failure` (`✗`), cancel/signal
+/// → `Cancelled` (`■`). The single place job outcomes become a toast.
+fn toast_for(outcome: &LastOutcome) -> (String, suite_ui::ToastKind) {
+    use suite_ui::ToastKind;
+    let name = &outcome.name;
+    if outcome.cancelled {
+        (format!("{name} — cancelled"), ToastKind::Cancelled)
+    } else if outcome.ok {
+        (format!("{name} — done"), ToastKind::Success)
+    } else {
+        (format!("{name} — failed"), ToastKind::Failure)
+    }
 }
 
 /// The top-level application state.
@@ -163,6 +198,16 @@ pub struct App {
     /// `None` until a job has finished.
     pub last_outcome: Option<LastOutcome>,
 
+    /// Finished jobs in completion order (newest last), capped at
+    /// [`JOB_HISTORY_CAP`]. Shown as a roll-up on the Jobs screen so the user can
+    /// see what ran this session, not just the single last run.
+    pub job_history: Vec<JobRecord>,
+
+    /// A transient job-event notification (message + kind), shown in the footer
+    /// until the next keypress clears it. `None` when there is nothing to flash.
+    /// Set when a job finishes; rendered with the shared `suite_ui::Toast`.
+    pub toast: Option<(String, suite_ui::ToastKind)>,
+
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
 
@@ -211,6 +256,8 @@ impl App {
             job_output: Vec::new(),
             last_job: None,
             last_outcome: None,
+            job_history: Vec::new(),
+            toast: None,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -295,6 +342,13 @@ impl App {
     /// Toggle the help text overlay / hint area.
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+
+    /// Dismiss the transient job-event toast, if any. Called on every key event so
+    /// a flash clears as soon as the user does anything — the app owns the
+    /// (trivial) lifetime, keeping the shared `Toast` widget stateless.
+    fn clear_toast(&mut self) {
+        self.toast = None;
     }
 
     // --- command palette ----------------------------------------------------
@@ -445,8 +499,24 @@ impl App {
                 ),
             };
             self.log_event(summary.clone());
-            self.last_job = Some(summary);
-            self.last_outcome = Some(outcome);
+            self.last_job = Some(summary.clone());
+            self.last_outcome = Some(outcome.clone());
+
+            // Append to the bounded history (newest last) so the Jobs screen can
+            // show what ran this session, not just the single last run.
+            self.job_history.push(JobRecord {
+                name: name.clone(),
+                outcome: outcome.clone(),
+                summary,
+            });
+            if self.job_history.len() > JOB_HISTORY_CAP {
+                self.job_history.remove(0);
+            }
+
+            // Flash a job-event toast in the footer, using the suite's job-event
+            // toast kinds (the same glyph/colour mapping as the status bar).
+            self.toast = Some(toast_for(&outcome));
+
             self.job = None;
             // A finished job may have changed what a fresh probe would see.
             self.request_refresh();
@@ -502,6 +572,11 @@ impl App {
         action: crate::action::Action,
         launcher: &mut impl ForegroundRunner,
     ) -> bool {
+        // Any key dismisses a lingering job-event toast (it has had at least one
+        // draw cycle since `poll_job` set it). Done before the modal gates so the
+        // flash clears even when a key is otherwise swallowed by a modal.
+        self.clear_toast();
+
         // Confirmation gate: while an action is pending, the modal is modal.
         // Enter confirms (runs it), Esc cancels (discards it), and EVERY other
         // key is swallowed so nothing leaks through to the underlying screen.
@@ -791,6 +866,100 @@ mod tests {
             app.on_action(Action::InputChar(c), &mut runner);
         }
         assert!(app.filter.is_empty(), "typing on System must not filter");
+    }
+
+    /// Spawn `command` as a real job on `app` and drive `poll_job` like the main
+    /// loop until the job finishes (or a timeout). Used to exercise the
+    /// completion bookkeeping (history + toast) end to end.
+    fn run_job_to_completion(app: &mut App, name: &str, command: &str) {
+        app.job = Some(jobs::spawn(name, command).expect("spawn test job"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.job.is_some() {
+            app.poll_job();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "job did not finish in time"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn finishing_a_job_records_history_and_flashes_a_toast() {
+        use suite_ui::ToastKind;
+
+        let mut app = bare_app();
+        assert!(app.job_history.is_empty());
+
+        // A clean exit → one Success history entry + a Success toast.
+        run_job_to_completion(&mut app, "true", "true");
+        assert_eq!(app.job_history.len(), 1, "a finished job is recorded");
+        let rec = &app.job_history[0];
+        assert_eq!(rec.name, "true");
+        assert!(rec.outcome.ok && !rec.outcome.cancelled);
+        assert!(matches!(app.toast, Some((_, ToastKind::Success))));
+
+        // A non-zero exit → a second entry + a Failure toast.
+        run_job_to_completion(&mut app, "false", "false");
+        assert_eq!(app.job_history.len(), 2, "history accumulates");
+        let rec = &app.job_history[1];
+        assert!(!rec.outcome.ok && !rec.outcome.cancelled);
+        assert!(matches!(app.toast, Some((_, ToastKind::Failure))));
+    }
+
+    #[test]
+    fn history_is_capped_and_rolls_off_oldest_first() {
+        let mut app = bare_app();
+        // Pre-fill at the cap with sentinel records, then push one more via a real
+        // finished job; the oldest must roll off and the newest land at the end.
+        for i in 0..JOB_HISTORY_CAP {
+            app.job_history.push(JobRecord {
+                name: format!("old-{i}"),
+                outcome: LastOutcome {
+                    name: format!("old-{i}"),
+                    ok: true,
+                    cancelled: false,
+                },
+                summary: format!("old-{i}: finished (exit 0)"),
+            });
+        }
+        run_job_to_completion(&mut app, "newest", "true");
+        assert_eq!(app.job_history.len(), JOB_HISTORY_CAP, "history stays capped");
+        assert_eq!(
+            app.job_history.first().unwrap().name,
+            "old-1",
+            "the oldest entry rolled off"
+        );
+        assert_eq!(
+            app.job_history.last().unwrap().name,
+            "newest",
+            "the new entry is appended last"
+        );
+    }
+
+    #[test]
+    fn any_key_dismisses_a_lingering_toast() {
+        let mut app = bare_app();
+        let mut runner = FakeRunner { calls: 0 };
+        app.toast = Some(("backup — done".to_owned(), suite_ui::ToastKind::Success));
+        // A harmless key (refresh) goes through `on_action`, which clears the toast
+        // up front regardless of what the action itself does.
+        app.on_action(Action::Refresh, &mut runner);
+        assert!(app.toast.is_none(), "any key must dismiss the toast");
+    }
+
+    #[test]
+    fn toast_for_maps_each_outcome_to_its_kind() {
+        use suite_ui::ToastKind;
+        let ok = LastOutcome { name: "j".into(), ok: true, cancelled: false };
+        let fail = LastOutcome { name: "j".into(), ok: false, cancelled: false };
+        let cancelled = LastOutcome { name: "j".into(), ok: false, cancelled: true };
+        assert!(matches!(toast_for(&ok), (_, ToastKind::Success)));
+        assert!(matches!(toast_for(&fail), (_, ToastKind::Failure)));
+        assert!(matches!(toast_for(&cancelled), (_, ToastKind::Cancelled)));
+        // Cancelled takes precedence over `ok` (a cancel can race a clean exit).
+        let cancelled_but_ok = LastOutcome { name: "j".into(), ok: true, cancelled: true };
+        assert!(matches!(toast_for(&cancelled_but_ok), (_, ToastKind::Cancelled)));
     }
 
     #[test]
