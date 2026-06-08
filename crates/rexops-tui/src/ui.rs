@@ -16,7 +16,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{ConfirmModal, HelpSheet, PaletteFrame, PaletteItem, Theme};
+use suite_ui::{ConfirmModal, HelpSheet, PaletteFrame, PaletteItem, StatusBar, Theme};
 
 use crate::app::{App, PendingAction};
 use crate::screens;
@@ -164,12 +164,18 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
         )
     };
 
-    let status = Paragraph::new(Line::from(vec![
-        Span::raw(left),
-        Span::raw("   |   "),
-        Span::styled(right, right_style),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
+    // The persistent job-status segment from the shared suite chrome, folded into
+    // the footer between the keybind hints and the adapter badge. `StatusBar::line`
+    // gives us the styled spans so the whole footer stays one bordered row.
+    let job_line = StatusBar { job: app.job_state() }.line(theme);
+
+    let mut spans = vec![Span::raw(left), Span::raw("   |   ")];
+    spans.extend(job_line.spans);
+    spans.push(Span::raw("   |   "));
+    spans.push(Span::styled(right, right_style));
+
+    let status =
+        Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
 
     f.render_widget(status, area);
 }

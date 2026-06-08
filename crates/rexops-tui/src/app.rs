@@ -70,6 +70,21 @@ impl PendingAction {
     }
 }
 
+/// Structured record of how the last background job ended — the data the shared
+/// `StatusBar` needs, kept apart from the human-readable `last_job` summary so
+/// neither has to be parsed back out of the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastOutcome {
+    /// The tool's display name.
+    pub name: String,
+    /// True if it finished cleanly (exit 0); false for a non-zero exit OR a
+    /// cancel/signal. Combined with `cancelled` to pick the status-bar state.
+    pub ok: bool,
+    /// True if the job was cancelled / terminated by a signal rather than
+    /// exiting on its own.
+    pub cancelled: bool,
+}
+
 /// Whether a tool runs as a streamed background job (non-interactive) or as a
 /// foreground hand-over (interactive). Interactive TUIs can't be piped into a
 /// pane, so they keep the foreground path. This is the single place that draws
@@ -142,6 +157,12 @@ pub struct App {
     /// screen header once `job` is `None` again.
     pub last_job: Option<String>,
 
+    /// Structured outcome of the last finished job: its name and whether it ended
+    /// cleanly / was cancelled. Parallel to `last_job` (the display string) so the
+    /// shared `StatusBar` can read real state instead of parsing the summary.
+    /// `None` until a job has finished.
+    pub last_outcome: Option<LastOutcome>,
+
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
 
@@ -189,6 +210,7 @@ impl App {
             job: None,
             job_output: Vec::new(),
             last_job: None,
+            last_outcome: None,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -356,11 +378,27 @@ impl App {
             Some(handle) => {
                 self.job_output.clear();
                 self.last_job = None;
+                self.last_outcome = None;
                 self.current_screen = Screen::Jobs;
                 self.log_event(format!("{name}: job started ({command})"));
                 self.job = Some(handle);
             }
             None => self.log_event(format!("{name}: failed to start ({command})")),
+        }
+    }
+
+    /// The current job state mapped onto the suite's shared [`JobState`], for the
+    /// persistent status bar. A live handle → `Running`; otherwise the last
+    /// finished job's structured outcome → `Cancelled` / `Done{ok}`; nothing run
+    /// yet → `Idle`. Borrows the relevant name, so it lives only as long as `self`.
+    pub fn job_state(&self) -> suite_ui::JobState<'_> {
+        if let Some(job) = &self.job {
+            return suite_ui::JobState::Running { name: &job.name };
+        }
+        match &self.last_outcome {
+            Some(o) if o.cancelled => suite_ui::JobState::Cancelled { name: &o.name },
+            Some(o) => suite_ui::JobState::Done { name: &o.name, ok: o.ok },
+            None => suite_ui::JobState::Idle,
         }
     }
 
@@ -382,13 +420,23 @@ impl App {
                 self.job_output.push(out);
             }
             let name = job.name.clone();
-            let summary = match exit {
-                JobExit::Code(0) => format!("{name}: finished (exit 0)"),
-                JobExit::Code(code) => format!("{name}: finished (exit {code})"),
-                JobExit::Signalled => format!("{name}: cancelled / signalled"),
+            let (summary, outcome) = match exit {
+                JobExit::Code(0) => (
+                    format!("{name}: finished (exit 0)"),
+                    LastOutcome { name: name.clone(), ok: true, cancelled: false },
+                ),
+                JobExit::Code(code) => (
+                    format!("{name}: finished (exit {code})"),
+                    LastOutcome { name: name.clone(), ok: false, cancelled: false },
+                ),
+                JobExit::Signalled => (
+                    format!("{name}: cancelled / signalled"),
+                    LastOutcome { name: name.clone(), ok: false, cancelled: true },
+                ),
             };
             self.log_event(summary.clone());
             self.last_job = Some(summary);
+            self.last_outcome = Some(outcome);
             self.job = None;
             // A finished job may have changed what a fresh probe would see.
             self.request_refresh();
@@ -657,6 +705,66 @@ mod tests {
         let mut app = App::new(tx, AppConfig::default());
         app.current_screen = Screen::Launcher;
         app
+    }
+
+    /// A bare App (no job, fresh state) for status-mapping tests.
+    fn bare_app() -> App {
+        let (tx, _rx) = mpsc::channel();
+        App::new(tx, AppConfig::default())
+    }
+
+    #[test]
+    fn job_state_maps_outcome_to_the_shared_status_enum() {
+        use suite_ui::JobState;
+
+        // Fresh app, no job ever run → Idle.
+        let mut app = bare_app();
+        assert_eq!(app.job_state(), JobState::Idle);
+
+        // A clean finish → Done { ok: true }.
+        app.last_outcome = Some(LastOutcome {
+            name: "backup".to_owned(),
+            ok: true,
+            cancelled: false,
+        });
+        assert_eq!(app.job_state(), JobState::Done { name: "backup", ok: true });
+
+        // A non-zero exit → Done { ok: false }.
+        app.last_outcome = Some(LastOutcome {
+            name: "rescan".to_owned(),
+            ok: false,
+            cancelled: false,
+        });
+        assert_eq!(app.job_state(), JobState::Done { name: "rescan", ok: false });
+
+        // A cancel/signal → Cancelled, regardless of `ok`.
+        app.last_outcome = Some(LastOutcome {
+            name: "deploy".to_owned(),
+            ok: false,
+            cancelled: true,
+        });
+        assert_eq!(app.job_state(), JobState::Cancelled { name: "deploy" });
+    }
+
+    #[test]
+    fn a_live_job_outranks_the_last_outcome_in_the_status_bar() {
+        use suite_ui::JobState;
+
+        // `job_state` reports Running whenever a job handle is present, regardless
+        // of any recorded last outcome. Spawning `sleep` (which won't exit during
+        // the test) gives a present handle deterministically; we kill it after the
+        // assertion so the test leaves no lingering process behind.
+        let mut app = bare_app();
+        app.last_outcome = Some(LastOutcome {
+            name: "old".to_owned(),
+            ok: true,
+            cancelled: false,
+        });
+        app.job = Some(jobs::spawn("live-tool", "sleep").expect("spawn sleep"));
+        assert_eq!(app.job_state(), JobState::Running { name: "live-tool" });
+        if let Some(job) = app.job.as_mut() {
+            job.cancel();
+        }
     }
 
     /// Select a catalog tool by id on a Launcher app (panics if absent).
