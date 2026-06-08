@@ -151,8 +151,26 @@ mod tests {
                 out.push(line);
             }
             if let Some(exit) = job.poll_done() {
-                while let Some(line) = job.try_recv() {
-                    out.push(line);
+                // The child has exited, but its stdout/stderr reader threads may
+                // still be mid-read on another core: `try_wait` can win the race
+                // against a reader finishing its last line. A single drain here
+                // would lose that in-flight output (the source of an intermittent
+                // empty-output failure). Keep draining for a short grace window so
+                // the readers have time to flush and drop their senders.
+                let grace = Instant::now() + Duration::from_millis(500);
+                loop {
+                    let mut got = false;
+                    while let Some(line) = job.try_recv() {
+                        out.push(line);
+                        got = true;
+                    }
+                    // Once a line has arrived we trust we've caught up on the next
+                    // empty read; before any line, keep waiting until the grace
+                    // window elapses in case the reader simply hasn't sent yet.
+                    if got || Instant::now() >= grace {
+                        break;
+                    }
+                    sleep(Duration::from_millis(2));
                 }
                 return (out, exit);
             }
