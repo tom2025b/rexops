@@ -14,6 +14,7 @@
 //! The thread calls the shared rexops_app::build_snapshot (the single
 //! implementation) and sends the result back over mpsc. UI stays responsive.
 
+use std::collections::VecDeque;
 use std::sync::mpsc;
 
 // The probe logic that used to live here (and was duplicated with CLI) has
@@ -85,6 +86,48 @@ pub struct LastOutcome {
     pub cancelled: bool,
 }
 
+impl LastOutcome {
+    /// Reduce to the suite's shared [`Outcome`](suite_ui::Outcome) — the single
+    /// classification every job-event renderer (status bar, footer toast, history
+    /// row) maps through, so the glyph/colour can never drift between them.
+    /// Cancellation wins over the exit code: a cancelled job reads as cancelled
+    /// even if it happened to exit 0 in the same instant.
+    pub fn as_outcome(&self) -> suite_ui::Outcome {
+        if self.cancelled {
+            suite_ui::Outcome::Cancelled
+        } else if self.ok {
+            suite_ui::Outcome::Success
+        } else {
+            suite_ui::Outcome::Failure
+        }
+    }
+}
+
+/// One entry in the Jobs screen's history: a finished job's name, how it ended,
+/// and the exact exit summary already shown for `last_job`. Output lines are NOT
+/// retained — only the live/last run keeps its buffer (history is a roll-up of
+/// outcomes, not a log archive), which keeps memory bounded regardless of how
+/// chatty a tool is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobRecord {
+    /// The tool's display name.
+    pub name: String,
+    /// How it ended (drives the glyph/colour, same mapping as the status bar).
+    pub outcome: LastOutcome,
+    /// The one-line exit summary (e.g. "backup: finished (exit 0)").
+    pub summary: String,
+}
+
+/// How many finished jobs the Jobs-screen history keeps (newest last). Bounded so
+/// a long session can't grow the history without limit; older entries roll off.
+const JOB_HISTORY_CAP: usize = 50;
+
+/// How many live output lines the Jobs screen keeps for the current/last run.
+/// The buffer rolls: once full, the oldest line drops as a new one arrives, so a
+/// long-running or chatty tool can't grow memory without bound. The pane only
+/// shows what fits anyway, so older-than-cap lines aren't reachable on screen.
+const JOB_OUTPUT_CAP: usize = 1000;
+
 /// Whether a tool runs as a streamed background job (non-interactive) or as a
 /// foreground hand-over (interactive). Interactive TUIs can't be piped into a
 /// pane, so they keep the foreground path. This is the single place that draws
@@ -94,6 +137,22 @@ pub fn is_streamable(tool_id: &str) -> bool {
     // terminal. Everything else in the catalog (bulwark scan, workstate snapshot,
     // the Workstate-backed sections) emits output and exits, so it streams.
     !matches!(tool_id, "proto")
+}
+
+/// Map a finished job's outcome to a footer toast (message + kind), reusing the
+/// suite's job-event toast kinds so a flash reads the same as the status bar:
+/// clean exit → `Success` (`✓`), non-zero exit → `Failure` (`✗`), cancel/signal
+/// → `Cancelled` (`■`). The single place job outcomes become a toast.
+fn toast_for(outcome: &LastOutcome) -> (String, suite_ui::ToastKind) {
+    use suite_ui::{Outcome, ToastKind};
+    let name = &outcome.name;
+    // Classify once via the shared Outcome, then pick the matching message +
+    // toast kind. No glyph/colour logic here — that lives in suite-ui.
+    match outcome.as_outcome() {
+        Outcome::Success => (format!("{name} — done"), ToastKind::Success),
+        Outcome::Failure => (format!("{name} — failed"), ToastKind::Failure),
+        Outcome::Cancelled => (format!("{name} — cancelled"), ToastKind::Cancelled),
+    }
 }
 
 /// The top-level application state.
@@ -150,8 +209,10 @@ pub struct App {
     pub job: Option<JobHandle>,
 
     /// The current job's streamed output lines (newest last), shown on the Jobs
-    /// screen. Retained after the job finishes so the last run stays readable.
-    pub job_output: Vec<JobOutput>,
+    /// screen. Retained after the job finishes so the last run stays readable. A
+    /// rolling buffer capped at [`JOB_OUTPUT_CAP`]: oldest lines drop once full so
+    /// a chatty/long-running tool can't grow memory without bound.
+    pub job_output: VecDeque<JobOutput>,
 
     /// A one-line summary of how the last job ended (name + exit), for the Jobs
     /// screen header once `job` is `None` again.
@@ -162,6 +223,16 @@ pub struct App {
     /// shared `StatusBar` can read real state instead of parsing the summary.
     /// `None` until a job has finished.
     pub last_outcome: Option<LastOutcome>,
+
+    /// Finished jobs in completion order (newest last), capped at
+    /// [`JOB_HISTORY_CAP`]. Shown as a roll-up on the Jobs screen so the user can
+    /// see what ran this session, not just the single last run.
+    pub job_history: Vec<JobRecord>,
+
+    /// A transient job-event notification (message + kind), shown in the footer
+    /// until the next keypress clears it. `None` when there is nothing to flash.
+    /// Set when a job finishes; rendered with the shared `suite_ui::Toast`.
+    pub toast: Option<(String, suite_ui::ToastKind)>,
 
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
@@ -208,9 +279,11 @@ impl App {
             palette_query: String::new(),
             palette_selected: 0,
             job: None,
-            job_output: Vec::new(),
+            job_output: VecDeque::new(),
             last_job: None,
             last_outcome: None,
+            job_history: Vec::new(),
+            toast: None,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -295,6 +368,13 @@ impl App {
     /// Toggle the help text overlay / hint area.
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+    }
+
+    /// Dismiss the transient job-event toast, if any. Called on every key event so
+    /// a flash clears as soon as the user does anything — the app owns the
+    /// (trivial) lifetime, keeping the shared `Toast` widget stateless.
+    fn clear_toast(&mut self) {
+        self.toast = None;
     }
 
     // --- command palette ----------------------------------------------------
@@ -405,11 +485,27 @@ impl App {
         if let Some(job) = &self.job {
             return suite_ui::JobState::Running { name: &job.name };
         }
+        // Map the shared Outcome onto the status bar's richer JobState (which also
+        // carries Running/Idle). Going through `as_outcome` keeps the cancelled-vs-
+        // exit-code decision in one place rather than re-deriving it here.
         match &self.last_outcome {
-            Some(o) if o.cancelled => suite_ui::JobState::Cancelled { name: &o.name },
-            Some(o) => suite_ui::JobState::Done { name: &o.name, ok: o.ok },
+            Some(o) => match o.as_outcome() {
+                suite_ui::Outcome::Cancelled => suite_ui::JobState::Cancelled { name: &o.name },
+                suite_ui::Outcome::Success => suite_ui::JobState::Done { name: &o.name, ok: true },
+                suite_ui::Outcome::Failure => suite_ui::JobState::Done { name: &o.name, ok: false },
+            },
             None => suite_ui::JobState::Idle,
         }
+    }
+
+    /// Append one output line to the rolling [`job_output`](Self::job_output)
+    /// buffer, dropping the oldest line once it is at [`JOB_OUTPUT_CAP`]. Keeps
+    /// memory bounded no matter how much a tool prints.
+    fn push_job_output(&mut self, out: JobOutput) {
+        if self.job_output.len() == JOB_OUTPUT_CAP {
+            self.job_output.pop_front();
+        }
+        self.job_output.push_back(out);
     }
 
     /// Drain any output the running job has produced and, once it has exited,
@@ -419,16 +515,25 @@ impl App {
         let Some(job) = self.job.as_mut() else {
             return;
         };
-        // Drain all currently-available output first so no trailing lines are
-        // lost when the process exits between ticks.
-        while let Some(out) = job.try_recv() {
-            self.job_output.push(out);
+        // Drain everything available this tick, learning whether the output
+        // channel has disconnected (both reader threads finished and dropped their
+        // senders — the only race-free "output is complete" signal). Collect into
+        // a scratch buffer first so we can release the `&mut self.job` borrow
+        // before pushing into `self.job_output`.
+        let mut scratch: Vec<JobOutput> = Vec::new();
+        let drained = job.drain_into(&mut scratch);
+        let exited = job.poll_done();
+        for out in scratch {
+            self.push_job_output(out);
         }
-        if let Some(exit) = job.poll_done() {
-            // One more drain in case lines landed between the last drain and exit.
-            while let Some(out) = job.try_recv() {
-                self.job_output.push(out);
-            }
+
+        // Finish only once the child has exited AND its output has fully drained.
+        // `try_wait` reporting the child gone can win the race against a reader
+        // still flushing its last line, so requiring the channel to have
+        // disconnected too is what stops trailing output from being lost. Until
+        // both hold we return and try again next tick — never blocking the UI.
+        if let (Some(exit), true) = (exited, drained) {
+            let job = self.job.as_ref().expect("job present while finishing");
             let name = job.name.clone();
             let (summary, outcome) = match exit {
                 JobExit::Code(0) => (
@@ -445,8 +550,24 @@ impl App {
                 ),
             };
             self.log_event(summary.clone());
-            self.last_job = Some(summary);
-            self.last_outcome = Some(outcome);
+            self.last_job = Some(summary.clone());
+            self.last_outcome = Some(outcome.clone());
+
+            // Append to the bounded history (newest last) so the Jobs screen can
+            // show what ran this session, not just the single last run.
+            self.job_history.push(JobRecord {
+                name: name.clone(),
+                outcome: outcome.clone(),
+                summary,
+            });
+            if self.job_history.len() > JOB_HISTORY_CAP {
+                self.job_history.remove(0);
+            }
+
+            // Flash a job-event toast in the footer, using the suite's job-event
+            // toast kinds (the same glyph/colour mapping as the status bar).
+            self.toast = Some(toast_for(&outcome));
+
             self.job = None;
             // A finished job may have changed what a fresh probe would see.
             self.request_refresh();
@@ -502,6 +623,11 @@ impl App {
         action: crate::action::Action,
         launcher: &mut impl ForegroundRunner,
     ) -> bool {
+        // Any key dismisses a lingering job-event toast (it has had at least one
+        // draw cycle since `poll_job` set it). Done before the modal gates so the
+        // flash clears even when a key is otherwise swallowed by a modal.
+        self.clear_toast();
+
         // Confirmation gate: while an action is pending, the modal is modal.
         // Enter confirms (runs it), Esc cancels (discards it), and EVERY other
         // key is swallowed so nothing leaks through to the underlying screen.
@@ -791,6 +917,121 @@ mod tests {
             app.on_action(Action::InputChar(c), &mut runner);
         }
         assert!(app.filter.is_empty(), "typing on System must not filter");
+    }
+
+    /// Spawn `command` as a real job on `app` and drive `poll_job` like the main
+    /// loop until the job finishes (or a timeout). Used to exercise the
+    /// completion bookkeeping (history + toast) end to end.
+    fn run_job_to_completion(app: &mut App, name: &str, command: &str) {
+        app.job = Some(jobs::spawn(name, command).expect("spawn test job"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.job.is_some() {
+            app.poll_job();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "job did not finish in time"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn finishing_a_job_records_history_and_flashes_a_toast() {
+        use suite_ui::ToastKind;
+
+        let mut app = bare_app();
+        assert!(app.job_history.is_empty());
+
+        // A clean exit → one Success history entry + a Success toast.
+        run_job_to_completion(&mut app, "true", "true");
+        assert_eq!(app.job_history.len(), 1, "a finished job is recorded");
+        let rec = &app.job_history[0];
+        assert_eq!(rec.name, "true");
+        assert!(rec.outcome.ok && !rec.outcome.cancelled);
+        assert!(matches!(app.toast, Some((_, ToastKind::Success))));
+
+        // A non-zero exit → a second entry + a Failure toast.
+        run_job_to_completion(&mut app, "false", "false");
+        assert_eq!(app.job_history.len(), 2, "history accumulates");
+        let rec = &app.job_history[1];
+        assert!(!rec.outcome.ok && !rec.outcome.cancelled);
+        assert!(matches!(app.toast, Some((_, ToastKind::Failure))));
+    }
+
+    #[test]
+    fn history_is_capped_and_rolls_off_oldest_first() {
+        let mut app = bare_app();
+        // Pre-fill at the cap with sentinel records, then push one more via a real
+        // finished job; the oldest must roll off and the newest land at the end.
+        for i in 0..JOB_HISTORY_CAP {
+            app.job_history.push(JobRecord {
+                name: format!("old-{i}"),
+                outcome: LastOutcome {
+                    name: format!("old-{i}"),
+                    ok: true,
+                    cancelled: false,
+                },
+                summary: format!("old-{i}: finished (exit 0)"),
+            });
+        }
+        run_job_to_completion(&mut app, "newest", "true");
+        assert_eq!(app.job_history.len(), JOB_HISTORY_CAP, "history stays capped");
+        assert_eq!(
+            app.job_history.first().unwrap().name,
+            "old-1",
+            "the oldest entry rolled off"
+        );
+        assert_eq!(
+            app.job_history.last().unwrap().name,
+            "newest",
+            "the new entry is appended last"
+        );
+    }
+
+    #[test]
+    fn job_output_is_a_rolling_buffer_capped_at_job_output_cap() {
+        let mut app = bare_app();
+        // Push well past the cap; the buffer must stay bounded and keep the
+        // newest lines (the oldest roll off the front).
+        for i in 0..(JOB_OUTPUT_CAP + 250) {
+            app.push_job_output(JobOutput::Stdout(format!("line-{i}")));
+        }
+        assert_eq!(app.job_output.len(), JOB_OUTPUT_CAP, "buffer stays capped");
+        assert_eq!(
+            app.job_output.front(),
+            Some(&JobOutput::Stdout("line-250".to_owned())),
+            "the oldest retained line is exactly cap-from-the-end"
+        );
+        assert_eq!(
+            app.job_output.back(),
+            Some(&JobOutput::Stdout(format!("line-{}", JOB_OUTPUT_CAP + 249))),
+            "the newest line is kept at the back"
+        );
+    }
+
+    #[test]
+    fn any_key_dismisses_a_lingering_toast() {
+        let mut app = bare_app();
+        let mut runner = FakeRunner { calls: 0 };
+        app.toast = Some(("backup — done".to_owned(), suite_ui::ToastKind::Success));
+        // A harmless key (refresh) goes through `on_action`, which clears the toast
+        // up front regardless of what the action itself does.
+        app.on_action(Action::Refresh, &mut runner);
+        assert!(app.toast.is_none(), "any key must dismiss the toast");
+    }
+
+    #[test]
+    fn toast_for_maps_each_outcome_to_its_kind() {
+        use suite_ui::ToastKind;
+        let ok = LastOutcome { name: "j".into(), ok: true, cancelled: false };
+        let fail = LastOutcome { name: "j".into(), ok: false, cancelled: false };
+        let cancelled = LastOutcome { name: "j".into(), ok: false, cancelled: true };
+        assert!(matches!(toast_for(&ok), (_, ToastKind::Success)));
+        assert!(matches!(toast_for(&fail), (_, ToastKind::Failure)));
+        assert!(matches!(toast_for(&cancelled), (_, ToastKind::Cancelled)));
+        // Cancelled takes precedence over `ok` (a cancel can race a clean exit).
+        let cancelled_but_ok = LastOutcome { name: "j".into(), ok: true, cancelled: true };
+        assert!(matches!(toast_for(&cancelled_but_ok), (_, ToastKind::Cancelled)));
     }
 
     #[test]
