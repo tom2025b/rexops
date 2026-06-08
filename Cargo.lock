@@ -664,6 +664,7 @@ dependencies = [
 [[package]]
 name = "suite-ui"
 version = "0.1.0"
+source = "git+https://github.com/tom2025b/linux-ops-suite.git?rev=860faf16227edf762bcb5fc45e013f0fbd8c7e80#860faf16227edf762bcb5fc45e013f0fbd8c7e80"
 dependencies = [
  "crossterm",
  "ratatui",
