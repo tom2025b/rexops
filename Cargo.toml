@@ -6,6 +6,11 @@ members = [
     "crates/rexops-cli",
     "crates/rexops-tui",
 ]
+# A bare `cargo run` at the workspace root would otherwise be ambiguous between
+# the `rexops` (CLI) and `rexops-tui` binaries. Default to the CLI crate so
+# `cargo run` resolves to the single `rexops` binary; the TUI stays reachable
+# via `cargo run -p rexops-tui`.
+default-members = ["crates/rexops-cli"]
 resolver = "2"
 
 [workspace.package]

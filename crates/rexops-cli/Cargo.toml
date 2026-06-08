@@ -6,6 +6,8 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Thin CLI shell for RexOps: clap commands, dispatch, human and JSON output. Delegates all logic to rexops-app (shared config + snapshot builder)."
+# This crate's default binary, so `cargo run -p rexops-cli` is unambiguous.
+default-run = "rexops"
 
 [[bin]]
 name = "rexops"
