@@ -16,7 +16,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{ConfirmModal, HelpSheet, Theme};
+use suite_ui::{ConfirmModal, HelpSheet, PaletteFrame, PaletteItem, Theme};
 
 use crate::app::{App, PendingAction};
 use crate::screens;
@@ -54,6 +54,9 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
         crate::app::Screen::Launcher => {
             screens::render_launcher(f, app, chunks[1], theme);
         }
+        crate::app::Screen::Jobs => {
+            screens::render_jobs(f, app, chunks[1], theme);
+        }
     }
     render_status_bar(f, app, chunks[2], theme);
 
@@ -62,12 +65,43 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
         render_help_popup(f, f.area(), theme);
     }
 
+    // The command palette sits above the screen (and the help popup), but BELOW
+    // the confirm modal — choosing a `run <tool>` command arms a pending action,
+    // and the confirm modal must then be the topmost, sole focus.
+    if app.palette_open {
+        render_palette(f, app, f.area(), theme);
+    }
+
     // Confirmation modal takes precedence over everything else: if a mutating
     // action is awaiting confirmation, it MUST be the thing the user sees and
-    // acts on. Drawn last so it sits on top of the screen and the help popup.
+    // acts on. Drawn last so it sits on top of the screen, help, and palette.
     if let Some(pending) = &app.pending_action {
         render_confirm_popup(f, pending, &app.config, f.area(), theme);
     }
+}
+
+/// The command palette overlay, drawn with the suite's shared `PaletteFrame`.
+/// Filtering + selection live on `App`; this just hands the filtered slice over.
+fn render_palette(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
+    let commands = app.palette_commands();
+    let items: Vec<PaletteItem> = commands
+        .iter()
+        .map(|c| PaletteItem {
+            label: &c.label,
+            desc: &c.desc,
+        })
+        .collect();
+    let selected = if items.is_empty() {
+        None
+    } else {
+        Some(app.palette_selected)
+    };
+    PaletteFrame {
+        query: &app.palette_query,
+        items: &items,
+        selected,
+    }
+    .render(f, area, theme);
 }
 
 fn render_header(f: &mut Frame, app: &App, area: ratatui::layout::Rect, theme: Theme) {
@@ -94,19 +128,24 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     // hint is irrelevant until the user confirms or cancels.
     let left = if app.pending_action.is_some() {
         "CONFIRM:  Enter = run  •  Esc = cancel"
+    } else if app.palette_open {
+        "PALETTE:  type to filter  •  ↑/↓ move  •  Enter run  •  Esc close"
     } else {
         match app.current_screen {
             crate::app::Screen::Dashboard => {
-                "q quit  •  r refresh  •  ? help  •  1/2/3/4/5/6 screens"
+                "q quit  •  ^P palette  •  r refresh  •  ? help  •  1-7 screens"
             }
             crate::app::Screen::Adapters => {
-                "q quit  •  r refresh  •  ? help  •  j/k nav  •  enter select  •  1 dashboard"
+                "q quit  •  ^P palette  •  j/k nav  •  enter select  •  1 dashboard"
             }
-            crate::app::Screen::System => "q quit  •  r refresh  •  ? help  •  1 dashboard",
-            crate::app::Screen::Scripts => "q quit  •  r refresh  •  ? help  •  1 dashboard",
-            crate::app::Screen::Tools => "q quit  •  r refresh  •  ? help  •  1 dashboard",
+            crate::app::Screen::System => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
+            crate::app::Screen::Scripts => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
+            crate::app::Screen::Tools => "q quit  •  ^P palette  •  r refresh  •  1 dashboard",
             crate::app::Screen::Launcher => {
-                "q quit  •  ↑/↓ nav  •  enter launch  •  esc back  •  1 dashboard"
+                "q quit  •  ↑/↓ nav  •  enter run (confirm)  •  esc back  •  1 dashboard"
+            }
+            crate::app::Screen::Jobs => {
+                "q quit  •  ^P palette  •  x cancel job  •  1 dashboard"
             }
         }
     };
@@ -138,7 +177,8 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
 /// The keybinding help overlay, drawn with the suite's shared `HelpSheet`.
 fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
     let rows = [
-        ("q / Esc / ^C", "quit (Esc clears a filter first)"),
+        ("^P · :", "open the command palette"),
+        ("q / Esc / ^C", "quit (Esc clears a filter / closes the palette first)"),
         ("r", "refresh (background thread)"),
         ("? / h", "toggle this help"),
         ("1", "Dashboard — overview, risk, notes"),
@@ -147,9 +187,11 @@ fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
         ("4", "Scripts"),
         ("5", "Tools"),
         ("6", "Launcher"),
-        ("j / k · ↑ / ↓", "move the selection (Adapters / Launcher)"),
-        ("Enter", "activate selection / launch (asks to confirm)"),
-        ("backspace", "edit the Adapters filter"),
+        ("7", "Jobs — live output of a background job"),
+        ("j / k · ↑ / ↓", "move the selection (Adapters / Launcher / palette)"),
+        ("Enter", "activate selection / run (asks to confirm)"),
+        ("x", "cancel the running job (Jobs screen)"),
+        ("backspace", "edit the Adapters filter / palette query"),
     ];
     HelpSheet {
         title: "RexOps Keybindings",

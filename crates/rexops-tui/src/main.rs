@@ -43,8 +43,10 @@ mod action;
 mod app;
 mod event;
 mod health;
+mod jobs;
 mod keymap;
 mod launcher;
+mod palette;
 mod screens;
 mod ui;
 mod widgets;
@@ -198,6 +200,10 @@ fn run_app(
             app.apply_snapshot(snapshot);
             app.refreshing = false;
         }
+
+        // Drain the running background job's output (and finish it on exit). Like
+        // the snapshot drain, this is non-blocking so the draw loop never stalls.
+        app.poll_job();
 
         // Poll for input using our event module (timeout allows regular draws + channel checks).
         if let Some(ev) = event::next_event(Duration::from_millis(100))? {

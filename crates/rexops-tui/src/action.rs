@@ -35,6 +35,15 @@ pub enum Action {
     /// Switch to the Launcher screen (pick a tool and launch it).
     SwitchToLauncher,
 
+    /// Switch to the Jobs screen (live output of the running / last job).
+    SwitchToJobs,
+
+    /// Open the command palette (Ctrl-P or `:`).
+    OpenPalette,
+
+    /// Cancel the running background job (Jobs screen).
+    CancelJob,
+
     /// Navigate up in lists (k or up arrow).
     Up,
 

@@ -10,7 +10,15 @@ use crate::action::Action;
 /// Convert a key press into an Action, if it matches a binding.
 ///
 /// Only Press events should be passed here (we filter in the loop).
+///
+/// The command palette (`Ctrl-P` / `:`) is detected first via the shared
+/// `suite_ui::keys::is_palette` so the suite's bindings stay consistent across
+/// tools. `:` would otherwise fall through to `InputChar`, so this MUST precede
+/// the generic `Char(c)` arm.
 pub fn handle_key(key: KeyEvent) -> Option<Action> {
+    if suite_ui::keys::is_palette(key) {
+        return Some(Action::OpenPalette);
+    }
     match key.code {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('r') => Some(Action::Refresh),
@@ -21,6 +29,8 @@ pub fn handle_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('4') => Some(Action::SwitchToScripts),
         KeyCode::Char('5') => Some(Action::SwitchToTools),
         KeyCode::Char('6') => Some(Action::SwitchToLauncher),
+        KeyCode::Char('7') => Some(Action::SwitchToJobs),
+        KeyCode::Char('x') => Some(Action::CancelJob),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char('j') | KeyCode::Down => Some(Action::Down),
         KeyCode::Char('k') | KeyCode::Up => Some(Action::Up),

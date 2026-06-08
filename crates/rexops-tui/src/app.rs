@@ -23,7 +23,9 @@ use std::sync::mpsc;
 use rexops_app::build_snapshot;
 use rexops_core::{AppConfig, OpsSnapshot};
 
+use crate::jobs::{self, JobExit, JobHandle, JobOutput};
 use crate::launcher::{self, ForegroundRunner};
+use crate::palette::{self, Command, PaletteCommand};
 
 /// A mutating action that has been *requested* but not yet *confirmed*.
 ///
@@ -35,8 +37,13 @@ use crate::launcher::{self, ForegroundRunner};
 /// known and fixed. Launching a specialist tool is the current confirmed action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
-    /// Launch a specialist tool by catalog id, shown to the user as `name`.
+    /// Launch a specialist tool FOREGROUND (hand over the terminal), by catalog
+    /// id, shown to the user as `name`. Used for interactive tools.
     LaunchTool { id: String, name: String },
+    /// Run a non-interactive tool as a BACKGROUND job, streaming its output into
+    /// the Jobs screen. Same id/name keys as a launch; the difference is how it
+    /// runs (background + streamed vs. foreground hand-over).
+    RunJob { id: String, name: String },
 }
 
 impl PendingAction {
@@ -44,21 +51,34 @@ impl PendingAction {
     pub fn prompt(&self) -> String {
         match self {
             PendingAction::LaunchTool { name, .. } => format!("Launch {name}?"),
+            PendingAction::RunJob { name, .. } => format!("Run {name} as a background job?"),
         }
     }
 
     /// A dry-run preview line: exactly what *would* happen, computed without
-    /// performing it. For a launch this resolves the command (PATH → config)
-    /// the same way the real launch does, but never spawns anything. Feed-only
-    /// tools (no executable) report that nothing would run.
+    /// performing it. Both variants resolve the command (PATH → config) the same
+    /// way the real run does, but never spawn anything. Feed-only tools (no
+    /// executable) report that nothing would run.
     pub fn preview(&self, config: &AppConfig) -> String {
-        match self {
-            PendingAction::LaunchTool { id, .. } => match launcher::resolve_command(id, config) {
-                Some(command) => format!("Will run:  {command}"),
-                None => "No launch command yet (nothing will run)".to_owned(),
-            },
+        let id = match self {
+            PendingAction::LaunchTool { id, .. } | PendingAction::RunJob { id, .. } => id,
+        };
+        match launcher::resolve_command(id, config) {
+            Some(command) => format!("Will run:  {command}"),
+            None => "No launch command yet (nothing will run)".to_owned(),
         }
     }
+}
+
+/// Whether a tool runs as a streamed background job (non-interactive) or as a
+/// foreground hand-over (interactive). Interactive TUIs can't be piped into a
+/// pane, so they keep the foreground path. This is the single place that draws
+/// the line; the palette and Launcher both route through it.
+pub fn is_streamable(tool_id: &str) -> bool {
+    // `proto` is an interactive checklist/protocol runner — it needs the real
+    // terminal. Everything else in the catalog (bulwark scan, workstate snapshot,
+    // the Workstate-backed sections) emits output and exits, so it streams.
+    !matches!(tool_id, "proto")
 }
 
 /// The top-level application state.
@@ -98,6 +118,30 @@ pub struct App {
     /// underlying screen until the user confirms (Enter) or cancels (Esc).
     pub pending_action: Option<PendingAction>,
 
+    /// Whether the command palette overlay is open. While open it is modal: keys
+    /// type into the query / move the selection / dispatch, and are swallowed
+    /// from the underlying screen (see the gate in `on_action`).
+    pub palette_open: bool,
+
+    /// The palette's live filter text.
+    pub palette_query: String,
+
+    /// The selected row in the (filtered) palette list.
+    pub palette_selected: usize,
+
+    /// The one running background job, if any. `None` when idle. A single slot
+    /// enforces one-job-at-a-time; arming a new job while this is `Some` is
+    /// refused.
+    pub job: Option<JobHandle>,
+
+    /// The current job's streamed output lines (newest last), shown on the Jobs
+    /// screen. Retained after the job finishes so the last run stays readable.
+    pub job_output: Vec<JobOutput>,
+
+    /// A one-line summary of how the last job ended (name + exit), for the Jobs
+    /// screen header once `job` is `None` again.
+    pub last_job: Option<String>,
+
     /// Loaded config (respects which adapters are enabled).
     pub config: AppConfig,
 
@@ -121,6 +165,8 @@ pub enum Screen {
     Tools,
     /// Launcher screen: pick a tool from the static catalog and launch it.
     Launcher,
+    /// Jobs screen: live (or last) output of a background job.
+    Jobs,
 }
 
 impl App {
@@ -137,6 +183,12 @@ impl App {
             filter: String::new(),
             selected_tool: 0,
             pending_action: None,
+            palette_open: false,
+            palette_query: String::new(),
+            palette_selected: 0,
+            job: None,
+            job_output: Vec::new(),
+            last_job: None,
             config,
             recent_events: vec!["TUI started".to_owned()],
             tx,
@@ -213,6 +265,146 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    // --- command palette ----------------------------------------------------
+
+    /// The palette's current filtered command list (by `palette_query`).
+    pub fn palette_commands(&self) -> Vec<PaletteCommand> {
+        palette::filter(&self.palette_query)
+    }
+
+    /// Open the palette (fresh query + selection). A no-op while an action is
+    /// pending — the confirm modal owns input then.
+    fn open_palette(&mut self) {
+        if self.pending_action.is_some() {
+            return;
+        }
+        self.palette_open = true;
+        self.palette_query.clear();
+        self.palette_selected = 0;
+    }
+
+    /// Close the palette and clear its transient state.
+    fn close_palette(&mut self) {
+        self.palette_open = false;
+        self.palette_query.clear();
+        self.palette_selected = 0;
+    }
+
+    /// Move the palette selection by `delta` rows, clamped to the filtered list
+    /// (with wraparound), mirroring the list navigation elsewhere.
+    fn palette_move(&mut self, down: bool) {
+        let len = self.palette_commands().len();
+        if len == 0 {
+            self.palette_selected = 0;
+            return;
+        }
+        self.palette_selected = if down {
+            (self.palette_selected + 1) % len
+        } else {
+            (self.palette_selected + len - 1) % len
+        };
+    }
+
+    /// Dispatch the selected palette command, then close the palette. A nav/
+    /// action command is re-dispatched as its `Action`; a `run <tool>` command
+    /// arms the same confirm gate the Launcher uses (never spawns directly).
+    /// Returns true only if the dispatched action means "quit" (none of the
+    /// palette commands do, but we thread the contract through faithfully).
+    fn palette_activate(&mut self, runner: &mut impl ForegroundRunner) -> bool {
+        let filtered = self.palette_commands();
+        let Some(chosen) = filtered.get(self.palette_selected).cloned() else {
+            self.close_palette();
+            return false;
+        };
+        self.close_palette();
+        match chosen.command {
+            Command::Action(action) => self.on_action(action, runner),
+            Command::RunTool { id, name } => {
+                self.arm_tool(id, name);
+                false
+            }
+        }
+    }
+
+    // --- background jobs -----------------------------------------------------
+
+    /// Arm a tool for running: pick the path (streamed job vs. foreground launch)
+    /// and stage the matching `PendingAction`. The confirm modal then requires an
+    /// explicit Enter before anything runs — the single gated entry point shared
+    /// by the Launcher screen and the palette.
+    fn arm_tool(&mut self, id: String, name: String) {
+        self.pending_action = Some(if is_streamable(&id) {
+            PendingAction::RunJob { id, name: name.clone() }
+        } else {
+            PendingAction::LaunchTool { id, name: name.clone() }
+        });
+        self.log_event(format!("{name}: confirm (Enter) or cancel (Esc)"));
+    }
+
+    /// Spawn a confirmed background job. Refuses if one is already running (one at
+    /// a time). Switches to the Jobs screen so the streaming output is visible.
+    fn start_job(&mut self, id: &str, name: &str) {
+        if self.job.is_some() {
+            self.log_event(format!("{name}: a job is already running (cancel it first)"));
+            return;
+        }
+        let Some(command) = launcher::resolve_command(id, &self.config) else {
+            self.log_event(format!("{name} has no launch command yet"));
+            return;
+        };
+        match jobs::spawn(name, &command) {
+            Some(handle) => {
+                self.job_output.clear();
+                self.last_job = None;
+                self.current_screen = Screen::Jobs;
+                self.log_event(format!("{name}: job started ({command})"));
+                self.job = Some(handle);
+            }
+            None => self.log_event(format!("{name}: failed to start ({command})")),
+        }
+    }
+
+    /// Drain any output the running job has produced and, once it has exited,
+    /// finish it (record how it ended, drop the handle, refresh the snapshot).
+    /// Called every loop iteration from `main`; a no-op when idle.
+    pub fn poll_job(&mut self) {
+        let Some(job) = self.job.as_mut() else {
+            return;
+        };
+        // Drain all currently-available output first so no trailing lines are
+        // lost when the process exits between ticks.
+        while let Some(out) = job.try_recv() {
+            self.job_output.push(out);
+        }
+        if let Some(exit) = job.poll_done() {
+            // One more drain in case lines landed between the last drain and exit.
+            while let Some(out) = job.try_recv() {
+                self.job_output.push(out);
+            }
+            let name = job.name.clone();
+            let summary = match exit {
+                JobExit::Code(0) => format!("{name}: finished (exit 0)"),
+                JobExit::Code(code) => format!("{name}: finished (exit {code})"),
+                JobExit::Signalled => format!("{name}: cancelled / signalled"),
+            };
+            self.log_event(summary.clone());
+            self.last_job = Some(summary);
+            self.job = None;
+            // A finished job may have changed what a fresh probe would see.
+            self.request_refresh();
+        }
+    }
+
+    /// Cancel the running job (kills the child). The next `poll_job` reports it as
+    /// signalled and finishes the bookkeeping. No-op when idle.
+    fn cancel_job(&mut self) {
+        if let Some(job) = self.job.as_mut() {
+            job.cancel();
+            let name = job.name.clone();
+            self.log_event(format!("{name}: cancel requested"));
+        }
+    }
+
     /// Execute the pending action (the user confirmed). Clears `pending_action`
     /// either way. This is the ONLY place a mutating action actually runs, so
     /// every mutation is provably gated behind confirmation.
@@ -228,17 +420,19 @@ impl App {
                     self.request_refresh();
                 }
             }
+            PendingAction::RunJob { id, name } => {
+                self.start_job(&id, &name);
+            }
         }
     }
 
     /// Discard the pending action (the user cancelled). Logs that nothing ran.
     fn cancel_pending(&mut self) {
         if let Some(action) = self.pending_action.take() {
-            match action {
-                PendingAction::LaunchTool { name, .. } => {
-                    self.log_event(format!("{name}: launch cancelled (nothing ran)"));
-                }
-            }
+            let name = match action {
+                PendingAction::LaunchTool { name, .. } | PendingAction::RunJob { name, .. } => name,
+            };
+            self.log_event(format!("{name}: cancelled (nothing ran)"));
         }
     }
 
@@ -254,11 +448,36 @@ impl App {
         // Enter confirms (runs it), Esc cancels (discards it), and EVERY other
         // key is swallowed so nothing leaks through to the underlying screen.
         // We return early before normal dispatch — and never quit from here.
+        // This is the innermost modal: it takes precedence over the palette.
         if self.pending_action.is_some() {
             match action {
                 crate::action::Action::Activate => self.confirm_pending(launcher),
                 crate::action::Action::Cancel => self.cancel_pending(),
                 _ => {} // ignored: a modal swallows all other input
+            }
+            return false;
+        }
+
+        // Palette gate: while the palette is open it owns input — type to filter,
+        // move the selection, Enter dispatches, Esc closes. Every other key is
+        // swallowed from the underlying screen. `palette_activate` may dispatch a
+        // nav/action command (which can never quit) or arm a job.
+        if self.palette_open {
+            match action {
+                crate::action::Action::Cancel => self.close_palette(),
+                crate::action::Action::Activate => return self.palette_activate(launcher),
+                crate::action::Action::Up => self.palette_move(false),
+                crate::action::Action::Down => self.palette_move(true),
+                crate::action::Action::Backspace => {
+                    self.palette_query.pop();
+                    self.palette_selected = 0;
+                }
+                crate::action::Action::InputChar(c) if c.is_ascii_graphic() || c == ' ' => {
+                    self.palette_query.push(c);
+                    self.palette_selected = 0;
+                }
+                // Re-opening while open is a no-op; all else is swallowed.
+                _ => {}
             }
             return false;
         }
@@ -301,6 +520,19 @@ impl App {
             crate::action::Action::SwitchToLauncher => {
                 self.current_screen = Screen::Launcher;
                 self.log_event("Switched to Launcher screen");
+                false
+            }
+            crate::action::Action::SwitchToJobs => {
+                self.current_screen = Screen::Jobs;
+                self.log_event("Switched to Jobs screen");
+                false
+            }
+            crate::action::Action::OpenPalette => {
+                self.open_palette();
+                false
+            }
+            crate::action::Action::CancelJob => {
+                self.cancel_job();
                 false
             }
             crate::action::Action::Up => {
@@ -352,17 +584,11 @@ impl App {
                 } else if self.current_screen == Screen::Launcher {
                     // Do NOT launch yet. Requesting a launch only *arms* a
                     // pending action; the confirmation modal then requires an
-                    // explicit Enter to actually run it. This is the single
-                    // gated entry point for the (only) mutating action.
+                    // explicit Enter to actually run it. `arm_tool` picks the
+                    // path (streamed background job vs. foreground hand-over).
+                    // This is a single gated entry point shared with the palette.
                     if let Some(tool) = crate::screens::launchpad::CATALOG.get(self.selected_tool) {
-                        self.pending_action = Some(PendingAction::LaunchTool {
-                            id: tool.id.to_owned(),
-                            name: tool.name.to_owned(),
-                        });
-                        self.log_event(format!(
-                            "{}: confirm launch (Enter) or cancel (Esc)",
-                            tool.name
-                        ));
+                        self.arm_tool(tool.id.to_owned(), tool.name.to_owned());
                     }
                 }
                 false
@@ -433,31 +659,38 @@ mod tests {
         app
     }
 
-    /// Pin a catalog entry to an explicit binary so the launch path resolves
-    /// deterministically regardless of the host PATH.
-    fn launcher_app_with_scripts() -> App {
+    /// Select a catalog tool by id on a Launcher app (panics if absent).
+    fn select_tool(app: &mut App, id: &str) {
+        let idx = crate::screens::launchpad::CATALOG
+            .iter()
+            .position(|t| t.id == id)
+            .unwrap_or_else(|| panic!("{id} in catalog"));
+        app.selected_tool = idx;
+    }
+
+    /// A Launcher app with `proto` selected and pinned to an explicit binary.
+    /// `proto` is the INTERACTIVE tool, so arming it yields a foreground
+    /// `LaunchTool` that drives the (fake) `ForegroundRunner` on confirm — the
+    /// path these runner-based tests exercise.
+    fn launcher_app_with_proto() -> App {
         let mut app = launcher_app();
         app.config.adapters.insert(
-            "scripts".to_owned(),
+            "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
-                binary: Some("/tmp/scripts".to_owned()),
+                binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
             },
         );
-        let idx = crate::screens::launchpad::CATALOG
-            .iter()
-            .position(|t| t.id == "scripts")
-            .expect("scripts in catalog");
-        app.selected_tool = idx;
+        select_tool(&mut app, "proto");
         app
     }
 
     #[test]
-    fn activate_on_launcher_arms_pending_without_spawning() {
-        // Enter on the Launcher must only *arm* a pending action — it must never
-        // spawn a process before the user confirms.
-        let mut app = launcher_app_with_scripts();
+    fn activate_on_launcher_arms_foreground_tool_without_spawning() {
+        // Enter on the Launcher must only *arm* a pending action — never spawn
+        // before the user confirms. `proto` is interactive → foreground LaunchTool.
+        let mut app = launcher_app_with_proto();
         let mut runner = FakeRunner { calls: 0 };
 
         let quit = app.on_action(Action::Activate, &mut runner);
@@ -466,18 +699,39 @@ mod tests {
         assert_eq!(
             app.pending_action,
             Some(PendingAction::LaunchTool {
-                id: "scripts".to_owned(),
-                name: "Scripts".to_owned(),
+                id: "proto".to_owned(),
+                name: "Proto".to_owned(),
             })
         );
         assert_eq!(runner.calls, 0, "arming must not spawn a process");
     }
 
     #[test]
-    fn confirm_runs_pending_action_and_clears_it() {
-        // With a pending launch, Enter confirms: it runs once, requests refresh,
-        // and clears the pending action.
-        let mut app = launcher_app_with_scripts();
+    fn activate_on_launcher_arms_streamable_tool_as_a_job() {
+        // A non-interactive tool (scripts) must arm a RunJob — the background,
+        // streamed path — rather than a foreground LaunchTool.
+        let mut app = launcher_app();
+        select_tool(&mut app, "scripts");
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner);
+
+        assert_eq!(
+            app.pending_action,
+            Some(PendingAction::RunJob {
+                id: "scripts".to_owned(),
+                name: "Scripts".to_owned(),
+            }),
+            "a streamable tool must arm a background job"
+        );
+        assert_eq!(runner.calls, 0, "arming must not spawn a process");
+    }
+
+    #[test]
+    fn confirm_runs_foreground_tool_and_clears_it() {
+        // With a pending foreground launch, Enter confirms: it runs once via the
+        // ForegroundRunner, requests refresh, and clears the pending action.
+        let mut app = launcher_app_with_proto();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -490,14 +744,45 @@ mod tests {
         assert!(app
             .recent_events
             .iter()
-            .any(|e| e == "Scripts exited successfully"));
+            .any(|e| e == "Proto exited successfully"));
+    }
+
+    #[test]
+    fn confirm_streamable_tool_does_not_use_foreground_runner() {
+        // Confirming a RunJob goes through the background job path, NOT the
+        // foreground runner. The pinned binary isn't a real executable, so the
+        // spawn fails and is reported — but the runner must never be touched, and
+        // no job handle is left dangling.
+        let mut app = launcher_app();
+        app.config.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/definitely-not-executable".to_owned()),
+                timeout_secs: None,
+            },
+        );
+        select_tool(&mut app, "scripts");
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner); // arm RunJob
+        let quit = app.on_action(Action::Activate, &mut runner); // confirm
+
+        assert!(!quit);
+        assert_eq!(runner.calls, 0, "a job must not use the foreground runner");
+        assert!(app.pending_action.is_none(), "pending must be cleared");
+        assert!(app.job.is_none(), "a failed spawn leaves no job handle");
+        assert!(app
+            .recent_events
+            .iter()
+            .any(|e| e.contains("failed to start")));
     }
 
     #[test]
     fn cancel_discards_pending_action_without_spawning() {
-        // Esc with a pending launch cancels: nothing runs, pending is cleared,
+        // Esc with a pending action cancels: nothing runs, pending is cleared,
         // and the app does not quit.
-        let mut app = launcher_app_with_scripts();
+        let mut app = launcher_app_with_proto();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -509,7 +794,7 @@ mod tests {
         assert!(app
             .recent_events
             .iter()
-            .any(|e| e.contains("launch cancelled")));
+            .any(|e| e.contains("cancelled (nothing ran)")));
     }
 
     #[test]
@@ -517,7 +802,7 @@ mod tests {
         // The modal is modal: any non-confirm/cancel key while pending is
         // ignored. It must not navigate, must not spawn, and must leave the
         // pending action untouched.
-        let mut app = launcher_app_with_scripts();
+        let mut app = launcher_app_with_proto();
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner); // arm
@@ -603,26 +888,115 @@ mod tests {
     #[test]
     fn launcher_enter_arms_the_selected_tool() {
         // Activate on the Launcher must arm a PendingAction for the *selected*
-        // catalog tool — carrying that tool's id and name — and must not spawn.
+        // catalog tool, carrying that tool's id and name, and must not spawn.
+        // `tools` is non-interactive → it arms a RunJob.
         let mut app = launcher_app();
-        let idx = crate::screens::launchpad::CATALOG
-            .iter()
-            .position(|t| t.id == "tools")
-            .expect("tools in catalog");
-        app.selected_tool = idx;
-        let entry = &crate::screens::launchpad::CATALOG[idx];
+        select_tool(&mut app, "tools");
+        let entry = &crate::screens::launchpad::CATALOG[app.selected_tool];
         let mut runner = FakeRunner { calls: 0 };
 
         app.on_action(Action::Activate, &mut runner);
 
         assert_eq!(
             app.pending_action,
-            Some(PendingAction::LaunchTool {
+            Some(PendingAction::RunJob {
                 id: entry.id.to_owned(),
                 name: entry.name.to_owned(),
             }),
             "Activate must arm the selected tool"
         );
         assert_eq!(runner.calls, 0, "arming must not spawn a process");
+    }
+
+    // --- command palette ----------------------------------------------------
+
+    #[test]
+    fn palette_opens_filters_and_dispatches_navigation() {
+        let mut app = launcher_app();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::OpenPalette, &mut runner);
+        assert!(app.palette_open, "^P must open the palette");
+
+        // Type "system" → the list narrows to the System nav command at top.
+        for c in "system".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        assert!(
+            app.palette_commands().iter().any(|c| c.label == "system"),
+            "query should surface the system command"
+        );
+
+        // Enter dispatches the selected command (nav → switch screen) and closes.
+        app.palette_selected = app
+            .palette_commands()
+            .iter()
+            .position(|c| c.label == "system")
+            .expect("system present");
+        let quit = app.on_action(Action::Activate, &mut runner);
+
+        assert!(!quit);
+        assert!(!app.palette_open, "dispatch must close the palette");
+        assert_eq!(app.current_screen, Screen::System, "nav command must switch");
+    }
+
+    #[test]
+    fn palette_run_tool_arms_confirm_without_spawning() {
+        // Choosing a `run <tool>` command in the palette must arm the SAME
+        // confirm gate as the Launcher — never spawn directly.
+        let mut app = launcher_app();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::OpenPalette, &mut runner);
+        for c in "run bulwark".chars() {
+            app.on_action(Action::InputChar(c), &mut runner);
+        }
+        let pos = app
+            .palette_commands()
+            .iter()
+            .position(|c| c.label == "run bulwark")
+            .expect("run bulwark present");
+        app.palette_selected = pos;
+        app.on_action(Action::Activate, &mut runner);
+
+        assert!(!app.palette_open, "dispatch closes the palette");
+        assert_eq!(
+            app.pending_action,
+            Some(PendingAction::RunJob {
+                id: "bulwark".to_owned(),
+                name: "Bulwark".to_owned(),
+            }),
+            "run command must arm a job behind the confirm gate"
+        );
+        assert_eq!(runner.calls, 0, "arming must not spawn");
+        assert!(app.job.is_none(), "must not start a job before confirm");
+    }
+
+    #[test]
+    fn palette_esc_closes_without_dispatching() {
+        let mut app = launcher_app();
+        let mut runner = FakeRunner { calls: 0 };
+        let screen_before = app.current_screen;
+
+        app.on_action(Action::OpenPalette, &mut runner);
+        let quit = app.on_action(Action::Cancel, &mut runner);
+
+        assert!(!quit, "Esc in the palette closes it, does not quit");
+        assert!(!app.palette_open);
+        assert_eq!(app.current_screen, screen_before, "nothing was dispatched");
+    }
+
+    #[test]
+    fn palette_does_not_open_while_confirm_pending() {
+        // The confirm modal is the innermost gate: ^P must not open the palette
+        // while an action awaits confirmation.
+        let mut app = launcher_app_with_proto();
+        let mut runner = FakeRunner { calls: 0 };
+
+        app.on_action(Action::Activate, &mut runner); // arm (confirm pending)
+        app.on_action(Action::OpenPalette, &mut runner); // should be swallowed
+
+        assert!(!app.palette_open, "palette must not open over the confirm modal");
+        assert!(app.pending_action.is_some(), "pending must be untouched");
     }
 }
