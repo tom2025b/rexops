@@ -15,7 +15,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{pane, Theme};
+use suite_ui::{pane, SearchBar, Theme};
 
 use crate::app::App;
 use crate::health;
@@ -25,24 +25,44 @@ use rexops_core::AdapterHealth;
 
 /// Render the Adapters screen into the given area.
 pub fn render_adapters(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
+    // A shared SearchBar on top (matching the Dashboard), then the list + detail
+    // split below it. The bar is the single visible home of the filter, so the
+    // list pane no longer repeats it in its title.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // search / filter bar
+            Constraint::Min(1),    // list + detail
+        ])
+        .split(area);
+
+    render_search_bar(f, app, rows[0], theme);
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(area);
+        .split(rows[1]);
 
     render_adapter_list(f, app, chunks[0], theme);
     render_adapter_detail(f, app, chunks[1], theme);
 }
 
+/// The shared suite-ui search bar driving the adapters list, identical in form to
+/// the Dashboard's. The match count is how many adapters the current filter keeps,
+/// so an empty result is obvious at a glance.
+fn render_search_bar(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
+    let count = app.filtered_adapter_names().len();
+    SearchBar {
+        query: &app.filter,
+        placeholder: "type to filter adapters · esc clears",
+        match_count: Some(count),
+    }
+    .render(f, area, theme);
+}
+
 fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let visible = app.filtered_adapter_names();
     let mut lines: Vec<Line> = Vec::new();
-
-    let filter_suffix = if app.filter.is_empty() {
-        String::new()
-    } else {
-        format!(" [filter: {}]", app.filter)
-    };
 
     if visible.is_empty() {
         lines.push(Line::from(
@@ -69,13 +89,10 @@ fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         }
     }
 
-    let title = format!(
-        "Adapters{} (j/k/arrows, enter, chars to filter, esc/backspace)",
-        filter_suffix
-    );
+    let title = "Adapters (j/k/arrows, enter, chars to filter, esc/backspace)";
     let list = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
-        .block(pane(&title, theme));
+        .block(pane(title, theme));
 
     f.render_widget(list, area);
 }

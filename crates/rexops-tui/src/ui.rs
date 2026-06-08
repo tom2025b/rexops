@@ -210,21 +210,22 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
         )
     };
 
-    // The persistent job-status segment from the shared suite chrome, folded into
-    // the footer between the keybind hints and the adapter badge. `StatusBar::line`
-    // gives us the styled spans so the whole footer stays one bordered row.
-    let job_line = StatusBar { job: app.job_state() }.line(theme);
-
     let mut spans = hints_line.spans;
-    // A live job-event toast (just-finished flash) sits next, when present, styled
-    // by the shared `Toast` so success/failure/cancelled read the same as
-    // everywhere else. It clears on the next keypress (see `App::clear_toast`).
-    if let Some((text, kind)) = &app.toast {
-        spans.push(Span::raw("   |   "));
-        spans.extend(Toast { text, kind: *kind }.line(theme).spans);
-    }
+    // The job segment: while a job-event toast is active it *replaces* the
+    // persistent StatusBar segment rather than sitting beside it. Both describe
+    // the same just-finished outcome (the toast is set in the same `poll_job`
+    // tick that makes `job_state()` report `Done`/`Cancelled`), so rendering both
+    // would print the outcome twice ("✓ backup — done | ✓ backup — done"). The
+    // toast clears on the next keypress (see `App::clear_toast`), at which point
+    // the StatusBar segment takes back over.
     spans.push(Span::raw("   |   "));
-    spans.extend(job_line.spans);
+    if let Some((text, kind)) = &app.toast {
+        spans.extend(Toast { text, kind: *kind }.line(theme).spans);
+    } else {
+        // The persistent job-status segment from the shared suite chrome.
+        // `StatusBar::line` gives us the styled spans so the footer stays one row.
+        spans.extend(StatusBar { job: app.job_state() }.line(theme).spans);
+    }
     spans.push(Span::raw("   |   "));
     spans.push(Span::styled(right, right_style));
 
@@ -344,5 +345,64 @@ mod tests {
             name: "x".to_owned(),
         });
         assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    }
+
+    /// Flatten the rendered footer row to a single string, so a test can assert on
+    /// what actually appears in it (glyphs + outcome text).
+    fn footer_text(app: &App) -> String {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        // 3 rows tall: render_status_bar wraps the row in a bordered block, so the
+        // content sits on the middle line between the top and bottom borders.
+        let backend = TestBackend::new(120, 3);
+        let mut terminal = Terminal::new(backend).expect("test backend");
+        let theme = Theme::with_color(false);
+        terminal
+            .draw(|f| render_status_bar(f, app, f.area(), theme))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        buffer.content.iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn an_active_toast_replaces_the_status_bar_job_segment() {
+        // Regression: when a job finishes, the same poll sets both `last_outcome`
+        // (so `job_state()` reads Done) and `toast`. The footer must show that
+        // outcome ONCE, not twice ("✓ backup — done | ✓ backup — done").
+        let mut app = app_on(Screen::Jobs);
+        app.last_outcome = Some(crate::app::LastOutcome {
+            name: "backup".into(),
+            ok: true,
+            cancelled: false,
+        });
+        app.toast = Some(("backup — done".into(), suite_ui::ToastKind::Success));
+
+        let footer = footer_text(&app);
+        assert!(footer.contains("backup — done"), "the outcome must be shown");
+        assert_eq!(
+            footer.matches("backup — done").count(),
+            1,
+            "the outcome must appear exactly once, not duplicated: {footer:?}"
+        );
+    }
+
+    #[test]
+    fn the_status_bar_job_segment_shows_once_the_toast_is_cleared() {
+        // With no active toast, the persistent StatusBar segment renders the last
+        // outcome — still exactly once.
+        let mut app = app_on(Screen::Jobs);
+        app.last_outcome = Some(crate::app::LastOutcome {
+            name: "backup".into(),
+            ok: true,
+            cancelled: false,
+        });
+        app.toast = None;
+
+        let footer = footer_text(&app);
+        assert_eq!(
+            footer.matches("backup — done").count(),
+            1,
+            "the StatusBar segment shows the outcome once: {footer:?}"
+        );
     }
 }

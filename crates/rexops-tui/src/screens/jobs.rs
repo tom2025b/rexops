@@ -15,7 +15,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{pane, Health, Theme};
+use suite_ui::{pane, Theme};
 
 use crate::app::{App, JobRecord};
 use crate::jobs::JobOutput;
@@ -81,8 +81,9 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         // so the newest lines are always visible without a scroll model.
         let visible = area.height.saturating_sub(2) as usize;
         let start = app.job_output.len().saturating_sub(visible);
-        app.job_output[start..]
+        app.job_output
             .iter()
+            .skip(start)
             .map(|out| match out {
                 JobOutput::Stdout(text) => Line::from(Span::raw(text.clone())),
                 // stderr: failure style + an explicit marker so it still reads as
@@ -106,13 +107,10 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 /// `✗` red (non-zero), `■` yellow (cancelled). The glyph carries the outcome under
 /// `NO_COLOR`, where the hues drop away.
 fn history_line(record: &JobRecord, theme: Theme) -> Line<'static> {
-    let (glyph, style) = if record.outcome.cancelled {
-        ("■ ", theme.working())
-    } else if record.outcome.ok {
-        ("✓ ", theme.health(Health::Healthy))
-    } else {
-        ("✗ ", theme.status_error())
-    };
+    // Same (glyph, style) source the status bar and footer toast use, via the
+    // shared Outcome — so a history row can never drift from how the same outcome
+    // reads elsewhere.
+    let (glyph, style) = record.outcome.as_outcome().glyph_style(theme);
     Line::from(vec![
         Span::styled(glyph, style),
         Span::styled(record.summary.clone(), style),

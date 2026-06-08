@@ -14,6 +14,7 @@
 //! The thread calls the shared rexops_app::build_snapshot (the single
 //! implementation) and sends the result back over mpsc. UI stays responsive.
 
+use std::collections::VecDeque;
 use std::sync::mpsc;
 
 // The probe logic that used to live here (and was duplicated with CLI) has
@@ -85,6 +86,23 @@ pub struct LastOutcome {
     pub cancelled: bool,
 }
 
+impl LastOutcome {
+    /// Reduce to the suite's shared [`Outcome`](suite_ui::Outcome) — the single
+    /// classification every job-event renderer (status bar, footer toast, history
+    /// row) maps through, so the glyph/colour can never drift between them.
+    /// Cancellation wins over the exit code: a cancelled job reads as cancelled
+    /// even if it happened to exit 0 in the same instant.
+    pub fn as_outcome(&self) -> suite_ui::Outcome {
+        if self.cancelled {
+            suite_ui::Outcome::Cancelled
+        } else if self.ok {
+            suite_ui::Outcome::Success
+        } else {
+            suite_ui::Outcome::Failure
+        }
+    }
+}
+
 /// One entry in the Jobs screen's history: a finished job's name, how it ended,
 /// and the exact exit summary already shown for `last_job`. Output lines are NOT
 /// retained — only the live/last run keeps its buffer (history is a roll-up of
@@ -104,6 +122,12 @@ pub struct JobRecord {
 /// a long session can't grow the history without limit; older entries roll off.
 const JOB_HISTORY_CAP: usize = 50;
 
+/// How many live output lines the Jobs screen keeps for the current/last run.
+/// The buffer rolls: once full, the oldest line drops as a new one arrives, so a
+/// long-running or chatty tool can't grow memory without bound. The pane only
+/// shows what fits anyway, so older-than-cap lines aren't reachable on screen.
+const JOB_OUTPUT_CAP: usize = 1000;
+
 /// Whether a tool runs as a streamed background job (non-interactive) or as a
 /// foreground hand-over (interactive). Interactive TUIs can't be piped into a
 /// pane, so they keep the foreground path. This is the single place that draws
@@ -120,14 +144,14 @@ pub fn is_streamable(tool_id: &str) -> bool {
 /// clean exit → `Success` (`✓`), non-zero exit → `Failure` (`✗`), cancel/signal
 /// → `Cancelled` (`■`). The single place job outcomes become a toast.
 fn toast_for(outcome: &LastOutcome) -> (String, suite_ui::ToastKind) {
-    use suite_ui::ToastKind;
+    use suite_ui::{Outcome, ToastKind};
     let name = &outcome.name;
-    if outcome.cancelled {
-        (format!("{name} — cancelled"), ToastKind::Cancelled)
-    } else if outcome.ok {
-        (format!("{name} — done"), ToastKind::Success)
-    } else {
-        (format!("{name} — failed"), ToastKind::Failure)
+    // Classify once via the shared Outcome, then pick the matching message +
+    // toast kind. No glyph/colour logic here — that lives in suite-ui.
+    match outcome.as_outcome() {
+        Outcome::Success => (format!("{name} — done"), ToastKind::Success),
+        Outcome::Failure => (format!("{name} — failed"), ToastKind::Failure),
+        Outcome::Cancelled => (format!("{name} — cancelled"), ToastKind::Cancelled),
     }
 }
 
@@ -185,8 +209,10 @@ pub struct App {
     pub job: Option<JobHandle>,
 
     /// The current job's streamed output lines (newest last), shown on the Jobs
-    /// screen. Retained after the job finishes so the last run stays readable.
-    pub job_output: Vec<JobOutput>,
+    /// screen. Retained after the job finishes so the last run stays readable. A
+    /// rolling buffer capped at [`JOB_OUTPUT_CAP`]: oldest lines drop once full so
+    /// a chatty/long-running tool can't grow memory without bound.
+    pub job_output: VecDeque<JobOutput>,
 
     /// A one-line summary of how the last job ended (name + exit), for the Jobs
     /// screen header once `job` is `None` again.
@@ -253,7 +279,7 @@ impl App {
             palette_query: String::new(),
             palette_selected: 0,
             job: None,
-            job_output: Vec::new(),
+            job_output: VecDeque::new(),
             last_job: None,
             last_outcome: None,
             job_history: Vec::new(),
@@ -459,11 +485,27 @@ impl App {
         if let Some(job) = &self.job {
             return suite_ui::JobState::Running { name: &job.name };
         }
+        // Map the shared Outcome onto the status bar's richer JobState (which also
+        // carries Running/Idle). Going through `as_outcome` keeps the cancelled-vs-
+        // exit-code decision in one place rather than re-deriving it here.
         match &self.last_outcome {
-            Some(o) if o.cancelled => suite_ui::JobState::Cancelled { name: &o.name },
-            Some(o) => suite_ui::JobState::Done { name: &o.name, ok: o.ok },
+            Some(o) => match o.as_outcome() {
+                suite_ui::Outcome::Cancelled => suite_ui::JobState::Cancelled { name: &o.name },
+                suite_ui::Outcome::Success => suite_ui::JobState::Done { name: &o.name, ok: true },
+                suite_ui::Outcome::Failure => suite_ui::JobState::Done { name: &o.name, ok: false },
+            },
             None => suite_ui::JobState::Idle,
         }
+    }
+
+    /// Append one output line to the rolling [`job_output`](Self::job_output)
+    /// buffer, dropping the oldest line once it is at [`JOB_OUTPUT_CAP`]. Keeps
+    /// memory bounded no matter how much a tool prints.
+    fn push_job_output(&mut self, out: JobOutput) {
+        if self.job_output.len() == JOB_OUTPUT_CAP {
+            self.job_output.pop_front();
+        }
+        self.job_output.push_back(out);
     }
 
     /// Drain any output the running job has produced and, once it has exited,
@@ -473,16 +515,25 @@ impl App {
         let Some(job) = self.job.as_mut() else {
             return;
         };
-        // Drain all currently-available output first so no trailing lines are
-        // lost when the process exits between ticks.
-        while let Some(out) = job.try_recv() {
-            self.job_output.push(out);
+        // Drain everything available this tick, learning whether the output
+        // channel has disconnected (both reader threads finished and dropped their
+        // senders — the only race-free "output is complete" signal). Collect into
+        // a scratch buffer first so we can release the `&mut self.job` borrow
+        // before pushing into `self.job_output`.
+        let mut scratch: Vec<JobOutput> = Vec::new();
+        let drained = job.drain_into(&mut scratch);
+        let exited = job.poll_done();
+        for out in scratch {
+            self.push_job_output(out);
         }
-        if let Some(exit) = job.poll_done() {
-            // One more drain in case lines landed between the last drain and exit.
-            while let Some(out) = job.try_recv() {
-                self.job_output.push(out);
-            }
+
+        // Finish only once the child has exited AND its output has fully drained.
+        // `try_wait` reporting the child gone can win the race against a reader
+        // still flushing its last line, so requiring the channel to have
+        // disconnected too is what stops trailing output from being lost. Until
+        // both hold we return and try again next tick — never blocking the UI.
+        if let (Some(exit), true) = (exited, drained) {
+            let job = self.job.as_ref().expect("job present while finishing");
             let name = job.name.clone();
             let (summary, outcome) = match exit {
                 JobExit::Code(0) => (
@@ -934,6 +985,27 @@ mod tests {
             app.job_history.last().unwrap().name,
             "newest",
             "the new entry is appended last"
+        );
+    }
+
+    #[test]
+    fn job_output_is_a_rolling_buffer_capped_at_job_output_cap() {
+        let mut app = bare_app();
+        // Push well past the cap; the buffer must stay bounded and keep the
+        // newest lines (the oldest roll off the front).
+        for i in 0..(JOB_OUTPUT_CAP + 250) {
+            app.push_job_output(JobOutput::Stdout(format!("line-{i}")));
+        }
+        assert_eq!(app.job_output.len(), JOB_OUTPUT_CAP, "buffer stays capped");
+        assert_eq!(
+            app.job_output.front(),
+            Some(&JobOutput::Stdout("line-250".to_owned())),
+            "the oldest retained line is exactly cap-from-the-end"
+        );
+        assert_eq!(
+            app.job_output.back(),
+            Some(&JobOutput::Stdout(format!("line-{}", JOB_OUTPUT_CAP + 249))),
+            "the newest line is kept at the back"
         );
     }
 
