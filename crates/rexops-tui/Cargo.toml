@@ -27,4 +27,4 @@ rexops-app = { path = "../rexops-app" }
 # RexOps and ScriptVault present the same look from one source. The suite crate
 # is unpublished, so we pull it straight from its repo, pinned to a rev for a
 # reproducible build (and so CI resolves it without a sibling checkout).
-suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite.git", rev = "860faf16227edf762bcb5fc45e013f0fbd8c7e80" }
+suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite.git", rev = "0a8dadcf7bdfb6def80c5c7d342df3a9c23700ba" }
