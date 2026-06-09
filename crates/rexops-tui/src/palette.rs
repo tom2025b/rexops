@@ -40,14 +40,22 @@ pub struct PaletteCommand {
 /// current tool catalog.
 pub fn commands() -> Vec<PaletteCommand> {
     let mut cmds = vec![
-        nav("dashboard", "go to the Dashboard", Action::SwitchToDashboard),
+        nav(
+            "dashboard",
+            "go to the Dashboard",
+            Action::SwitchToDashboard,
+        ),
         nav("adapters", "go to Adapters", Action::SwitchToAdapters),
         nav("system", "go to System info", Action::SwitchToSystem),
         nav("scripts", "go to Scripts", Action::SwitchToScripts),
         nav("tools", "go to Tools / inventory", Action::SwitchToTools),
         nav("launcher", "go to the Launcher", Action::SwitchToLauncher),
         nav("jobs", "go to Jobs (live output)", Action::SwitchToJobs),
-        action("refresh", "re-probe adapters in the background", Action::Refresh),
+        action(
+            "refresh",
+            "re-probe adapters in the background",
+            Action::Refresh,
+        ),
         action("help", "toggle the keybinding help", Action::ToggleHelp),
     ];
 

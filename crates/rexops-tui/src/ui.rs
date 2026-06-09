@@ -160,9 +160,7 @@ fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)] {
             ("enter", "select"),
             ("1", "dashboard"),
         ],
-        crate::app::Screen::System
-        | crate::app::Screen::Scripts
-        | crate::app::Screen::Tools => &[
+        crate::app::Screen::System | crate::app::Screen::Scripts | crate::app::Screen::Tools => &[
             ("q", "quit"),
             ("^P", "palette"),
             ("r", "refresh"),
@@ -202,7 +200,10 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     } else if count == 0 {
         ("no adapters probed", theme.dim())
     } else if available {
-        ("adapters available", theme.health(suite_ui::Health::Healthy))
+        (
+            "adapters available",
+            theme.health(suite_ui::Health::Healthy),
+        )
     } else {
         (
             "all adapters unavailable",
@@ -224,13 +225,18 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
     } else {
         // The persistent job-status segment from the shared suite chrome.
         // `StatusBar::line` gives us the styled spans so the footer stays one row.
-        spans.extend(StatusBar { job: app.job_state() }.line(theme).spans);
+        spans.extend(
+            StatusBar {
+                job: app.job_state(),
+            }
+            .line(theme)
+            .spans,
+        );
     }
     spans.push(Span::raw("   |   "));
     spans.push(Span::styled(right, right_style));
 
-    let status =
-        Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
+    let status = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
 
     f.render_widget(status, area);
 }
@@ -239,7 +245,10 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect, them
 fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
     let rows = [
         ("^P · :", "open the command palette"),
-        ("q / Esc / ^C", "quit (Esc clears a filter / closes the palette first)"),
+        (
+            "q / Esc / ^C",
+            "quit (Esc clears a filter / closes the palette first)",
+        ),
         ("r", "refresh (background thread)"),
         ("? / h", "toggle this help"),
         ("1", "Dashboard — overview, risk, notes"),
@@ -249,7 +258,10 @@ fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
         ("5", "Tools"),
         ("6", "Launcher"),
         ("7", "Jobs — live output of a background job"),
-        ("j / k · ↑ / ↓", "move the selection (Adapters / Launcher / palette)"),
+        (
+            "j / k · ↑ / ↓",
+            "move the selection (Adapters / Launcher / palette)",
+        ),
         ("Enter", "activate selection / run (asks to confirm)"),
         ("x", "cancel the running job (Jobs screen)"),
         ("backspace", "edit the Adapters filter / palette query"),
@@ -329,7 +341,10 @@ mod tests {
         let mut app = app_on(Screen::Adapters);
         app.palette_open = true;
         let hints = screen_hints(&app);
-        assert!(hints.iter().any(|(_, l)| *l == "close"), "palette hints shown");
+        assert!(
+            hints.iter().any(|(_, l)| *l == "close"),
+            "palette hints shown"
+        );
         // And the per-screen "select" hint is suppressed while the palette owns input.
         assert!(!hints.iter().any(|(_, l)| *l == "select"));
     }
@@ -378,7 +393,10 @@ mod tests {
         app.toast = Some(("backup — done".into(), suite_ui::ToastKind::Success));
 
         let footer = footer_text(&app);
-        assert!(footer.contains("backup — done"), "the outcome must be shown");
+        assert!(
+            footer.contains("backup — done"),
+            "the outcome must be shown"
+        );
         assert_eq!(
             footer.matches("backup — done").count(),
             1,

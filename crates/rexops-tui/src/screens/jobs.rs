@@ -72,10 +72,7 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     };
 
     let lines: Vec<Line> = if app.job_output.is_empty() {
-        vec![Line::from(Span::styled(
-            "(no output yet)",
-            theme.dim(),
-        ))]
+        vec![Line::from(Span::styled("(no output yet)", theme.dim()))]
     } else {
         // Tail the output to what fits the pane height (minus border + padding),
         // so the newest lines are always visible without a scroll model.
@@ -200,7 +197,10 @@ mod tests {
             text.contains("no finished jobs yet"),
             "empty history must show a placeholder:\n{text}"
         );
-        assert!(text.contains("history (0)"), "title shows the count:\n{text}");
+        assert!(
+            text.contains("history (0)"),
+            "title shows the count:\n{text}"
+        );
     }
 
     #[test]
@@ -213,10 +213,22 @@ mod tests {
         let text = render_to_text(&app);
         // Each outcome leads with its distinguishing glyph (carries it under
         // NO_COLOR too) and shows the exit summary.
-        assert!(text.contains("✓ backup: finished (exit 0)"), "clean exit row:\n{text}");
-        assert!(text.contains("✗ rescan: finished (exit 2)"), "failed row:\n{text}");
-        assert!(text.contains("■ deploy: cancelled"), "cancelled row:\n{text}");
-        assert!(text.contains("history (3)"), "title counts all records:\n{text}");
+        assert!(
+            text.contains("✓ backup: finished (exit 0)"),
+            "clean exit row:\n{text}"
+        );
+        assert!(
+            text.contains("✗ rescan: finished (exit 2)"),
+            "failed row:\n{text}"
+        );
+        assert!(
+            text.contains("■ deploy: cancelled"),
+            "cancelled row:\n{text}"
+        );
+        assert!(
+            text.contains("history (3)"),
+            "title counts all records:\n{text}"
+        );
     }
 
     #[test]

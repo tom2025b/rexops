@@ -69,7 +69,10 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
                 // Opportunistic favorite star: only if this script's id/name is in
                 // the feed's favorites list. Never a correctness dependency.
                 if sv.is_favorite(s) {
-                    lines.push(Line::from(Span::styled("   ★ favorite", theme.live_marker())));
+                    lines.push(Line::from(Span::styled(
+                        "   ★ favorite",
+                        theme.live_marker(),
+                    )));
                 }
             }
         }

@@ -446,9 +446,15 @@ impl App {
     /// by the Launcher screen and the palette.
     fn arm_tool(&mut self, id: String, name: String) {
         self.pending_action = Some(if is_streamable(&id) {
-            PendingAction::RunJob { id, name: name.clone() }
+            PendingAction::RunJob {
+                id,
+                name: name.clone(),
+            }
         } else {
-            PendingAction::LaunchTool { id, name: name.clone() }
+            PendingAction::LaunchTool {
+                id,
+                name: name.clone(),
+            }
         });
         self.log_event(format!("{name}: confirm (Enter) or cancel (Esc)"));
     }
@@ -457,7 +463,9 @@ impl App {
     /// a time). Switches to the Jobs screen so the streaming output is visible.
     fn start_job(&mut self, id: &str, name: &str) {
         if self.job.is_some() {
-            self.log_event(format!("{name}: a job is already running (cancel it first)"));
+            self.log_event(format!(
+                "{name}: a job is already running (cancel it first)"
+            ));
             return;
         }
         let Some(command) = launcher::resolve_command(id, &self.config) else {
@@ -491,8 +499,14 @@ impl App {
         match &self.last_outcome {
             Some(o) => match o.as_outcome() {
                 suite_ui::Outcome::Cancelled => suite_ui::JobState::Cancelled { name: &o.name },
-                suite_ui::Outcome::Success => suite_ui::JobState::Done { name: &o.name, ok: true },
-                suite_ui::Outcome::Failure => suite_ui::JobState::Done { name: &o.name, ok: false },
+                suite_ui::Outcome::Success => suite_ui::JobState::Done {
+                    name: &o.name,
+                    ok: true,
+                },
+                suite_ui::Outcome::Failure => suite_ui::JobState::Done {
+                    name: &o.name,
+                    ok: false,
+                },
             },
             None => suite_ui::JobState::Idle,
         }
@@ -538,15 +552,27 @@ impl App {
             let (summary, outcome) = match exit {
                 JobExit::Code(0) => (
                     format!("{name}: finished (exit 0)"),
-                    LastOutcome { name: name.clone(), ok: true, cancelled: false },
+                    LastOutcome {
+                        name: name.clone(),
+                        ok: true,
+                        cancelled: false,
+                    },
                 ),
                 JobExit::Code(code) => (
                     format!("{name}: finished (exit {code})"),
-                    LastOutcome { name: name.clone(), ok: false, cancelled: false },
+                    LastOutcome {
+                        name: name.clone(),
+                        ok: false,
+                        cancelled: false,
+                    },
                 ),
                 JobExit::Signalled => (
                     format!("{name}: cancelled / signalled"),
-                    LastOutcome { name: name.clone(), ok: false, cancelled: true },
+                    LastOutcome {
+                        name: name.clone(),
+                        ok: false,
+                        cancelled: true,
+                    },
                 ),
             };
             self.log_event(summary.clone());
@@ -887,7 +913,10 @@ mod tests {
         assert_eq!(app.filter, "bul");
         // Esc with a non-empty filter clears it and does NOT request quit.
         let quit = app.on_action(Action::Cancel, &mut runner);
-        assert!(!quit, "esc must clear the filter, not quit, while filtering");
+        assert!(
+            !quit,
+            "esc must clear the filter, not quit, while filtering"
+        );
         assert!(app.filter.is_empty());
         assert_eq!(app.filtered_adapter_names().len(), 2);
     }
@@ -900,7 +929,10 @@ mod tests {
             app.on_action(Action::InputChar(c), &mut runner);
         }
         assert_eq!(app.filter, "bulx");
-        assert!(app.filtered_adapter_names().is_empty(), "'bulx' matches nothing");
+        assert!(
+            app.filtered_adapter_names().is_empty(),
+            "'bulx' matches nothing"
+        );
         app.on_action(Action::Backspace, &mut runner);
         assert_eq!(app.filter, "bul");
         assert_eq!(app.filtered_adapter_names(), vec!["bulwark".to_owned()]);
@@ -975,7 +1007,11 @@ mod tests {
             });
         }
         run_job_to_completion(&mut app, "newest", "true");
-        assert_eq!(app.job_history.len(), JOB_HISTORY_CAP, "history stays capped");
+        assert_eq!(
+            app.job_history.len(),
+            JOB_HISTORY_CAP,
+            "history stays capped"
+        );
         assert_eq!(
             app.job_history.first().unwrap().name,
             "old-1",
@@ -1023,15 +1059,34 @@ mod tests {
     #[test]
     fn toast_for_maps_each_outcome_to_its_kind() {
         use suite_ui::ToastKind;
-        let ok = LastOutcome { name: "j".into(), ok: true, cancelled: false };
-        let fail = LastOutcome { name: "j".into(), ok: false, cancelled: false };
-        let cancelled = LastOutcome { name: "j".into(), ok: false, cancelled: true };
+        let ok = LastOutcome {
+            name: "j".into(),
+            ok: true,
+            cancelled: false,
+        };
+        let fail = LastOutcome {
+            name: "j".into(),
+            ok: false,
+            cancelled: false,
+        };
+        let cancelled = LastOutcome {
+            name: "j".into(),
+            ok: false,
+            cancelled: true,
+        };
         assert!(matches!(toast_for(&ok), (_, ToastKind::Success)));
         assert!(matches!(toast_for(&fail), (_, ToastKind::Failure)));
         assert!(matches!(toast_for(&cancelled), (_, ToastKind::Cancelled)));
         // Cancelled takes precedence over `ok` (a cancel can race a clean exit).
-        let cancelled_but_ok = LastOutcome { name: "j".into(), ok: true, cancelled: true };
-        assert!(matches!(toast_for(&cancelled_but_ok), (_, ToastKind::Cancelled)));
+        let cancelled_but_ok = LastOutcome {
+            name: "j".into(),
+            ok: true,
+            cancelled: true,
+        };
+        assert!(matches!(
+            toast_for(&cancelled_but_ok),
+            (_, ToastKind::Cancelled)
+        ));
     }
 
     #[test]
@@ -1048,7 +1103,13 @@ mod tests {
             ok: true,
             cancelled: false,
         });
-        assert_eq!(app.job_state(), JobState::Done { name: "backup", ok: true });
+        assert_eq!(
+            app.job_state(),
+            JobState::Done {
+                name: "backup",
+                ok: true
+            }
+        );
 
         // A non-zero exit → Done { ok: false }.
         app.last_outcome = Some(LastOutcome {
@@ -1056,7 +1117,13 @@ mod tests {
             ok: false,
             cancelled: false,
         });
-        assert_eq!(app.job_state(), JobState::Done { name: "rescan", ok: false });
+        assert_eq!(
+            app.job_state(),
+            JobState::Done {
+                name: "rescan",
+                ok: false
+            }
+        );
 
         // A cancel/signal → Cancelled, regardless of `ok`.
         app.last_outcome = Some(LastOutcome {
@@ -1366,7 +1433,11 @@ mod tests {
 
         assert!(!quit);
         assert!(!app.palette_open, "dispatch must close the palette");
-        assert_eq!(app.current_screen, Screen::System, "nav command must switch");
+        assert_eq!(
+            app.current_screen,
+            Screen::System,
+            "nav command must switch"
+        );
     }
 
     #[test]
@@ -1425,7 +1496,10 @@ mod tests {
         app.on_action(Action::Activate, &mut runner); // arm (confirm pending)
         app.on_action(Action::OpenPalette, &mut runner); // should be swallowed
 
-        assert!(!app.palette_open, "palette must not open over the confirm modal");
+        assert!(
+            !app.palette_open,
+            "palette must not open over the confirm modal"
+        );
         assert!(app.pending_action.is_some(), "pending must be untouched");
     }
 }
