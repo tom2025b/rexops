@@ -221,9 +221,15 @@ mod tests {
         let app = app_with_selection(0);
         let text = render_to_text(&app);
         // The first catalog row is selected → the rail glyph precedes its name.
-        assert!(text.contains("▌ Bulwark"), "selected row must show the rail:\n{text}");
+        assert!(
+            text.contains("▌ Bulwark"),
+            "selected row must show the rail:\n{text}"
+        );
         // A non-selected row has no rail before its name.
-        assert!(!text.contains("▌ Proto"), "non-selected rows have no rail:\n{text}");
+        assert!(
+            !text.contains("▌ Proto"),
+            "non-selected rows have no rail:\n{text}"
+        );
     }
 
     #[test]
@@ -247,7 +253,10 @@ mod tests {
         // detail pane, not just the row.
         let app = app_with_selection(1);
         let text = render_to_text(&app);
-        assert!(text.contains("Proto:"), "detail names the selected tool:\n{text}");
+        assert!(
+            text.contains("Proto:"),
+            "detail names the selected tool:\n{text}"
+        );
         assert!(
             text.contains("protocol") || text.contains("checklist"),
             "detail shows the selected tool's description:\n{text}"

@@ -191,7 +191,10 @@ mod tests {
         // A multi-line emitter that prints N lines then exits. The production drain
         // path must collect all N — the regression this guards is losing the last
         // line(s) when `try_wait` wins the race against a reader's final flush.
-        let script = write_script("multiline", "#!/bin/sh\nfor i in $(seq 1 200); do echo line-$i; done\n");
+        let script = write_script(
+            "multiline",
+            "#!/bin/sh\nfor i in $(seq 1 200); do echo line-$i; done\n",
+        );
         let path = script.to_str().unwrap();
         let job = spawn("multiline", path).expect("spawn script");
         let (out, exit) = run_via_drain_into(job);
@@ -276,7 +279,10 @@ mod tests {
             if job.poll_done().is_some() {
                 break; // terminal result reached
             }
-            assert!(Instant::now() < deadline, "cancelled job never reported done");
+            assert!(
+                Instant::now() < deadline,
+                "cancelled job never reported done"
+            );
             sleep(Duration::from_millis(5));
         }
     }

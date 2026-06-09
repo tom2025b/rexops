@@ -24,6 +24,7 @@ rexops-core = { path = "../rexops-core" }
 rexops-app = { path = "../rexops-app" }
 
 # Shared suite-wide TUI chrome (theme/palette + rounded panes + overlays), so
-# RexOps and ScriptVault present the same look from one source. Local path dep
-# for now (the suite crate is unpublished).
-suite-ui = { path = "../../../linux-ops-suite/crates/suite-ui" }
+# RexOps and ScriptVault present the same look from one source. The suite crate
+# is unpublished, so we pull it straight from its repo, pinned to a rev for a
+# reproducible build (and so CI resolves it without a sibling checkout).
+suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite.git", rev = "860faf16227edf762bcb5fc45e013f0fbd8c7e80" }
