@@ -28,4 +28,4 @@ rexops-app = { path = "../rexops-app" }
 # dependency pinned to a specific linux-ops-suite commit, so a fresh `cargo build`
 # works without the sibling umbrella checkout and the version is reproducible.
 # Bump `rev` to adopt newer suite-ui.
-suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite", rev = "cf97f077b4680e33b6b3440663da9e308bc3704f" }
+suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite", rev = "23c4a598f9852395ce88db5b3e159d67cfd251f9" }
