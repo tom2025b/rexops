@@ -12,8 +12,22 @@ jobs:
     name: Rust verification
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      # rexops-tui depends on the shared `suite-ui` crate by PATH
+      # (../../../linux-ops-suite/crates/suite-ui), so CI must lay the two repos
+      # out as siblings or cargo can't resolve the dependency. Checkout paths are
+      # relative to the workspace and can't escape it, so we place each repo in
+      # its own subdir and run cargo from RexOps's.
+      - name: Checkout RexOps
         uses: actions/checkout@v4
+        with:
+          path: rexops
+
+      - name: Checkout suite-ui (sibling, for the path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: tom2025b/linux-ops-suite
+          ref: main
+          path: linux-ops-suite
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -21,12 +35,15 @@ jobs:
           components: clippy, rustfmt
 
       - name: Check formatting
+        working-directory: rexops
         run: cargo fmt --check
 
       - name: Run clippy
+        working-directory: rexops
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
+        working-directory: rexops
         run: cargo test
 
   contract:
