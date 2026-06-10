@@ -4,9 +4,8 @@
 //! run_json:     missing binary -> BinaryNotFound Err for data calls.
 //! All calls are timeout-bounded. No shell. Pure argv. Returns AdapterError only.
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +14,10 @@ use crate::error::AdapterError;
 /// Default hard timeout applied to every external invocation unless the
 /// caller explicitly passes a shorter/longer value.
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often the exit poll checks `try_wait`. Coarse on purpose: adapter calls
+/// are seconds-scale probes, and a finer poll buys nothing but wakeups.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Run binary with args. Missing binary (ENOENT on spawn) -> Ok(None).
 /// Success (0) -> Some(trim(stdout)). Nonzero -> CommandFailed. Timeout -> Timeout.
@@ -33,38 +36,75 @@ pub(crate) fn run_optional(
     // Do not inherit env beyond what the caller has; explicit is better but
     // for adapter probes we usually want the user's PATH, so inherit is fine.
 
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
 
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
+    // Drain both pipes on their own threads while we poll for exit: a child
+    // that writes more than the OS pipe buffer would otherwise block on a full
+    // pipe forever and turn into a spurious timeout. Keeping `child` HERE (not
+    // moved into a wait thread) is what makes kill-on-timeout possible at all.
+    let stdout_reader = spawn_pipe_reader(child.stdout.take());
+    let stderr_reader = spawn_pipe_reader(child.stderr.take());
 
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            Ok(Some(stdout))
+    let deadline = start + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Exited: the pipes are at EOF, so the readers finish on their
+                // own — join just collects what they read.
+                let stdout = stdout_reader.join().unwrap_or_default();
+                let stderr = stderr_reader.join().unwrap_or_default();
+                return if status.success() {
+                    Ok(Some(String::from_utf8_lossy(&stdout).trim().to_owned()))
+                } else {
+                    Err(AdapterError::CommandFailed {
+                        command: binary.to_owned(),
+                        exit_code: status.code(),
+                        stderr: String::from_utf8_lossy(&stderr).trim().to_owned(),
+                    })
+                };
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                kill_and_reap(&mut child, stdout_reader, stderr_reader);
+                return Err(AdapterError::Timeout(start.elapsed()));
+            }
+            Ok(None) => thread::sleep(POLL_INTERVAL),
+            Err(e) => {
+                kill_and_reap(&mut child, stdout_reader, stderr_reader);
+                return Err(e.into());
+            }
         }
-        Ok(Ok(output)) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(AdapterError::CommandFailed {
-                command: binary.to_owned(),
-                exit_code: output.status.code(),
-                stderr,
-            })
-        }
-        Ok(Err(e)) => Err(e.into()),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(AdapterError::Timeout(start.elapsed())),
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(AdapterError::CommandFailed {
-            command: binary.to_owned(),
-            exit_code: None,
-            stderr: "worker thread lost".into(),
-        }),
     }
+}
+
+/// Read a child's pipe to EOF on its own thread, returning the bytes. `None`
+/// (pipe not captured) yields an empty buffer.
+fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    })
+}
+
+/// Kill the child and reap it, then join the pipe readers. Reaping closes the
+/// pipes, so the readers hit EOF and finish — nothing is left running. (kill
+/// reaches the direct child only, not grandchildren of a shell wrapper —
+/// adapters spawn binaries directly, so that limitation doesn't bite here.)
+fn kill_and_reap(
+    child: &mut std::process::Child,
+    stdout_reader: thread::JoinHandle<Vec<u8>>,
+    stderr_reader: thread::JoinHandle<Vec<u8>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = stdout_reader.join();
+    let _ = stderr_reader.join();
 }
 
 /// run_optional + require present + serde_json::from_str. Missing -> BinaryNotFound.
@@ -194,5 +234,26 @@ mod tests {
         // sleep will reliably block longer than the tiny timeout.
         let res = run_optional("sh", &["-c", "sleep 2"], Duration::from_millis(50));
         assert!(matches!(res, Err(AdapterError::Timeout(_))));
+    }
+
+    #[test]
+    fn timeout_kills_the_child() {
+        // A unique sleep duration acts as a process-table marker. After the
+        // timeout fires, run_optional must have killed AND reaped the child —
+        // so pgrep for the marker finds nothing. (Spawn `sleep` directly, no
+        // shell wrapper: kill() reaches the direct child only.)
+        let marker = "31.4159265358979";
+        let res = run_optional("sleep", &[marker], Duration::from_millis(50));
+        assert!(matches!(res, Err(AdapterError::Timeout(_))));
+
+        let pgrep = Command::new("pgrep")
+            .args(["-f", &format!("sleep {marker}")])
+            .output()
+            .expect("pgrep runs");
+        assert!(
+            !pgrep.status.success(),
+            "child must be killed on timeout, but found: {}",
+            String::from_utf8_lossy(&pgrep.stdout)
+        );
     }
 }
