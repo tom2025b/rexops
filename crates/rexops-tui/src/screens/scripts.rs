@@ -6,11 +6,11 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
-use suite_ui::{pane, Theme};
+use suite_ui::{pane, pane_blank, Theme};
 
 use crate::app::App;
 use crate::widgets;
@@ -38,11 +38,8 @@ fn render_scripts_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health, theme);
 
-    let header = Paragraph::new(Line::from(vec![Span::raw("Scripts / Vault "), badge])).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.dim()),
-    );
+    let header = Paragraph::new(Line::from(vec![Span::raw("Scripts / Vault "), badge]))
+        .block(pane_blank(theme));
 
     f.render_widget(header, area);
 }
