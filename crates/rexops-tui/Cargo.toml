@@ -24,8 +24,8 @@ rexops-core = { path = "../rexops-core" }
 rexops-app = { path = "../rexops-app" }
 
 # Shared suite-wide TUI chrome (theme/palette + rounded panes + overlays), so
-# RexOps and ScriptVault present the same look from one source. Consumed by PATH
-# (the suite repos sit side-by-side under ~/projects), matching ScriptVault's
-# convention: edits to suite-ui are picked up instantly without a commit/rev-bump
-# cycle. CI lays the two repos out as siblings so the path resolves (see ci.yml).
-suite-ui = { path = "../../../linux-ops-suite/crates/suite-ui" }
+# RexOps and ScriptVault present the same look from one source. Pulled as a GIT
+# dependency pinned to a specific linux-ops-suite commit, so a fresh `cargo build`
+# works without the sibling umbrella checkout and the version is reproducible.
+# Bump `rev` to adopt newer suite-ui.
+suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite", rev = "cf97f077b4680e33b6b3440663da9e308bc3704f" }
