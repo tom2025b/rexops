@@ -15,7 +15,7 @@ use ratatui::{
     Frame,
 };
 
-use suite_ui::{pane, SearchBar, Theme};
+use suite_ui::{pane, EmptyState, SearchBar, Theme};
 
 use crate::app::App;
 use crate::health;
@@ -98,62 +98,70 @@ fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 }
 
 fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let mut lines: Vec<Line> = Vec::new();
+    let block = pane("Preview / Detail", theme);
 
     let visible = app.filtered_adapter_names();
     let sel_name = app.selected_adapter.clone().unwrap_or_default();
     let sel_pos = visible.iter().position(|n| n == &sel_name).unwrap_or(0);
 
-    if let Some(name) = visible.get(sel_pos) {
-        lines.push(Line::from(Span::styled(
-            format!("Detail for: {name}"),
-            theme.title(),
-        )));
-
-        if let Some(health) = app.snapshot.adapter_health.get(name) {
-            let style = theme.health(health::to_suite(*health));
-            lines.push(Line::from(vec![
-                Span::raw("Health: "),
-                Span::styled(format!("{:?}", health), style),
-            ]));
+    // Nothing selected (an empty/over-filtered list): the whole pane is that one
+    // state, so frame it and drop in the shared centered EmptyState.
+    let Some(name) = visible.get(sel_pos) else {
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        EmptyState {
+            message: "No adapter selected.",
+            hint: Some("Adjust the filter, or press 'r' to probe adapters."),
         }
+        .render(f, inner, theme);
+        return;
+    };
 
-        // Show notes that mention this adapter.
-        let related: Vec<&String> = app
-            .snapshot
-            .notes
-            .iter()
-            .filter(|n| {
-                n.to_lowercase().contains(&name.to_lowercase())
-                    || n.contains("system") && name == "system"
-            })
-            .collect();
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!("Detail for: {name}"),
+        theme.title(),
+    )));
 
-        if !related.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from("Related notes:"));
-            for n in related.iter().take(5) {
-                lines.push(Line::from(format!("• {}", n)));
-            }
-        } else {
-            lines.push(Line::from(""));
-            lines.push(Line::from(
-                "(no specific notes for this adapter; press 'r' or activate to surface)",
-            ));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Tip: 'enter' surfaces selection. Press ?/h for full help popup.",
-            theme.dim(),
-        )));
-    } else {
-        lines.push(Line::from("No adapter selected."));
+    if let Some(health) = app.snapshot.adapter_health.get(name) {
+        let style = theme.health(health::to_suite(*health));
+        lines.push(Line::from(vec![
+            Span::raw("Health: "),
+            Span::styled(format!("{:?}", health), style),
+        ]));
     }
 
-    let detail = Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .block(pane("Preview / Detail", theme));
+    // Show notes that mention this adapter.
+    let related: Vec<&String> = app
+        .snapshot
+        .notes
+        .iter()
+        .filter(|n| {
+            n.to_lowercase().contains(&name.to_lowercase())
+                || n.contains("system") && name == "system"
+        })
+        .collect();
+
+    if !related.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from("Related notes:"));
+        for n in related.iter().take(5) {
+            lines.push(Line::from(format!("• {}", n)));
+        }
+    } else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            "(no specific notes for this adapter; press 'r' or activate to surface)",
+        ));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tip: 'enter' surfaces selection. Press ?/h for full help popup.",
+        theme.dim(),
+    )));
+
+    let detail = Paragraph::new(lines).wrap(Wrap { trim: true }).block(block);
 
     f.render_widget(detail, area);
 }

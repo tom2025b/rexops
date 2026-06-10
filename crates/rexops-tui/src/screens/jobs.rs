@@ -11,11 +11,11 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
-use suite_ui::{pane, Theme};
+use suite_ui::{pane, pane_blank, Theme};
 
 use crate::app::{App, JobRecord};
 use crate::jobs::JobOutput;
@@ -56,11 +56,7 @@ fn render_jobs_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         ))
     };
 
-    let header = Paragraph::new(line).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.dim()),
-    );
+    let header = Paragraph::new(line).block(pane_blank(theme));
     f.render_widget(header, area);
 }
 
