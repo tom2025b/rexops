@@ -51,6 +51,7 @@ rexops/
   - Ratatui app shell only.
   - Screens for Dashboard, Adapters, System, Scripts, Tools, and Launcher; widgets, keymap, event loop.
   - Never owns domain logic; calls services from rexops-app.
+  - **Renders through the shared `suite-ui` crate** (theme, panes, status bar, key hints, overlays) — see "Shared UI layer" below. It owns screen *composition* and RexOps-specific view models, not the suite's common chrome.
   - Fast startup, keyboard-first, graceful degradation, excellent empty/error states.
 
 - **rexops-app**:
@@ -59,6 +60,50 @@ rexops/
   - `build_snapshot(config)` — the single place that probes enabled adapters and assembles `OpsSnapshot` (including system plus Workstate scripts/tools/findings data).
   - `build_adapter_registry(config)` — used by the CLI `adapters` subcommand.
   - No UI, no mutation, no new domain rules. CLI and TUI are now trivial shells calling these.
+
+## Shared UI layer: suite-ui
+
+RexOps is part of a family of tools (RexOps, ScriptVault, and others) that
+historically shared **only data formats, never code**. That rule still governs
+the **logic/domain layer** — each tool's adapters, snapshots, and orchestration
+stay decoupled. It deliberately **no longer applies to the presentation layer**:
+the suite's common terminal-UI chrome lives in one crate, `suite-ui`, and RexOps
+**imports and renders through it** instead of carrying its own copy.
+
+The split, stated precisely:
+
+- **Logic / domain layer — still decoupled.** Everything in `rexops-core`,
+  `rexops-adapters`, and `rexops-app` is RexOps' own. `suite-ui` owns **zero**
+  domain types: every widget takes a `Theme`, a borrowed data slice, and a
+  `Rect`, and draws. It draws the box; RexOps owns the behaviour.
+- **UI / presentation layer — shared, by import.** The theme/palette (cyan/amber
+  accent + the single `NO_COLOR` gate), the rounded `pane`, and the shared
+  widgets/overlays come from `suite-ui`: `StatusBar` (the footer job segment),
+  `KeyHints` (per-screen footer shortcuts), `SearchBar`, `Toast`, `PaletteFrame`,
+  `HelpSheet`, `ConfirmModal`, the `Health`/`Outcome` styling, and the
+  `keys` bindings. `rexops-tui` has no local theme or chrome code.
+
+**Dependency.** `rexops-tui` depends on `suite-ui` by **path**
+(`../../../linux-ops-suite/crates/suite-ui`), the suite-wide convention: the
+repos sit side-by-side under `~/projects`, so edits to `suite-ui` are picked up
+instantly without a commit/rev-bump cycle. The trade-off — a consumer can't build
+in isolation without the sibling repo present — is handled in CI by checking out
+`linux-ops-suite` next to RexOps before the build (see `.github/workflows/ci.yml`,
+the `rust` job). ScriptVault, the other early adopter, uses the same path-dep +
+sibling-checkout pattern.
+
+**What RexOps keeps local — and why.** Only what is genuinely its own: the seven
+`screens/*` (screen composition), the RexOps view-model widgets
+(`widgets/health_badge.rs`, `adapter_item.rs`, `log_line.rs`), and three small
+**extension points** that translate RexOps' domain onto the shared chrome —
+`health::to_suite` (`AdapterHealth` → `suite_ui::Health`), `App::as_outcome`
+(a finished job's result → `suite_ui::Outcome`), and `App::job_state` (the live
+job → `suite_ui::JobState`). These are the seams that let the shared, NO_COLOR-safe
+widgets render RexOps state without `suite-ui` ever learning a RexOps type.
+
+Several shared widgets (`Health`, the `StatusBar` cancelled state, the `Toast`
+job-lifecycle kinds) were generalized *from* RexOps into `suite-ui`, then adopted
+back — which is why RexOps' usage is the most complete of any tool in the suite.
 
 ## Central Source of Truth
 
