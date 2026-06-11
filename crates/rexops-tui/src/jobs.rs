@@ -101,6 +101,20 @@ impl JobHandle {
     }
 }
 
+/// Dropping the handle kills and reaps the child. This is what makes quitting
+/// the TUI cancel a running job instead of orphaning it: `std::process::Child`
+/// does NOT kill on drop, so without this, `q` mid-job leaked a live process
+/// to init with no record of it. On the normal finish path the child has
+/// already been reaped by `poll_done`'s `try_wait`, so `kill` errors (ignored
+/// — std refuses to kill an already-waited child, no pid-reuse risk) and
+/// `wait` just returns the cached status.
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Spawn `command` as a background job, returning a handle that streams its
 /// output. Returns `None` if the process could not be spawned (bad path,
 /// permission) — the caller reports that and stays idle.
@@ -186,6 +200,26 @@ mod tests {
         path
     }
 
+    /// Spawn a just-written script, retrying transient ETXTBSY failures: a
+    /// parallel test's `fork` can briefly inherit this script's write fd
+    /// (open during `write_script`, closed in the child only at its `exec`),
+    /// and exec-ing a file someone holds open for write fails. The window is
+    /// microseconds but made this ~50% flaky under the default parallel test
+    /// runner; retrying is the standard fix (cargo does the same).
+    fn spawn_script(name: &str, path: &str) -> JobHandle {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(job) = spawn(name, path) {
+                return job;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "spawn {name} kept failing — not a transient ETXTBSY"
+            );
+            sleep(Duration::from_millis(2));
+        }
+    }
+
     #[test]
     fn drain_into_captures_every_line_including_the_trailing_one() {
         // A multi-line emitter that prints N lines then exits. The production drain
@@ -196,7 +230,7 @@ mod tests {
             "#!/bin/sh\nfor i in $(seq 1 200); do echo line-$i; done\n",
         );
         let path = script.to_str().unwrap();
-        let job = spawn("multiline", path).expect("spawn script");
+        let job = spawn_script("multiline", path);
         let (out, exit) = run_via_drain_into(job);
         let _ = std::fs::remove_file(&script);
 
@@ -262,6 +296,31 @@ mod tests {
         assert!(
             spawn("nope", "definitely-not-a-real-binary-xyz").is_none(),
             "a missing binary must not yield a handle"
+        );
+    }
+
+    #[test]
+    fn drop_kills_and_reaps_a_running_child() {
+        // Regression for "quit doesn't cancel a running job": dropping the
+        // handle (which is what quitting does — App drops, JobHandle drops)
+        // must kill the child AND reap it. `yes` runs forever (an argless
+        // coreutils binary — no temp script, which also avoids the fork/exec
+        // ETXTBSY race two concurrent write-script tests would hit), so the
+        // child is provably still running at drop. A reaped pid has no /proc
+        // entry (a zombie still would), so the assert proves both kill and reap.
+        let job = spawn("yes", "yes").expect("spawn yes");
+        let pid = job.child.id();
+        let proc_path = format!("/proc/{pid}");
+        assert!(
+            std::path::Path::new(&proc_path).exists(),
+            "child must be alive before drop"
+        );
+
+        drop(job); // Drop = kill + wait; by the time it returns the pid is gone
+
+        assert!(
+            !std::path::Path::new(&proc_path).exists(),
+            "child must be killed and reaped by Drop, not orphaned"
         );
     }
 
