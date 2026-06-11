@@ -119,11 +119,6 @@ impl WorkstateInfo {
     }
 }
 
-/// Tiny probe to read just the version before a full parse.
-#[derive(Debug, Deserialize)]
-struct VersionProbe {
-    schema_version: Option<i64>,
-}
 
 /// Read-only Workstate snapshot consumer.
 ///
@@ -191,10 +186,11 @@ impl WorkstateAdapter {
     ///   missing/other     → Ok(None)  (graceful skip)
     /// Malformed JSON stays a hard JsonParse error so real bugs surface.
     pub fn parse_feed(text: &str) -> Result<Option<WorkstateInfo>, AdapterError> {
-        let probe: VersionProbe = serde_json::from_str(text)?;
-        match probe.schema_version {
+        let value: serde_json::Value = serde_json::from_str(text)?;
+        let version = value.get("schema_version").and_then(|v| v.as_i64());
+        match version {
             Some(v) if v == SUPPORTED_SCHEMA_VERSION => {
-                let info: WorkstateInfo = serde_json::from_str(text)?;
+                let info: WorkstateInfo = serde_json::from_value(value)?;
                 Ok(Some(info))
             }
             _ => Ok(None),

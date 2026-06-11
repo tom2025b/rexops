@@ -16,7 +16,7 @@ path = "src/main.rs"
 crossterm = "0.28"
 ratatui = "0.29"
 # For loading the YAML config (as in examples/config.yaml and AppConfig).
-serde_yaml = "0.9"
+serde_yaml = { workspace = true }
 
 # Thin deps on our own crates. TUI must not duplicate models or adapter concerns.
 # The heavy lifting (config + live snapshot building) now comes from rexops-app.

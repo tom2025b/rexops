@@ -46,10 +46,19 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
+    let screen_name = match app.current_screen {
+        Screen::Dashboard => "Dashboard",
+        Screen::Adapters => "Adapters",
+        Screen::System => "System",
+        Screen::Scripts => "Scripts",
+        Screen::Tools => "Tools",
+        Screen::Launcher => "Launcher",
+        Screen::Jobs => "Jobs",
+    };
     let title = if app.refreshing {
-        "RexOps  —  Dashboard  (refreshing...)"
+        format!("RexOps  —  {screen_name}  (refreshing...)")
     } else {
-        "RexOps  —  Dashboard"
+        format!("RexOps  —  {screen_name}")
     };
 
     let header = Paragraph::new(title).style(theme.title()).block(

@@ -42,7 +42,7 @@ fn history_is_capped_and_rolls_off_oldest_first() {
     // Pre-fill at the cap with sentinel records, then push one more via a real
     // finished job; the oldest must roll off and the newest land at the end.
     for i in 0..JOB_HISTORY_CAP {
-        app.job_history.push(JobRecord {
+        app.job_history.push_back(JobRecord {
             name: format!("old-{i}"),
             outcome: LastOutcome {
                 name: format!("old-{i}"),
@@ -59,12 +59,12 @@ fn history_is_capped_and_rolls_off_oldest_first() {
         "history stays capped"
     );
     assert_eq!(
-        app.job_history.first().unwrap().name,
+        app.job_history.front().unwrap().name,
         "old-1",
         "the oldest entry rolled off"
     );
     assert_eq!(
-        app.job_history.last().unwrap().name,
+        app.job_history.back().unwrap().name,
         "newest",
         "the new entry is appended last"
     );

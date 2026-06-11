@@ -145,13 +145,13 @@ impl App {
             self.log_event(summary.clone());
             self.last_job = Some(summary.clone());
             self.last_outcome = Some(outcome.clone());
-            self.job_history.push(JobRecord {
+            self.job_history.push_back(JobRecord {
                 name: name.clone(),
                 outcome: outcome.clone(),
                 summary,
             });
             if self.job_history.len() > JOB_HISTORY_CAP {
-                self.job_history.remove(0);
+                self.job_history.pop_front();
             }
             self.toast = Some(toast_for(&outcome));
             self.job = None;

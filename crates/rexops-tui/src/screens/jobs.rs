@@ -169,7 +169,7 @@ mod tests {
     fn app_with_history(records: Vec<JobRecord>) -> App {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default());
-        app.job_history = records;
+        app.job_history = records.into_iter().collect();
         app
     }
 

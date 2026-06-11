@@ -19,7 +19,6 @@ pub fn run(
 
         while let Ok(snapshot) = rx.try_recv() {
             app.apply_snapshot(snapshot);
-            app.refreshing = false;
         }
 
         app.poll_job();

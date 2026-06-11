@@ -28,10 +28,10 @@ pub struct App {
     pub job_output: VecDeque<JobOutput>,
     pub last_job: Option<String>,
     pub last_outcome: Option<LastOutcome>,
-    pub job_history: Vec<JobRecord>,
+    pub job_history: VecDeque<JobRecord>,
     pub toast: Option<(String, suite_ui::ToastKind)>,
     pub config: AppConfig,
-    pub recent_events: Vec<String>,
+    pub recent_events: VecDeque<String>,
     pub(crate) tx: mpsc::Sender<OpsSnapshot>,
 }
 
@@ -54,10 +54,10 @@ impl App {
             job_output: VecDeque::new(),
             last_job: None,
             last_outcome: None,
-            job_history: Vec::new(),
+            job_history: VecDeque::new(),
             toast: None,
             config,
-            recent_events: vec!["TUI started".to_owned()],
+            recent_events: VecDeque::from(["TUI started".to_owned()]),
             tx,
         }
     }
@@ -82,6 +82,7 @@ impl App {
 
     pub fn apply_snapshot(&mut self, snapshot: OpsSnapshot) {
         self.snapshot = snapshot;
+        self.refreshing = false;
         let mut names: Vec<String> = self.snapshot.adapter_health.keys().cloned().collect();
         names.sort();
         self.adapter_names = names;
@@ -92,9 +93,9 @@ impl App {
     // --- activity log and display toggles ---
 
     pub fn log_event(&mut self, msg: impl Into<String>) {
-        self.recent_events.push(msg.into());
+        self.recent_events.push_back(msg.into());
         if self.recent_events.len() > 8 {
-            self.recent_events.remove(0);
+            self.recent_events.pop_front();
         }
     }
 

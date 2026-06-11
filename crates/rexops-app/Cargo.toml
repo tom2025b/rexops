@@ -1,11 +1,11 @@
 [package]
 name = "rexops-app"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-authors = ["Tom Lane"]
-repository = "https://github.com/tom2025b/rexops"
-rust-version = "1.75"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 description = "Shared application layer for RexOps: config loading and snapshot building."
 
 [dependencies]
@@ -17,6 +17,6 @@ rexops-core = { path = "../rexops-core" }
 rexops-adapters = { path = "../rexops-adapters" }
 
 # YAML for loading AppConfig from disk (same as before in CLI/TUI).
-serde_yaml = "0.9"
+serde_yaml = { workspace = true }
 # JSON for classifying piped stdin as a Workstate snapshot.
-serde_json = "1"
+serde_json = { workspace = true }
