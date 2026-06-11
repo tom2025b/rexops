@@ -15,8 +15,7 @@ use rexops_core::AdapterHealth;
 use suite_ui::{pane, SearchBar, Theme};
 
 use crate::app::App;
-use crate::health;
-use crate::widgets;
+use crate::ui::widgets;
 
 /// Render the full dashboard into the given area.
 pub fn render_dashboard(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -62,7 +61,7 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         vec![Row::new(vec![
             Cell::from("bulwark (default)"),
             Cell::from("Unavailable")
-                .style(theme.health(health::to_suite(AdapterHealth::Unavailable))),
+                .style(theme.health(widgets::health_to_suite(AdapterHealth::Unavailable))),
             Cell::from("not probed yet — press 'r'"),
         ])]
     } else {

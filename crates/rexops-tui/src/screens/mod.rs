@@ -18,6 +18,3 @@ pub use launchpad::render_launcher;
 pub use scripts::render_scripts;
 pub use system::render_system;
 pub use tools::render_tools;
-
-// Widgets are re-exported at crate root level; screens import directly
-// via `crate::widgets` to keep things explicit.

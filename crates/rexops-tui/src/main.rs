@@ -22,26 +22,21 @@
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
-use std::time::Duration;
 
 use rexops_app::load_config;
-use rexops_core::OpsSnapshot;
 use suite_ui::{ColorChoice, Theme, ThemeChoice, Tui, TuiOptions};
 
-mod action;
 mod app;
-mod event;
-mod health;
+mod commands;
+mod input;
 mod jobs;
-mod keymap;
-mod launcher;
-mod palette;
+mod runtime;
 mod screens;
+mod tools;
 mod ui;
-mod widgets;
 
 use app::App;
-use launcher::{ChildExit, ForegroundRunner};
+use tools::{ChildExit, ForegroundRunner};
 
 /// Entry point. We return a Result so that any setup error is reported after
 /// we have done our best to restore the terminal.
@@ -83,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // both draw (via `tui.terminal()`) and hand the guard to the launcher as the
     // `ForegroundRunner` (which uses `Tui::suspended`). On `?`-error here, `tui`
     // still drops and restores the terminal.
-    run_app(&mut tui, &mut app, &rx, theme)
+    runtime::run(&mut tui, &mut app, &rx, theme)
 
     // `tui` drops here → guaranteed terminal restore.
 }
@@ -103,47 +98,6 @@ impl ForegroundRunner for Tui {
             Ok(ChildExit::Success)
         } else {
             Ok(ChildExit::Status(status.to_string()))
-        }
-    }
-}
-
-/// The core loop: draw → handle background results → poll input → handle keys via Event/Action.
-/// The 100ms poll timeout is a good balance: responsive keys + we get to
-/// drain the mpsc channel frequently without busy-looping.
-fn run_app(
-    tui: &mut Tui,
-    app: &mut App,
-    rx: &mpsc::Receiver<OpsSnapshot>,
-    theme: Theme,
-) -> Result<(), Box<dyn std::error::Error>> {
-    loop {
-        // Draw the current frame. This must be fast; all heavy work happens
-        // off the UI thread.
-        tui.terminal().draw(|f| ui::render(f, app, theme))?;
-
-        // Drain any snapshots that background threads have finished producing.
-        // try_recv is non-blocking so we never stall the draw loop.
-        while let Ok(snapshot) = rx.try_recv() {
-            app.apply_snapshot(snapshot);
-            app.refreshing = false;
-        }
-
-        // Drain the running background job's output (and finish it on exit). Like
-        // the snapshot drain, this is non-blocking so the draw loop never stalls.
-        app.poll_job();
-
-        // Poll for input using our event module (timeout allows regular draws + channel checks).
-        if let Some(ev) = event::next_event(Duration::from_millis(100))? {
-            match ev {
-                event::Event::Key(key) => {
-                    if let Some(action) = keymap::handle_key(key) {
-                        if app.on_action(action, tui) {
-                            // Action indicated we should quit.
-                            return Ok(());
-                        }
-                    }
-                }
-            }
         }
     }
 }

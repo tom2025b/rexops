@@ -1,0 +1,39 @@
+//! Draw/input/runtime loop for the RexOps TUI.
+
+use std::sync::mpsc;
+use std::time::Duration;
+
+use rexops_core::OpsSnapshot;
+use suite_ui::{Theme, Tui};
+
+use crate::{app::App, input, ui};
+
+pub fn run(
+    tui: &mut Tui,
+    app: &mut App,
+    rx: &mpsc::Receiver<OpsSnapshot>,
+    theme: Theme,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        tui.terminal().draw(|f| ui::render(f, app, theme))?;
+
+        while let Ok(snapshot) = rx.try_recv() {
+            app.apply_snapshot(snapshot);
+            app.refreshing = false;
+        }
+
+        app.poll_job();
+
+        if let Some(ev) = input::keymap::next_event(Duration::from_millis(100))? {
+            match ev {
+                input::keymap::Event::Key(key) => {
+                    if let Some(action) = input::keymap::handle_key(key) {
+                        if app.on_action(action, tui) {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
