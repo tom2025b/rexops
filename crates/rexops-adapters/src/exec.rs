@@ -53,8 +53,19 @@ pub(crate) fn run_optional(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Exited: the pipes are at EOF, so the readers finish on their
-                // own — join just collects what they read.
+                // Exited — but the pipes only hit EOF once every writer is
+                // gone. A grandchild that inherited them (a daemonizing tool)
+                // keeps the pipes open after the child dies, so the readers
+                // are waited on against the SAME deadline; past it we detach
+                // them and report Timeout instead of hanging forever. (The
+                // child is already dead and the grandchild's pid is unknown —
+                // there is nothing left to kill.)
+                while !(stdout_reader.is_finished() && stderr_reader.is_finished()) {
+                    if Instant::now() >= deadline {
+                        return Err(AdapterError::Timeout(start.elapsed()));
+                    }
+                    thread::sleep(POLL_INTERVAL);
+                }
                 let stdout = stdout_reader.join().unwrap_or_default();
                 let stderr = stderr_reader.join().unwrap_or_default();
                 return if status.success() {
@@ -234,6 +245,25 @@ mod tests {
         // sleep will reliably block longer than the tiny timeout.
         let res = run_optional("sh", &["-c", "sleep 2"], Duration::from_millis(50));
         assert!(matches!(res, Err(AdapterError::Timeout(_))));
+    }
+
+    #[test]
+    fn grandchild_holding_the_pipe_does_not_hang_past_the_deadline() {
+        // `sh` exits immediately, but the backgrounded sleep inherits the
+        // stdout pipe and holds it open for 5s — the readers can't EOF. The
+        // call must give up at the deadline (detaching the readers), not hang
+        // until the grandchild lets go.
+        let begin = Instant::now();
+        let res = run_optional(
+            "sh",
+            &["-c", "sleep 5 & exit 0"],
+            Duration::from_millis(300),
+        );
+        assert!(matches!(res, Err(AdapterError::Timeout(_))));
+        assert!(
+            begin.elapsed() < Duration::from_secs(2),
+            "must return at the deadline, not wait out the grandchild"
+        );
     }
 
     #[test]

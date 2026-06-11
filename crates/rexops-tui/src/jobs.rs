@@ -108,6 +108,12 @@ impl JobHandle {
 /// already been reaped by `poll_done`'s `try_wait`, so `kill` errors (ignored
 /// — std refuses to kill an already-waited child, no pid-reuse risk) and
 /// `wait` just returns the cached status.
+///
+/// Two deliberate limits: quitting with a job still running kills it
+/// immediately and WITHOUT a confirmation modal (instant quit is the chosen
+/// trade-off, unlike the confirm-gated mutations elsewhere in the TUI); and —
+/// like exec.rs — `kill` reaches the direct child only, never grandchildren,
+/// which is fine today because jobs spawn suite binaries directly.
 impl Drop for JobHandle {
     fn drop(&mut self) {
         let _ = self.child.kill();
