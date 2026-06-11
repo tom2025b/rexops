@@ -17,7 +17,7 @@ use ratatui::{
 use suite_ui::{pane, pane_blank, Theme};
 
 use crate::app::App;
-use crate::widgets;
+use crate::ui::widgets;
 
 /// Render the Tools screen.
 pub fn render_tools(f: &mut Frame, app: &App, area: Rect, theme: Theme) {

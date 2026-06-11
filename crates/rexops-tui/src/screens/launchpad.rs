@@ -1,10 +1,8 @@
 //! launchpad.rs — The Launcher screen (6th screen).
 //!
 //! Lists the available specialist tools with a short description and lets the
-//! user pick one (↑/↓) and launch it (Enter). Launch orchestration itself lives
-//! in `crate::launcher` (the module is deliberately named differently from this
-//! screen to avoid confusion: `screens::launchpad` renders, `crate::launcher`
-//! resolves+spawns).
+//! user pick one (↑/↓) and launch it (Enter). Launch orchestration and catalog
+//! metadata live in `crate::tools`; this screen only renders the launcher view.
 //!
 //! The catalog is a small static list. Not every entry is launchable; sections
 //! sourced from Workstate have no executable, which `launcher::launch_tool`
@@ -19,55 +17,14 @@ use ratatui::{
 
 use suite_ui::{pane, Theme};
 
-use crate::app::{self, App};
-use crate::launcher;
-use crate::widgets;
+use crate::app::App;
+use crate::tools::{self, RunMode, ToolEntry, CATALOG};
+use crate::ui::widgets;
 
 /// Width the tool name is padded to so the badges and tags line up into columns.
 /// The catalog names are short ("Workstate" is the longest at 9), so 10 leaves a
 /// single space of gutter before the badge.
 const NAME_COL: usize = 10;
-
-/// One entry in the launcher catalog: the adapter/tool id (keys `which` and the
-/// config binary), the display name, and a one-line description.
-pub struct ToolEntry {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-}
-
-/// The static catalog of launchable tools shown on the Launcher screen.
-///
-/// Single source of truth: both the renderer here and the navigation/launch
-/// logic in `app.rs` index into this slice, so the list can never drift between
-/// what is shown and what Enter acts on.
-pub const CATALOG: &[ToolEntry] = &[
-    ToolEntry {
-        id: "bulwark",
-        name: "Bulwark",
-        description: "Content/security inspection (live scan)",
-    },
-    ToolEntry {
-        id: "proto",
-        name: "Proto",
-        description: "Guided protocol / checklist runner (interactive)",
-    },
-    ToolEntry {
-        id: "scripts",
-        name: "Scripts",
-        description: "Script inventory from Workstate",
-    },
-    ToolEntry {
-        id: "tools",
-        name: "Tools",
-        description: "Tool ownership & lifecycle from Workstate",
-    },
-    ToolEntry {
-        id: "workstate",
-        name: "Workstate",
-        description: "Snapshot source of truth",
-    },
-];
 
 /// Render the Launcher screen.
 pub fn render_launcher(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -118,12 +75,13 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
     let badge = widgets::render_health_badge(health, theme);
 
     // Run-mode + install-state tag. `resolve_command` is read-only (no spawn).
-    let tag = if launcher::resolve_command(tool.id, &app.config).is_none() {
+    let tag = if tools::resolve_command(tool.id, &app.config).is_none() {
         "· not installed".to_string()
-    } else if app::is_streamable(tool.id) {
-        "· streams".to_string()
     } else {
-        "· interactive".to_string()
+        match tool.run_mode {
+            RunMode::Background => "· streams".to_string(),
+            RunMode::Foreground => "· interactive".to_string(),
+        }
     };
 
     let name = format!("{:<width$}", tool.name, width = NAME_COL);

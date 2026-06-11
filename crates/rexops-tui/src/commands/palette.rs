@@ -10,8 +10,8 @@
 //! the same arm → confirm (dry-run) → run gate as the Launcher screen — the
 //! palette never spawns anything directly.
 
-use crate::action::Action;
-use crate::screens::launchpad::CATALOG;
+use crate::input::Action;
+use crate::tools::CATALOG;
 
 /// One command the palette can dispatch. Kept a small enum (not boxed closures):
 /// the set is fixed and each variant maps to an existing `Action` or to arming a

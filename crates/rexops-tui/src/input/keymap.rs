@@ -1,15 +1,58 @@
-//! keymap.rs — Maps keyboard input to high-level Actions.
+//! keymap.rs — event polling plus the key → Action bindings.
 //!
 //! This is the single place that defines "what does pressing this key do?"
-//! It keeps the main event loop and App free of magic key constants.
+//! It keeps the main event loop and App free of magic key constants, and
+//! wraps crossterm's event types so the rest of the code doesn't depend on
+//! them directly.
+//!
+//! The TUI uses a timeout-based poll so the main loop can regularly:
+//! - redraw the screen
+//! - drain mpsc results from background workers
+//! - without blocking on user input.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::io;
+use std::time::Duration;
 
-use crate::action::Action;
+use crossterm::event::{
+    self as crossterm_event, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers,
+};
+
+use crate::input::Action;
+
+/// Event type for inputs RexOps handles.
+#[derive(Debug)]
+pub enum Event {
+    /// A keyboard key was pressed (we only care about Press kind in keymap).
+    Key(KeyEvent),
+}
+
+/// Poll for the next event, waiting up to `timeout`.
+///
+/// Returns Ok(Some(event)) if one arrived, Ok(None) on timeout,
+/// Err on I/O failure.
+pub fn next_event(timeout: Duration) -> io::Result<Option<Event>> {
+    if crossterm_event::poll(timeout)? {
+        match crossterm_event::read()? {
+            CrosstermEvent::Key(key) => {
+                // We only care about actual key *presses* for actions.
+                // Release and Repeat are ignored for simplicity (keyboard-first TUI).
+                if key.kind == crossterm_event::KeyEventKind::Press {
+                    Ok(Some(Event::Key(key)))
+                } else {
+                    Ok(None)
+                }
+            }
+            // Ignore mouse, paste, resize, focus, and other non-key events.
+            _ => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
+}
 
 /// Convert a key press into an Action, if it matches a binding.
 ///
-/// Only Press events should be passed here (we filter in the loop).
+/// Only Press events should be passed here (we filter in next_event).
 ///
 /// The command palette (`Ctrl-P` / `:`) is detected first via the shared
 /// `suite_ui::keys::is_palette` so the suite's bindings stay consistent across

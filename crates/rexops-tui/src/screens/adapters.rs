@@ -18,8 +18,7 @@ use ratatui::{
 use suite_ui::{pane, EmptyState, SearchBar, Theme};
 
 use crate::app::App;
-use crate::health;
-use crate::widgets;
+use crate::ui::widgets;
 
 use rexops_core::AdapterHealth;
 
@@ -124,7 +123,7 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     )));
 
     if let Some(health) = app.snapshot.adapter_health.get(name) {
-        let style = theme.health(health::to_suite(*health));
+        let style = theme.health(widgets::health_to_suite(*health));
         lines.push(Line::from(vec![
             Span::raw("Health: "),
             Span::styled(format!("{:?}", health), style),

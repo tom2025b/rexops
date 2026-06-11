@@ -17,8 +17,8 @@ use ratatui::{
 
 use suite_ui::{pane, pane_blank, Theme};
 
-use crate::app::{App, JobRecord};
-use crate::jobs::JobOutput;
+use crate::app::App;
+use crate::jobs::{JobOutput, JobRecord};
 
 /// Render the Jobs screen into the given area.
 pub fn render_jobs(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -138,7 +138,7 @@ fn render_jobs_history(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::LastOutcome;
+    use crate::jobs::LastOutcome;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use rexops_core::AppConfig;
