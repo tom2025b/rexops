@@ -50,7 +50,19 @@ fn dashboard_app_with_adapters(names: &[&str]) -> App {
     app
 }
 
+/// Build a snapshot carrying the given adapter names (all Healthy), the way the
+/// production refresh path delivers one.
+fn snapshot_with_adapters(names: &[&str]) -> OpsSnapshot {
+    let mut snap = OpsSnapshot::new();
+    for name in names {
+        snap.adapter_health
+            .insert((*name).to_owned(), rexops_core::AdapterHealth::Healthy);
+    }
+    snap
+}
+
 mod filters;
 mod jobs;
 mod launcher;
 mod palette;
+mod refresh;

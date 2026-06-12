@@ -152,7 +152,16 @@ impl App {
         let cfg = self.config.clone();
 
         std::thread::spawn(move || {
-            let snapshot = build_snapshot(&cfg);
+            // `refreshing` is only ever cleared when a snapshot arrives over the
+            // channel (apply_snapshot). If build_snapshot panicked, the thread
+            // would unwind before sending, no snapshot would arrive, and the flag
+            // would stay set forever — silently bricking `r`. Catch the unwind so
+            // a panicking probe still delivers a snapshot (an empty fallback) and
+            // the flag always clears.
+            let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                build_snapshot(&cfg)
+            }))
+            .unwrap_or_else(|_| OpsSnapshot::new());
             let _ = tx.send(snapshot);
         });
     }
