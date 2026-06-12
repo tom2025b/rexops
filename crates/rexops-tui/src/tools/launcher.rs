@@ -103,12 +103,27 @@ pub fn launch_tool(
 
 /// Resolve a tool's launch target: prefer the user's PATH, then the per-adapter
 /// configured binary. Returns None when neither yields a command (e.g. a
-/// feed-only tool with no executable).
+/// feed-only tool with no executable), or when the adapter is administratively
+/// disabled (`enabled: false`) — a disabled adapter never resolves to a command,
+/// even when its binary is on PATH.
 ///
 /// `pub(crate)` so the confirmation layer (PendingAction::preview) can show the
 /// resolved command as a dry-run *without* spawning anything.
 pub fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
+    if !adapter_enabled(tool_id, config) {
+        return None;
+    }
     command_from_path(tool_id).or_else(|| command_from_config(tool_id, config))
+}
+
+/// Whether an adapter is administratively enabled. An adapter absent from config
+/// is enabled by default; one present with `enabled: false` is disabled. Mirrors
+/// the snapshot layer's `map_or(true, |c| c.enabled)` semantics.
+fn adapter_enabled(tool_id: &str, config: &AppConfig) -> bool {
+    config
+        .adapters
+        .get(tool_id)
+        .is_none_or(|adapter| adapter.enabled)
 }
 
 /// Resolve the complete launch command for a catalog tool, including any
@@ -185,6 +200,50 @@ mod tests {
             },
         );
         config
+    }
+
+    /// Build a config that pins a tool's binary but administratively disables
+    /// the adapter (`enabled: false`).
+    fn config_with_disabled_binary(tool_id: &str, binary: &str) -> AppConfig {
+        let mut config = AppConfig::default();
+        config.adapters.insert(
+            tool_id.to_owned(),
+            AdapterConfig {
+                enabled: false,
+                binary: Some(binary.to_owned()),
+                timeout_secs: None,
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn resolve_command_returns_none_for_disabled_adapter() {
+        // A disabled adapter must never resolve to a command, even when its
+        // binary is explicitly configured (and would otherwise win the
+        // config-fallback). This is the P1: enabled: false must be respected.
+        let config = config_with_disabled_binary("scripts", "/tmp/scripts");
+        assert_eq!(resolve_command("scripts", &config), None);
+    }
+
+    #[test]
+    fn launch_tool_refuses_disabled_adapter_and_skips_runner() {
+        // launch_tool must treat a disabled adapter as unlaunchable: report
+        // gracefully and never touch the foreground runner.
+        let config = config_with_disabled_binary("scripts", "/tmp/scripts");
+        let mut runner = FakeRunner {
+            exit: Ok(ChildExit::Success),
+            called_with: None,
+        };
+
+        let report = launch_tool("scripts", "Scripts", &config, &mut runner);
+
+        assert_eq!(report.message(), "Scripts has no launch command yet");
+        assert!(!report.should_refresh());
+        assert!(
+            runner.called_with.is_none(),
+            "disabled adapter must not spawn"
+        );
     }
 
     #[test]
