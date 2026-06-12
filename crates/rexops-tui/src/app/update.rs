@@ -134,7 +134,9 @@ impl App {
 
     fn move_selection(&mut self, down: bool) {
         match self.current_screen {
-            Screen::Adapters => self.move_adapter_selection(down),
+            // Dashboard and Adapters show the same filtered adapter table and
+            // share its selection, so j/k move it identically on both.
+            Screen::Dashboard | Screen::Adapters => self.move_adapter_selection(down),
             // On the Jobs screen, Up/Down scroll the output viewport instead of
             // moving a list selection. Up = toward older output.
             Screen::Jobs => self.scroll_jobs_output(!down),
