@@ -11,7 +11,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
     Frame,
 };
 
@@ -70,28 +70,50 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let lines: Vec<Line> = if app.job_output.is_empty() {
         vec![Line::from(Span::styled("(no output yet)", theme.dim()))]
     } else {
-        // Tail the output to what fits the pane height (minus border + padding),
-        // so the newest lines are always visible without a scroll model.
-        let visible = area.height.saturating_sub(2) as usize;
-        let start = app.job_output.len().saturating_sub(visible);
+        // Window the output to the pane. The pane shows `visible` rows; lines are
+        // NOT wrapped (long lines truncate horizontally) so one output line is
+        // exactly one row — that makes the from-bottom scroll offset exact and
+        // stops wrapped rows from pushing the newest line off the bottom.
+        let total = app.job_output.len();
+        let visible = (area.height.saturating_sub(2) as usize).max(1);
+        // `jobs_scroll` is lines from the bottom; clamp so the window stays
+        // inside the buffer (can't scroll past the top).
+        let max_scroll = total.saturating_sub(visible);
+        let scroll = app.jobs_scroll.min(max_scroll);
+        let end = total - scroll;
+        let start = end.saturating_sub(visible);
+        // Truncate each line to the pane's inner width (minus borders) so a long
+        // line never wraps or overflows; truncate_desc adds a single `…`.
+        let inner_w = area.width.saturating_sub(2) as usize;
         app.job_output
             .iter()
+            .take(end)
             .skip(start)
             .map(|out| match out {
-                JobOutput::Stdout(text) => Line::from(Span::raw(text.clone())),
+                JobOutput::Stdout(text) => {
+                    Line::from(Span::raw(suite_ui::truncate_desc(text, inner_w)))
+                }
                 // stderr: failure style + an explicit marker so it still reads as
-                // stderr when the red hue drops under NO_COLOR.
-                JobOutput::Stderr(text) => Line::from(vec![
-                    Span::styled("[err] ", theme.status_error()),
-                    Span::styled(text.clone(), theme.stderr()),
-                ]),
+                // stderr when the red hue drops under NO_COLOR. The marker eats
+                // into the width budget so the whole row still fits.
+                JobOutput::Stderr(text) => {
+                    let budget = inner_w.saturating_sub(6); // "[err] "
+                    Line::from(vec![
+                        Span::styled("[err] ", theme.status_error()),
+                        Span::styled(suite_ui::truncate_desc(text, budget), theme.stderr()),
+                    ])
+                }
             })
             .collect()
     };
 
-    let output = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(pane(title, theme));
+    // A footer note when scrolled up, so the user knows auto-follow is paused.
+    let title = if app.jobs_scroll > 0 {
+        format!("{title} — scrolled (↓/j to follow)")
+    } else {
+        title.to_string()
+    };
+    let output = Paragraph::new(lines).block(pane(&title, theme));
     f.render_widget(output, area);
 }
 

@@ -125,6 +125,9 @@ impl App {
     fn move_selection(&mut self, down: bool) {
         match self.current_screen {
             Screen::Adapters => self.move_adapter_selection(down),
+            // On the Jobs screen, Up/Down scroll the output viewport instead of
+            // moving a list selection. Up = toward older output.
+            Screen::Jobs => self.scroll_jobs_output(!down),
             Screen::Launcher => {
                 let len = tools::CATALOG.len();
                 if len > 0 {

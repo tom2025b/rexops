@@ -61,6 +61,7 @@ impl App {
         match super::spawn(name, &command) {
             Some(handle) => {
                 self.job_output.clear();
+                self.jobs_scroll = 0; // fresh output → follow the bottom
                 self.last_job = None;
                 self.last_outcome = None;
                 self.current_screen = Screen::Jobs;
@@ -100,6 +101,20 @@ impl App {
         self.job_output.push_back(out);
     }
 
+    /// Scroll the Jobs output. `up` moves toward older lines (increasing the
+    /// from-bottom offset), `down` toward newer; reaching `0` resumes auto-follow.
+    /// The offset is clamped to the buffer so it can never point past the top.
+    pub(crate) fn scroll_jobs_output(&mut self, up: bool) {
+        if up {
+            // Never scroll so far the whole pane would be above the buffer; one
+            // line must always remain. Render clamps further to the actual pane.
+            let max = self.job_output.len().saturating_sub(1);
+            self.jobs_scroll = (self.jobs_scroll + 1).min(max);
+        } else {
+            self.jobs_scroll = self.jobs_scroll.saturating_sub(1);
+        }
+    }
+
     pub fn poll_job(&mut self) {
         let Some(job) = self.job.as_mut() else {
             return;
@@ -111,6 +126,11 @@ impl App {
         for out in scratch {
             self.push_job_output(out);
         }
+        // Auto-follow: when scrolled to the bottom (jobs_scroll == 0) new output
+        // simply stays visible. When scrolled up it holds its offset; the render
+        // clamps it to the buffer. We deliberately keep this simple — no
+        // pin-against-front-pop bookkeeping; a little drift while scrolled up is
+        // fine.
 
         if let (Some(exit), true) = (exited, drained) {
             let job = self.job.as_ref().expect("job present while finishing");

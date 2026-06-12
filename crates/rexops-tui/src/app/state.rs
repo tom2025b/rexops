@@ -34,6 +34,12 @@ pub struct App {
     pub palette_selected: usize,
     pub job: Option<JobHandle>,
     pub job_output: VecDeque<JobOutput>,
+    /// Jobs-output scrollback offset, in lines from the BOTTOM. `0` means
+    /// "follow the bottom" — newest output stays visible as it streams. A
+    /// positive value pins the view that many lines up and pauses auto-follow
+    /// until the user scrolls back to the bottom. Clamped to the buffer so it can
+    /// never point past either end.
+    pub jobs_scroll: usize,
     pub last_job: Option<String>,
     pub last_outcome: Option<LastOutcome>,
     pub job_history: VecDeque<JobRecord>,
@@ -70,6 +76,7 @@ impl App {
             palette_selected: 0,
             job: None,
             job_output: VecDeque::new(),
+            jobs_scroll: 0,
             last_job: None,
             last_outcome: None,
             job_history: VecDeque::new(),

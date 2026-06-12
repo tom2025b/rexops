@@ -200,3 +200,69 @@ fn a_live_job_outranks_the_last_outcome_in_the_status_bar() {
         job.cancel();
     }
 }
+
+// --- Jobs output scrollback (Option A: simple from-bottom offset, auto-follow) ---
+
+fn seed_output(app: &mut App, n: usize) {
+    for i in 0..n {
+        app.push_job_output(JobOutput::Stdout(format!("line-{i}")));
+    }
+}
+
+#[test]
+fn scroll_starts_at_bottom_and_down_stays_clamped() {
+    let mut app = bare_app();
+    seed_output(&mut app, 50);
+    assert_eq!(app.jobs_scroll, 0, "default follows the bottom");
+    // Down (newer) at the bottom is a no-op, never underflows.
+    app.scroll_jobs_output(false);
+    assert_eq!(app.jobs_scroll, 0);
+}
+
+#[test]
+fn scroll_up_clamps_to_the_buffer() {
+    let mut app = bare_app();
+    seed_output(&mut app, 5);
+    // Scroll up far more than the buffer; it must clamp to len-1, never beyond.
+    for _ in 0..100 {
+        app.scroll_jobs_output(true);
+    }
+    assert_eq!(app.jobs_scroll, 4, "up clamps at len-1 (5 lines)");
+    // And coming back down returns to the bottom.
+    for _ in 0..100 {
+        app.scroll_jobs_output(false);
+    }
+    assert_eq!(app.jobs_scroll, 0);
+}
+
+#[test]
+fn starting_a_job_resets_scroll_to_the_bottom() {
+    let mut app = bare_app();
+    seed_output(&mut app, 20);
+    app.scroll_jobs_output(true);
+    app.scroll_jobs_output(true);
+    assert_eq!(app.jobs_scroll, 2);
+    // `false` is not a real binary, so start_job fails to spawn — but it still
+    // runs its reset bookkeeping (clears output, resets scroll) first. Use a real
+    // no-op binary so the spawn succeeds and the reset path is exercised cleanly.
+    app.start_job("true", "true");
+    assert_eq!(app.jobs_scroll, 0, "a fresh job follows the bottom again");
+    if let Some(job) = app.job.as_mut() {
+        job.cancel();
+    }
+}
+
+#[test]
+fn up_down_scroll_the_jobs_screen_via_on_action() {
+    let mut app = bare_app();
+    app.current_screen = Screen::Jobs;
+    seed_output(&mut app, 30);
+    let mut runner = FakeRunner { calls: 0 };
+
+    // Up = older → offset grows; Down = newer → offset shrinks.
+    app.on_action(Action::Up, &mut runner);
+    app.on_action(Action::Up, &mut runner);
+    assert_eq!(app.jobs_scroll, 2, "Up scrolls toward older output");
+    app.on_action(Action::Down, &mut runner);
+    assert_eq!(app.jobs_scroll, 1, "Down scrolls back toward newest");
+}
