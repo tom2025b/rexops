@@ -75,14 +75,22 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health, theme);
 
-    // Run-mode + availability tag. Availability is read from the cache (computed
+    // Run-mode + availability tag. Resolvability is read from the cache (computed
     // once from config + PATH) so this hot render path — redrawn every ~100ms —
-    // never shells out to `which`.
-    let tag = if app.is_tool_launchable(tool.id) {
+    // never shells out to `which`; live health is folded in via a cheap snapshot
+    // lookup. The three states never contradict the health badge beside them:
+    //   - resolvable AND health != Unavailable → streams / interactive
+    //   - resolvable BUT health == Unavailable → unavailable (badge agrees)
+    //   - not resolvable at all                → disabled
+    let tag = if app.is_tool_available(tool.id) {
         match tool.run_mode {
             RunMode::Background => "· streams".to_string(),
             RunMode::Foreground => "· interactive".to_string(),
         }
+    } else if app.is_tool_launchable(tool.id) {
+        // Command resolves, but the adapter probe says it's down: don't invite a
+        // launch the suite just reported as unavailable.
+        "· unavailable".to_string()
     } else {
         "· disabled".to_string()
     };
@@ -125,8 +133,10 @@ fn render_launcher_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             Span::styled(format!("{}: ", tool.name), theme.title()),
             Span::raw(tool.description.to_string()),
         ]));
-        let availability = if app.is_tool_launchable(tool.id) {
+        let availability = if app.is_tool_available(tool.id) {
             "Enabled: Enter opens a confirmation before launch."
+        } else if app.is_tool_launchable(tool.id) {
+            "Unavailable: the adapter probe reports this tool is down."
         } else {
             "Disabled: no launch command is configured."
         };
@@ -144,7 +154,7 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use rexops_core::{AdapterConfig, AppConfig};
+    use rexops_core::{AdapterConfig, AdapterHealth, AppConfig};
     use std::sync::mpsc;
 
     /// Render the Launcher into an off-screen buffer and flatten it to text, so a
@@ -290,6 +300,52 @@ mod tests {
             bulwark_row.contains("disabled"),
             "cached launchable=false must render disabled:\n{bulwark_row}"
         );
+    }
+
+    #[test]
+    fn render_tag_folds_in_live_health_not_just_resolvability() {
+        // A resolvable tool whose adapter probe says Unavailable must NOT render
+        // as launchable ("interactive"/"streams") — the tag would then contradict
+        // the red health badge beside it. It must read "unavailable". Flipping
+        // health back to Healthy restores the launchable tag. Resolvability is held
+        // constant (cache=true) so this isolates the HEALTH contribution.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+        app.set_tool_launchable("bulwark", true);
+
+        app.snapshot
+            .adapter_health
+            .insert("bulwark".to_owned(), AdapterHealth::Unavailable);
+        let row = row_line(&render_to_text(&app), "Bulwark");
+        assert!(
+            row.contains("unavailable"),
+            "resolvable + Unavailable health must render unavailable:\n{row}"
+        );
+        assert!(
+            !row.contains("interactive"),
+            "an Unavailable tool must not be tagged launchable:\n{row}"
+        );
+
+        // Healthy → launchable again (proves the tag tracks live health).
+        app.snapshot
+            .adapter_health
+            .insert("bulwark".to_owned(), AdapterHealth::Healthy);
+        let row = row_line(&render_to_text(&app), "Bulwark");
+        assert!(
+            row.contains("interactive"),
+            "resolvable + Healthy must render interactive:\n{row}"
+        );
+
+        // Degraded and Unknown stay launchable on purpose (run-to-diagnose /
+        // pre-probe), so they must NOT read unavailable.
+        for h in [AdapterHealth::Degraded, AdapterHealth::Unknown] {
+            app.snapshot.adapter_health.insert("bulwark".to_owned(), h);
+            let row = row_line(&render_to_text(&app), "Bulwark");
+            assert!(
+                row.contains("interactive"),
+                "{h:?} must stay launchable, not unavailable:\n{row}"
+            );
+        }
     }
 
     #[test]

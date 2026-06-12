@@ -90,6 +90,15 @@ impl App {
             self.log_event(format!("{name}: disabled (no launch command)"));
             return;
         }
+        // Health-aware gate: even when the command resolves, refuse to open the
+        // confirm gate for a tool whose adapter probe reports it Unavailable —
+        // matching the launcher's "· unavailable" tag so the UI never invites a
+        // launch it just flagged as down. (Unknown/Degraded still arm: see
+        // App::is_tool_available.)
+        if !self.is_tool_available(&id) {
+            self.log_event(format!("{name}: unavailable (adapter reports it is down)"));
+            return;
+        }
         self.pending_action = Some(if tools::is_streamable(&id) {
             PendingAction::RunJob {
                 id,

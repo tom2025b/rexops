@@ -123,13 +123,42 @@ impl App {
             .collect();
     }
 
-    /// Whether a catalog tool can be launched, read from the cached availability.
-    /// Unknown ids (not in the catalog) read as not launchable.
+    /// Whether a catalog tool's command RESOLVES — read from the cached
+    /// config+PATH availability. This is the cheap, snapshot-independent half of
+    /// launchability (computed once; see the cache docs above). Unknown ids
+    /// (not in the catalog) read as not resolvable. Prefer `is_tool_available`
+    /// at decision points — it also folds in live adapter health.
     pub(crate) fn is_tool_launchable(&self, tool_id: &str) -> bool {
         self.launch_availability
             .get(tool_id)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// Live adapter health for a catalog tool from the current snapshot, or
+    /// `Unknown` if it hasn't been probed yet (e.g. before the first refresh).
+    pub(crate) fn tool_health(&self, tool_id: &str) -> rexops_core::AdapterHealth {
+        self.snapshot
+            .adapter_health
+            .get(tool_id)
+            .copied()
+            .unwrap_or(rexops_core::AdapterHealth::Unknown)
+    }
+
+    /// Whether a tool should be offered for launch RIGHT NOW: its command must
+    /// resolve (cached config+PATH) AND its adapter must not be `Unavailable`.
+    ///
+    /// Health is combined here, at the decision point, rather than baked into the
+    /// cache — so the cheap once-computed resolvability cache survives and we just
+    /// add a HashMap health lookup (no `which` per frame). `Unknown` and
+    /// `Degraded` stay launchable on purpose: `Unknown` is the pre-probe state
+    /// (blocking it would make every tool unlaunchable for the first moment after
+    /// startup), and a `Degraded` tool is often exactly what you want to launch to
+    /// inspect or fix it. Only `Unavailable` — binary gone or administratively
+    /// disabled — blocks the launch.
+    pub(crate) fn is_tool_available(&self, tool_id: &str) -> bool {
+        use rexops_core::AdapterHealth;
+        self.is_tool_launchable(tool_id) && self.tool_health(tool_id) != AdapterHealth::Unavailable
     }
 
     /// Test-only: override a single tool's cached availability so render-path

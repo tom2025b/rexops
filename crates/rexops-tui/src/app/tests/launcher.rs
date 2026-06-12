@@ -323,4 +323,76 @@ fn launcher_enter_arms_the_selected_tool() {
     assert_eq!(runner.calls, 0, "arming must not spawn a process");
 }
 
+#[test]
+fn is_tool_available_requires_resolvable_and_not_unavailable() {
+    use rexops_core::AdapterHealth;
+    let mut app = launcher_app();
+    // Make `proto` resolvable via the cache, holding config+PATH constant so the
+    // test isolates the health contribution.
+    app.set_tool_launchable("proto", true);
+
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+    assert!(
+        !app.is_tool_available("proto"),
+        "resolvable + Unavailable must be unavailable"
+    );
+
+    for h in [
+        AdapterHealth::Healthy,
+        AdapterHealth::Degraded,
+        AdapterHealth::Unknown,
+    ] {
+        app.snapshot.adapter_health.insert("proto".to_owned(), h);
+        assert!(
+            app.is_tool_available("proto"),
+            "resolvable + {h:?} must stay available"
+        );
+    }
+
+    // Not resolvable → never available, regardless of health.
+    app.set_tool_launchable("proto", false);
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Healthy);
+    assert!(
+        !app.is_tool_available("proto"),
+        "an unresolvable tool is never available even when Healthy"
+    );
+}
+
+#[test]
+fn arm_tool_refuses_an_unavailable_tool_and_opens_no_confirm() {
+    use rexops_core::AdapterHealth;
+    // A tool can resolve (pinned binary) yet have its adapter report Unavailable.
+    // Arming it must NOT open the confirm gate — matching the launcher's
+    // "· unavailable" tag — and must log why.
+    let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/proto".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+
+    app.arm_tool("proto".to_owned(), "Proto".to_owned());
+
+    assert!(
+        app.pending_action.is_none(),
+        "an Unavailable tool must not open the confirm gate"
+    );
+    assert!(
+        app.recent_events.iter().any(|e| e.contains("unavailable")),
+        "arming an Unavailable tool must log why"
+    );
+}
+
 // --- command palette ----------------------------------------------------
