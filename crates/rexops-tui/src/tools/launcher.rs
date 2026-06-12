@@ -101,11 +101,16 @@ pub fn launch_tool(
     }
 }
 
-/// Resolve a tool's launch target: prefer the user's PATH, then the per-adapter
-/// configured binary. Returns None when neither yields a command (e.g. a
-/// feed-only tool with no executable), or when the adapter is administratively
+/// Resolve a tool's launch target. Config is authoritative: an explicitly
+/// configured `binary` wins, and only when none is configured do we fall back to
+/// the tool on the user's PATH. Returns None when neither yields a command (e.g.
+/// a feed-only tool with no executable), or when the adapter is administratively
 /// disabled (`enabled: false`) — a disabled adapter never resolves to a command,
 /// even when its binary is on PATH.
+///
+/// The config-over-PATH order is deliberate: `binary` is an administrative pin
+/// (the same control surface as `enabled`), so a stray same-named binary on PATH
+/// must not silently shadow the build an operator chose.
 ///
 /// `pub(crate)` so the confirmation layer (PendingAction::preview) can show the
 /// resolved command as a dry-run *without* spawning anything.
@@ -113,7 +118,7 @@ pub fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     if !adapter_enabled(tool_id, config) {
         return None;
     }
-    command_from_path(tool_id).or_else(|| command_from_config(tool_id, config))
+    command_from_config(tool_id, config).or_else(|| command_from_path(tool_id))
 }
 
 /// Whether an adapter is administratively enabled. An adapter absent from config
@@ -247,6 +252,48 @@ mod tests {
     }
 
     #[test]
+    fn configured_binary_overrides_a_binary_on_path() {
+        // Config is authoritative: when a tool is BOTH configured with an
+        // explicit binary AND present on PATH, resolution must return the
+        // configured path — never the PATH hit. A stray same-named binary on
+        // PATH must not silently shadow the build an operator pinned.
+        //
+        // We discover a real on-PATH command at runtime (sh is on any POSIX
+        // box, but we resolve it rather than assume a path) so the test proves
+        // "config wins over a genuine PATH hit" without hardcoding a location.
+        let on_path = command_from_path("sh").expect("sh must be on PATH for this test");
+        assert!(
+            !on_path.is_empty(),
+            "precondition: `which sh` resolved to a real path"
+        );
+
+        // Pin a DIFFERENT path in config for that same id. If PATH still won,
+        // resolution would return `on_path`; config winning returns our pin.
+        let pinned = "/tmp/pinned-sh-override";
+        assert_ne!(pinned, on_path, "the pin must differ from the PATH hit");
+        let config = config_with_binary("sh", pinned);
+
+        assert_eq!(
+            resolve_command("sh", &config),
+            Some(pinned.to_owned()),
+            "configured binary must win over the PATH hit"
+        );
+    }
+
+    #[test]
+    fn path_is_used_only_when_no_binary_is_configured() {
+        // The fallback half of the contract: with NO configured binary, an
+        // on-PATH tool still resolves (to the PATH location). This guards
+        // against a reorder accidentally dropping the PATH fallback entirely.
+        let on_path = command_from_path("sh").expect("sh must be on PATH for this test");
+        assert_eq!(
+            resolve_command("sh", &AppConfig::default()),
+            Some(on_path),
+            "with no config binary, PATH is the fallback"
+        );
+    }
+
+    #[test]
     fn command_from_config_uses_trimmed_binary() {
         let config = config_with_binary("scripts", "  /tmp/scripts  ");
         assert_eq!(
@@ -265,9 +312,9 @@ mod tests {
 
     #[test]
     fn launch_tool_reports_success_and_refreshes() {
-        // Use an id that is NOT on PATH so the config-binary fallback is what
-        // resolves — otherwise a real `which <id>` hit on the dev/CI box would
-        // win and make the launched-command assertion environment-dependent.
+        // Use a fake id so the launched command is the configured binary
+        // deterministically. (Config now wins over PATH regardless, but a fake
+        // id also keeps any stray PATH hit out of the picture entirely.)
         let id = "definitely-not-a-real-tool-xyz";
         let config = config_with_binary(id, "/tmp/fake-tool");
         let mut runner = FakeRunner {
