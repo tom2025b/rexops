@@ -1,12 +1,13 @@
 //! launchpad.rs — The Launcher screen (6th screen).
 //!
 //! Lists the available specialist tools with a short description and lets the
-//! user pick one (↑/↓) and launch it (Enter). Launch orchestration and catalog
-//! metadata live in `crate::tools`; this screen only renders the launcher view.
+//! user pick one (↑/↓) and launch enabled entries (Enter). Launch orchestration
+//! and catalog metadata live in `crate::tools`; this screen only renders the
+//! launcher view.
 //!
 //! The catalog is a small static list. Not every entry is launchable; sections
-//! sourced from Workstate have no executable, which `launcher::launch_tool`
-//! handles by reporting "no launch command yet" rather than erroring.
+//! sourced from Workstate have no executable, so the activation path treats
+//! unresolved commands as disabled instead of opening the confirmation modal.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -44,7 +45,7 @@ pub fn render_launcher(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 
 fn render_launcher_header(f: &mut Frame, area: Rect, theme: Theme) {
     let line = Line::from(Span::styled(
-        "Pick a tool with ↑/↓, then Enter to launch (you'll be asked to confirm).",
+        "Pick a tool with ↑/↓; Enter confirms enabled tools.",
         theme.dim(),
     ));
     let header = Paragraph::new(line).block(pane("Launcher", theme));
@@ -53,7 +54,7 @@ fn render_launcher_header(f: &mut Frame, area: Rect, theme: Theme) {
 
 /// Render a single launcher row: an accent selection rail + row tint on the
 /// selected row, the name padded into a column, the health badge, and a dim
-/// run-mode / install-state tag so the user can see at a glance what Enter does.
+/// run-mode / availability tag so the user can see at a glance what Enter does.
 fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) -> Line<'static> {
     let selected = index == app.selected_tool;
 
@@ -74,9 +75,10 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health, theme);
 
-    // Run-mode + install-state tag. `resolve_command` is read-only (no spawn).
-    let tag = if tools::resolve_command(tool.id, &app.config).is_none() {
-        "· not installed".to_string()
+    // Run-mode + availability tag. `resolve_launch_command` is read-only
+    // (no spawn) and includes catalog-owned launch args.
+    let tag = if tools::resolve_launch_command(tool.id, &app.config).is_none() {
+        "· disabled".to_string()
     } else {
         match tool.run_mode {
             RunMode::Background => "· streams".to_string(),
@@ -113,8 +115,7 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 }
 
 /// The detail pane: the full description of the currently selected tool (so a
-/// long one is never clipped in its row), plus the standing note that
-/// Workstate-sourced sections aren't launchable.
+/// long one is never clipped in its row), plus whether the row can be activated.
 fn render_launcher_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -123,11 +124,13 @@ fn render_launcher_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             Span::styled(format!("{}: ", tool.name), theme.title()),
             Span::raw(tool.description.to_string()),
         ]));
+        let availability = if tools::resolve_launch_command(tool.id, &app.config).is_some() {
+            "Enabled: Enter opens a confirmation before launch."
+        } else {
+            "Disabled: no launch command is configured."
+        };
+        lines.push(Line::from(Span::styled(availability, theme.dim())));
     }
-    lines.push(Line::from(Span::styled(
-        "Workstate-sourced sections report 'no launch command yet'.",
-        theme.dim(),
-    )));
 
     let detail = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
@@ -193,14 +196,12 @@ mod tests {
     #[test]
     fn rows_carry_a_run_mode_or_install_tag() {
         // With a default config and no `which` hits in the test environment,
-        // tools resolve to no command → "not installed". The tag column is what
+        // tools resolve to no command → "disabled". The tag column is what
         // we assert is present (the polish that tells the user what Enter does).
         let app = app_with_selection(0);
         let text = render_to_text(&app);
         assert!(
-            text.contains("not installed")
-                || text.contains("interactive")
-                || text.contains("streams"),
+            text.contains("disabled") || text.contains("interactive") || text.contains("streams"),
             "every row should carry a run-mode/install tag:\n{text}"
         );
     }
@@ -218,6 +219,20 @@ mod tests {
         assert!(
             text.contains("protocol") || text.contains("checklist"),
             "detail shows the selected tool's description:\n{text}"
+        );
+    }
+
+    #[test]
+    fn detail_pane_marks_unresolved_tools_disabled() {
+        let app = app_with_selection(2);
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Scripts:"),
+            "detail names the selected disabled tool:\n{text}"
+        );
+        assert!(
+            text.contains("Disabled: no launch command is configured."),
+            "detail explains that Enter is inert for disabled rows:\n{text}"
         );
     }
 

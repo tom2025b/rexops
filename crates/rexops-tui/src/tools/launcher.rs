@@ -9,9 +9,11 @@ use std::process::Command;
 
 use rexops_core::AppConfig;
 
+use super::catalog;
+
 /// Small abstraction over "run this with the user's real terminal".
 pub trait ForegroundRunner {
-    fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit>;
+    fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit>;
 }
 
 /// Child-process exit state reduced to what launch orchestration needs.
@@ -19,6 +21,23 @@ pub trait ForegroundRunner {
 pub enum ChildExit {
     Success,
     Status(String),
+}
+
+/// Fully resolved child process invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl LaunchCommand {
+    pub fn display(&self) -> String {
+        if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        }
+    }
 }
 
 /// User-facing result of a launch attempt.
@@ -65,7 +84,7 @@ pub fn launch_tool(
     config: &AppConfig,
     runner: &mut impl ForegroundRunner,
 ) -> LaunchReport {
-    let Some(command) = resolve_command(tool_id, config) else {
+    let Some(command) = resolve_launch_command(tool_id, config) else {
         return LaunchReport::no_refresh(format!("{name} has no launch command yet"));
     };
 
@@ -75,7 +94,8 @@ pub fn launch_tool(
             LaunchReport::refresh(format!("{name} exited with status {status}"))
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => LaunchReport::no_refresh(format!(
-            "{name} launch failed: binary not found ({command})"
+            "{name} launch failed: binary not found ({})",
+            command.display()
         )),
         Err(err) => LaunchReport::no_refresh(format!("{name} launch failed: {err}")),
     }
@@ -89,6 +109,21 @@ pub fn launch_tool(
 /// resolved command as a dry-run *without* spawning anything.
 pub fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     command_from_path(tool_id).or_else(|| command_from_config(tool_id, config))
+}
+
+/// Resolve the complete launch command for a catalog tool, including any
+/// catalog-owned arguments needed to open the interactive surface.
+pub fn resolve_launch_command(tool_id: &str, config: &AppConfig) -> Option<LaunchCommand> {
+    let program = resolve_command(tool_id, config)?;
+    let args = catalog::by_id(tool_id)
+        .map(|tool| {
+            tool.launch_args
+                .iter()
+                .map(|arg| (*arg).to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(LaunchCommand { program, args })
 }
 
 /// Prefer the user's PATH by asking the platform `which` command.
@@ -125,12 +160,12 @@ mod tests {
 
     struct FakeRunner {
         exit: io::Result<ChildExit>,
-        called_with: Option<String>,
+        called_with: Option<LaunchCommand>,
     }
 
     impl ForegroundRunner for FakeRunner {
-        fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit> {
-            self.called_with = Some(command.to_owned());
+        fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit> {
+            self.called_with = Some(command.clone());
             match &self.exit {
                 Ok(exit) => Ok(exit.clone()),
                 Err(err) => Err(io::Error::new(err.kind(), err.to_string())),
@@ -185,7 +220,23 @@ mod tests {
 
         assert_eq!(report.message(), "FakeTool exited successfully");
         assert!(report.should_refresh());
-        assert_eq!(runner.called_with.as_deref(), Some("/tmp/fake-tool"));
+        assert_eq!(
+            runner.called_with,
+            Some(LaunchCommand {
+                program: "/tmp/fake-tool".to_owned(),
+                args: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn bulwark_launch_uses_tui_subcommand() {
+        let config = config_with_binary("bulwark", "/tmp/bulwark");
+
+        let command = resolve_launch_command("bulwark", &config).expect("bulwark resolves");
+
+        assert_eq!(command.args, vec!["tui".to_owned()]);
+        assert_eq!(command.display(), format!("{} tui", command.program));
     }
 
     #[test]

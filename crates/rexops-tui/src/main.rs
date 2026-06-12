@@ -22,7 +22,9 @@
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
+use std::time::Duration;
 
+use crossterm::event;
 use rexops_app::load_config;
 use suite_ui::{ColorChoice, Theme, ThemeChoice, Tui, TuiOptions};
 
@@ -36,7 +38,7 @@ mod tools;
 mod ui;
 
 use app::App;
-use tools::{ChildExit, ForegroundRunner};
+use tools::{ChildExit, ForegroundRunner, LaunchCommand};
 
 /// Entry point. We return a Result so that any setup error is reported after
 /// we have done our best to restore the terminal.
@@ -92,12 +94,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// replaces RexOps' hand-rolled suspend_terminal_for_child /
 /// resume_terminal_after_child / run_foreground_child trio.
 impl ForegroundRunner for Tui {
-    fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit> {
-        let status: ExitStatus = self.suspended(|| Command::new(command).status())??;
+    fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit> {
+        let status: ExitStatus =
+            self.suspended(|| Command::new(&command.program).args(&command.args).status())??;
+        drain_pending_events()?;
         if status.success() {
             Ok(ChildExit::Success)
         } else {
             Ok(ChildExit::Status(status.to_string()))
         }
     }
+}
+
+fn drain_pending_events() -> io::Result<()> {
+    while event::poll(Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+    Ok(())
 }

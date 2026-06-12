@@ -49,7 +49,8 @@ pub(super) fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
             "j / k · ↑ / ↓",
             "move the selection (Adapters / Launcher / palette)",
         ),
-        ("Enter", "activate selection / run (asks to confirm)"),
+        ("Enter", "activate selection / run enabled tools"),
+        ("y / n", "confirm / cancel a pending run"),
         ("x", "cancel the running job (Jobs screen)"),
         ("backspace", "edit the Adapters filter / palette query"),
     ];

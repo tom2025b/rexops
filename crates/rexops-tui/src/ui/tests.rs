@@ -40,7 +40,10 @@ fn a_pending_action_overrides_the_screen_hints_with_confirm() {
         id: "x".to_owned(),
         name: "x".to_owned(),
     });
-    assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    assert_eq!(
+        screen_hints(&app),
+        &[("Enter/y", "run"), ("n/Esc", "cancel")]
+    );
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn confirm_takes_precedence_over_an_open_palette() {
         id: "x".to_owned(),
         name: "x".to_owned(),
     });
-    assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    assert_eq!(
+        screen_hints(&app),
+        &[("Enter/y", "run"), ("n/Esc", "cancel")]
+    );
 }
 
 fn footer_text(app: &App) -> String {

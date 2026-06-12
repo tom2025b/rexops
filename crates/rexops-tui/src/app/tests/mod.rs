@@ -8,14 +8,14 @@ use crate::input::Action;
 use crate::jobs::{
     spawn, toast_for, JobOutput, JobRecord, LastOutcome, JOB_HISTORY_CAP, JOB_OUTPUT_CAP,
 };
-use crate::tools::{ChildExit, ForegroundRunner, CATALOG};
+use crate::tools::{ChildExit, ForegroundRunner, LaunchCommand, CATALOG};
 
 struct FakeRunner {
     calls: usize,
 }
 
 impl ForegroundRunner for FakeRunner {
-    fn run_foreground(&mut self, _command: &str) -> std::io::Result<ChildExit> {
+    fn run_foreground(&mut self, _command: &LaunchCommand) -> std::io::Result<ChildExit> {
         self.calls += 1;
         Ok(ChildExit::Success)
     }

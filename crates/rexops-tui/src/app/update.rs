@@ -12,6 +12,8 @@ impl App {
             match action {
                 Action::Activate => self.confirm_pending(launcher),
                 Action::Cancel => self.cancel_pending(),
+                Action::InputChar('y' | 'Y') => self.confirm_pending(launcher),
+                Action::InputChar('n' | 'N') => self.cancel_pending(),
                 _ => {}
             }
             return false;

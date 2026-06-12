@@ -49,8 +49,17 @@ fn activate_on_launcher_arms_foreground_tool_without_spawning() {
 #[test]
 fn activate_on_launcher_arms_streamable_tool_as_a_job() {
     // A non-interactive tool (scripts) must arm a RunJob — the background,
-    // streamed path — rather than a foreground LaunchTool.
+    // streamed path — rather than a foreground LaunchTool. The command is
+    // pinned so this tests the enabled streamable path, not disabled UX.
     let mut app = launcher_app();
+    app.config.adapters.insert(
+        "scripts".to_owned(),
+        rexops_core::AdapterConfig {
+            enabled: true,
+            binary: Some("/tmp/scripts".to_owned()),
+            timeout_secs: None,
+        },
+    );
     select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
@@ -65,6 +74,26 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
         "a streamable tool must arm a background job"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn a process");
+}
+
+#[test]
+fn activate_on_disabled_launcher_entry_does_not_open_confirm() {
+    let mut app = launcher_app();
+    select_tool(&mut app, "scripts");
+    let mut runner = FakeRunner { calls: 0 };
+
+    let quit = app.on_action(Action::Activate, &mut runner);
+
+    assert!(!quit);
+    assert_eq!(runner.calls, 0, "disabled rows must not spawn");
+    assert!(
+        app.pending_action.is_none(),
+        "disabled rows must not open the confirm modal"
+    );
+    assert!(app
+        .recent_events
+        .iter()
+        .any(|e| e == "Scripts: disabled (no launch command)"));
 }
 
 #[test]
@@ -135,6 +164,32 @@ fn cancel_discards_pending_action_without_spawning() {
         .recent_events
         .iter()
         .any(|e| e.contains("cancelled (nothing ran)")));
+}
+
+#[test]
+fn n_discards_pending_action_without_escape() {
+    let mut app = launcher_app_with_proto();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::Activate, &mut runner); // arm
+    let quit = app.on_action(Action::InputChar('n'), &mut runner); // cancel
+
+    assert!(!quit, "n must cancel a pending action");
+    assert_eq!(runner.calls, 0, "cancel must not spawn a process");
+    assert!(app.pending_action.is_none(), "pending must be cleared");
+}
+
+#[test]
+fn y_confirms_pending_action_without_enter() {
+    let mut app = launcher_app_with_proto();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::Activate, &mut runner); // arm
+    let quit = app.on_action(Action::InputChar('y'), &mut runner); // confirm
+
+    assert!(!quit, "y must confirm a pending action");
+    assert_eq!(runner.calls, 1, "confirm must run exactly once");
+    assert!(app.pending_action.is_none(), "pending must be cleared");
 }
 
 #[test]
@@ -229,8 +284,16 @@ fn launcher_esc_goes_back_to_dashboard_not_quit() {
 fn launcher_enter_arms_the_selected_tool() {
     // Activate on the Launcher must arm a PendingAction for the *selected*
     // catalog tool, carrying that tool's id and name, and must not spawn.
-    // `tools` is non-interactive → it arms a RunJob.
+    // `tools` is non-interactive → it arms a RunJob once a command exists.
     let mut app = launcher_app();
+    app.config.adapters.insert(
+        "tools".to_owned(),
+        rexops_core::AdapterConfig {
+            enabled: true,
+            binary: Some("/tmp/tools".to_owned()),
+            timeout_secs: None,
+        },
+    );
     select_tool(&mut app, "tools");
     let entry = &CATALOG[app.selected_tool];
     let mut runner = FakeRunner { calls: 0 };

@@ -85,16 +85,17 @@ Three stacked rounded panes (`suite_ui::pane`):
      "▶ " + bold prefix.
    - The tool name is padded to a fixed column (`NAME_COL`) so the health badges and
      tags line up.
-   - A dim run-mode / install tag ends each row: `· interactive` (foreground
-     hand-over), `· streams` (background job), or `· not installed` when no command
-     resolves — derived from `app::is_streamable` and `launcher::resolve_command`
-     (read-only; nothing is spawned to render the screen).
+   - A dim run-mode / availability tag ends each row: `· interactive` (foreground
+     hand-over), `· streams` (background job), or `· disabled` when no command
+     resolves — derived from `app::is_streamable` and
+     `launcher::resolve_launch_command` (read-only; nothing is spawned to render
+     the screen).
 3. **Detail** — the full description of the currently selected tool (so a long one is
-   never clipped in its row), plus the standing note that Workstate-sourced sections
-   aren't launchable.
+   never clipped in its row), plus enabled/disabled launch availability.
 
-Navigation (↑/↓ over `app.selected_tool`) and launch (Enter → `arm_tool` → confirm)
-are unchanged; this screen is presentation only.
+Navigation (↑/↓ over `app.selected_tool`) is presentation-only. Launch activation
+is guarded in `arm_tool`: disabled rows log a status message instead of opening
+the confirmation modal.
 
 ## Keymap (Start Small, Consistent)
 - `q`, `Esc`, `Ctrl-C` — Quit (always, even while refreshing)

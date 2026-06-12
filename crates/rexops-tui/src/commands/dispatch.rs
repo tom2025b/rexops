@@ -7,7 +7,7 @@ use super::{Command, PaletteCommand};
 use crate::app::App;
 use crate::tools::{self, ForegroundRunner};
 
-/// A mutating action armed behind the Enter/Esc confirm gate.
+/// A mutating action armed behind the Enter/y or n/Esc confirm gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     LaunchTool { id: String, name: String },
@@ -26,8 +26,8 @@ impl PendingAction {
         let id = match self {
             PendingAction::LaunchTool { id, .. } | PendingAction::RunJob { id, .. } => id,
         };
-        match tools::resolve_command(id, config) {
-            Some(command) => format!("Will run:  {command}"),
+        match tools::resolve_launch_command(id, config) {
+            Some(command) => format!("Will run:  {}", command.display()),
             None => "No launch command yet (nothing will run)".to_owned(),
         }
     }
@@ -83,6 +83,10 @@ impl App {
     }
 
     pub(crate) fn arm_tool(&mut self, id: String, name: String) {
+        if tools::resolve_launch_command(&id, &self.config).is_none() {
+            self.log_event(format!("{name}: disabled (no launch command)"));
+            return;
+        }
         self.pending_action = Some(if tools::is_streamable(&id) {
             PendingAction::RunJob {
                 id,
@@ -94,7 +98,7 @@ impl App {
                 name: name.clone(),
             }
         });
-        self.log_event(format!("{name}: confirm (Enter) or cancel (Esc)"));
+        self.log_event(format!("{name}: confirm (Enter/y) or cancel (n/Esc)"));
     }
 
     pub(crate) fn confirm_pending(&mut self, runner: &mut impl ForegroundRunner) {

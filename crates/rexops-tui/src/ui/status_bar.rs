@@ -14,7 +14,7 @@ use crate::app::{App, Screen};
 /// Footer key hints by screen and modal state.
 pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)] {
     if app.pending_action.is_some() {
-        return &[("Enter", "run"), ("Esc", "cancel")];
+        return &[("Enter/y", "run"), ("n/Esc", "cancel")];
     }
     if app.palette_open {
         return &[

@@ -37,8 +37,17 @@ fn palette_opens_filters_and_dispatches_navigation() {
 #[test]
 fn palette_run_tool_arms_confirm_without_spawning() {
     // Choosing a `run <tool>` command in the palette must arm the SAME
-    // confirm gate as the Launcher — never spawn directly.
+    // confirm gate as the Launcher when the tool has a command — never spawn
+    // directly.
     let mut app = launcher_app();
+    app.config.adapters.insert(
+        "scripts".to_owned(),
+        rexops_core::AdapterConfig {
+            enabled: true,
+            binary: Some("/tmp/scripts".to_owned()),
+            timeout_secs: None,
+        },
+    );
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::OpenPalette, &mut runner);
@@ -64,6 +73,35 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     );
     assert_eq!(runner.calls, 0, "arming must not spawn");
     assert!(app.job.is_none(), "must not start a job before confirm");
+}
+
+#[test]
+fn palette_run_disabled_tool_does_not_open_confirm() {
+    let mut app = launcher_app();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::OpenPalette, &mut runner);
+    for c in "run scripts".chars() {
+        app.on_action(Action::InputChar(c), &mut runner);
+    }
+    let pos = app
+        .palette_commands()
+        .iter()
+        .position(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    app.palette_selected = pos;
+    app.on_action(Action::Activate, &mut runner);
+
+    assert!(!app.palette_open, "dispatch closes the palette");
+    assert!(
+        app.pending_action.is_none(),
+        "disabled palette run must not open the confirm modal"
+    );
+    assert_eq!(runner.calls, 0, "disabled command must not spawn");
+    assert!(app
+        .recent_events
+        .iter()
+        .any(|e| e == "Scripts: disabled (no launch command)"));
 }
 
 #[test]
