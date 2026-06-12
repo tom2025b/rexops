@@ -8,6 +8,16 @@ impl App {
     pub fn on_action(&mut self, action: Action, launcher: &mut impl ForegroundRunner) -> bool {
         self.clear_toast();
 
+        // The help sheet is a true overlay: it renders over everything, so it
+        // must also CAPTURE input. While it's up, any key dismisses it and is
+        // otherwise swallowed — nothing reaches (or mutates) the screen behind
+        // it. This is the outermost gate, above the pending/palette modals,
+        // because the sheet renders on top of those too.
+        if self.show_help {
+            self.show_help = false;
+            return false;
+        }
+
         if self.pending_action.is_some() {
             match action {
                 Action::Activate => self.confirm_pending(launcher),
