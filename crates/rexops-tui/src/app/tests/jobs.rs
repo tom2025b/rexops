@@ -266,3 +266,36 @@ fn up_down_scroll_the_jobs_screen_via_on_action() {
     app.on_action(Action::Down, &mut runner);
     assert_eq!(app.jobs_scroll, 1, "Down scrolls back toward newest");
 }
+
+#[test]
+fn poll_job_reports_no_change_when_idle() {
+    // The dirty-flag redraw loop relies on this: with no running job, a tick
+    // must report "nothing changed" so the runtime skips the repaint. A loop
+    // that always redrew would mask a regression here, so assert it directly.
+    let mut app = bare_app();
+    assert!(app.job.is_none());
+    assert!(!app.poll_job(), "an idle tick must not request a repaint");
+}
+
+#[test]
+fn poll_job_reports_change_when_a_job_finishes() {
+    // The tick that drains the last output and reaps the child must return true
+    // (header → idle, a history row + toast appear). `false` exits immediately
+    // with no output; we drive ticks until the job clears, and the final tick —
+    // the one that observed completion — must have reported a change.
+    let mut app = bare_app();
+    app.job = Some(spawn("false", "false").expect("spawn test job"));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut last = false;
+    while app.job.is_some() {
+        last = app.poll_job();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "job did not finish in time"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(last, "the tick that finished the job must request a repaint");
+    assert_eq!(app.job_history.len(), 1, "completion was recorded");
+}

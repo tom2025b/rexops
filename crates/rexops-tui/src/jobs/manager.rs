@@ -115,14 +115,20 @@ impl App {
         }
     }
 
-    pub fn poll_job(&mut self) {
+    /// Poll the running job for new output and completion. Returns `true` if
+    /// anything changed that the UI must repaint — new output lines arrived, or
+    /// the job finished — and `false` when there was nothing to do (no job, or a
+    /// running job that produced nothing this tick). The runtime uses this to
+    /// avoid redrawing an idle frame.
+    pub fn poll_job(&mut self) -> bool {
         let Some(job) = self.job.as_mut() else {
-            return;
+            return false;
         };
 
         let mut scratch = Vec::new();
         let drained = job.drain_into(&mut scratch);
         let exited = job.poll_done();
+        let got_output = !scratch.is_empty();
         for out in scratch {
             self.push_job_output(out);
         }
@@ -176,7 +182,11 @@ impl App {
             self.toast = Some(toast_for(&outcome));
             self.job = None;
             self.request_refresh();
+            return true; // job finished — header/history/toast all changed
         }
+
+        // Still running: a repaint is only needed if output actually arrived.
+        got_output
     }
 
     pub(crate) fn cancel_job(&mut self) {
