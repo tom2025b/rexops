@@ -14,18 +14,19 @@ fn select_tool(app: &mut App, id: &str) {
 /// path these runner-based tests exercise.
 pub(super) fn launcher_app_with_proto() -> App {
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "proto".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/proto".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    // modify_config refreshes the launch-availability cache for us — the cache
+    // can't drift from config because config is only reachable through it.
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/proto".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "proto");
-    // Config changed after construction → keep the render-availability cache in
-    // sync, mirroring how production would recompute on any config change.
-    app.refresh_launch_availability();
     app
 }
 
@@ -55,14 +56,16 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
     // streamed path — rather than a foreground LaunchTool. The command is
     // pinned so this tests the enabled streamable path, not disabled UX.
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "scripts".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/scripts".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/scripts".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
@@ -126,14 +129,16 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
     // spawn fails and is reported — but the runner must never be touched, and
     // no job handle is left dangling.
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "scripts".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/definitely-not-executable".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/definitely-not-executable".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
@@ -227,20 +232,22 @@ fn preview_shows_resolved_command_or_no_command() {
     // would win and make the assertion environment-dependent (same reason
     // the launcher.rs tests use a fake id).
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "definitely-not-a-real-tool-xyz".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/fake-tool".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "definitely-not-a-real-tool-xyz".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/fake-tool".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
 
     let launch = PendingAction::LaunchTool {
         id: "definitely-not-a-real-tool-xyz".to_owned(),
         name: "FakeTool".to_owned(),
     };
-    assert_eq!(launch.preview(&app.config), "Will run:  /tmp/fake-tool");
+    assert_eq!(launch.preview(app.config()), "Will run:  /tmp/fake-tool");
 
     let feed_only = PendingAction::LaunchTool {
         // A different id that is never on PATH and has no config binary.
@@ -248,7 +255,7 @@ fn preview_shows_resolved_command_or_no_command() {
         name: "Workstate".to_owned(),
     };
     assert_eq!(
-        feed_only.preview(&app.config),
+        feed_only.preview(app.config()),
         "No launch command yet (nothing will run)"
     );
 }
@@ -289,14 +296,16 @@ fn launcher_enter_arms_the_selected_tool() {
     // catalog tool, carrying that tool's id and name, and must not spawn.
     // `tools` is non-interactive → it arms a RunJob once a command exists.
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "tools".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/tools".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "tools".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/tools".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "tools");
     let entry = &CATALOG[app.selected_tool];
     let mut runner = FakeRunner { calls: 0 };

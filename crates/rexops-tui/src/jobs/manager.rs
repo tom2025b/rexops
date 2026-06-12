@@ -54,7 +54,7 @@ impl App {
             ));
             return;
         }
-        let Some(command) = tools::resolve_command(id, &self.config) else {
+        let Some(command) = tools::resolve_command(id, self.config()) else {
             self.log_event(format!("{name} has no launch command yet"));
             return;
         };

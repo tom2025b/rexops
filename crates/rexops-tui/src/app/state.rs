@@ -31,12 +31,16 @@ pub struct App {
     pub last_outcome: Option<LastOutcome>,
     pub job_history: VecDeque<JobRecord>,
     pub toast: Option<(String, suite_ui::ToastKind)>,
-    pub config: AppConfig,
+    /// Private so it can only be mutated through `set_config` / `modify_config`,
+    /// which keep `launch_availability` coherent. Read it via `config()`.
+    config: AppConfig,
     pub recent_events: VecDeque<String>,
-    /// Per-catalog-tool launch availability, computed once from config + PATH.
+    /// Per-catalog-tool launch availability, derived from `config` + PATH.
     /// The Launcher redraws every ~100ms; resolving availability there would
-    /// shell out to `which` on every frame. We cache it here instead and only
-    /// recompute when the config changes (see `refresh_launch_availability`).
+    /// shell out to `which` on every frame, so the render path reads this cache
+    /// instead. Its coherence with `config` is enforced structurally: `config`
+    /// is private and every write path (`set_config`, `modify_config`) refreshes
+    /// this — there is no way to change config without recomputing availability.
     launch_availability: HashMap<&'static str, bool>,
     pub(crate) tx: mpsc::Sender<OpsSnapshot>,
 }
@@ -71,19 +75,41 @@ impl App {
         app
     }
 
+    // --- config access (read via `config`; mutate only via `modify_config`) ---
+
+    /// Read-only view of the live config. All read sites go through here so the
+    /// field can stay private and the cache-coherence invariant can be enforced.
+    pub(crate) fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    /// Mutate the config in place, then refresh the launch-availability cache.
+    /// `config` is private with no other writer, so this is the ONLY way config
+    /// changes — `launch_availability` can never drift from it.
+    ///
+    /// Today config is set once at construction and only read afterwards, so the
+    /// sole caller is tests (hence `#[cfg(test)]`). When a production config
+    /// reload lands, drop the gate: this is already the coherent mutation path
+    /// it must route through, and the field's privacy is what forces it to.
+    #[cfg(test)]
+    pub(crate) fn modify_config(&mut self, f: impl FnOnce(&mut AppConfig)) {
+        f(&mut self.config);
+        self.refresh_launch_availability();
+    }
+
     // --- launch availability cache ---
 
     /// Recompute the cached launch availability for every catalog tool from the
-    /// current config (and PATH). Call once at construction and again whenever
-    /// `config` changes. This is the only place `resolve_launch_command` runs for
-    /// availability — the render path reads the cache via `is_tool_launchable`.
-    pub(crate) fn refresh_launch_availability(&mut self) {
+    /// current config (and PATH). Private: config is changed only through
+    /// `modify_config`, which calls this — so availability can never drift from
+    /// config. The render path reads it via `is_tool_launchable`.
+    fn refresh_launch_availability(&mut self) {
         self.launch_availability = CATALOG
             .iter()
             .map(|tool| {
                 (
                     tool.id,
-                    tools::resolve_launch_command(tool.id, &self.config).is_some(),
+                    tools::resolve_launch_command(tool.id, self.config()).is_some(),
                 )
             })
             .collect();

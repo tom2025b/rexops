@@ -144,7 +144,7 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use rexops_core::AppConfig;
+    use rexops_core::{AdapterConfig, AppConfig};
     use std::sync::mpsc;
 
     /// Render the Launcher into an off-screen buffer and flatten it to text, so a
@@ -289,6 +289,54 @@ mod tests {
         assert!(
             bulwark_row.contains("disabled"),
             "cached launchable=false must render disabled:\n{bulwark_row}"
+        );
+    }
+
+    #[test]
+    fn modify_config_keeps_availability_cache_coherent() {
+        // The coherence invariant: changing config through the only mutation
+        // path (`modify_config`) must refresh the availability cache, with NO
+        // manual refresh call. We pin a fake id that is never on PATH, so the
+        // only way `scripts` becomes launchable is the config-binary fallback —
+        // and the only way the *rendered* row reflects that is if modify_config
+        // refreshed the cache. No `refresh_launch_availability` appears here by
+        // design: if the cache could go stale, this test would fail.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+
+        // scripts is Background → launchable renders "streams", else "disabled".
+        // Default config + no PATH binary → starts disabled.
+        let row = row_line(&render_to_text(&app), "Scripts");
+        assert!(
+            row.contains("disabled"),
+            "scripts must start disabled under default config:\n{row}"
+        );
+
+        // Pin a config binary through the mutation path. No manual refresh.
+        app.modify_config(|cfg| {
+            cfg.adapters.insert(
+                "scripts".to_owned(),
+                AdapterConfig {
+                    enabled: true,
+                    binary: Some("/tmp/scripts".to_owned()),
+                    timeout_secs: None,
+                },
+            );
+        });
+        let row = row_line(&render_to_text(&app), "Scripts");
+        assert!(
+            row.contains("streams"),
+            "modify_config must refresh the cache → scripts now launchable:\n{row}"
+        );
+
+        // And disabling it again through the same path must flip it back.
+        app.modify_config(|cfg| {
+            cfg.adapters.get_mut("scripts").unwrap().enabled = false;
+        });
+        let row = row_line(&render_to_text(&app), "Scripts");
+        assert!(
+            row.contains("disabled"),
+            "modify_config must refresh the cache → disabled adapter unlaunchable:\n{row}"
         );
     }
 

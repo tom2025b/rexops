@@ -40,14 +40,16 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     // confirm gate as the Launcher when the tool has a command — never spawn
     // directly.
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "scripts".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/scripts".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/scripts".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::OpenPalette, &mut runner);

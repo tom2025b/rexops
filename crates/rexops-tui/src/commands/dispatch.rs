@@ -83,7 +83,7 @@ impl App {
     }
 
     pub(crate) fn arm_tool(&mut self, id: String, name: String) {
-        if tools::resolve_launch_command(&id, &self.config).is_none() {
+        if tools::resolve_launch_command(&id, self.config()).is_none() {
             self.log_event(format!("{name}: disabled (no launch command)"));
             return;
         }
@@ -107,7 +107,7 @@ impl App {
         };
         match action {
             PendingAction::LaunchTool { id, name } => {
-                let report = tools::launch_tool(&id, &name, &self.config, runner);
+                let report = tools::launch_tool(&id, &name, self.config(), runner);
                 self.log_event(report.message());
                 if report.should_refresh() {
                     self.request_refresh();

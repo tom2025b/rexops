@@ -41,7 +41,7 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
         palette::render_palette(f, app, f.area(), theme);
     }
     if let Some(pending) = &app.pending_action {
-        palette::render_confirm_popup(f, pending, &app.config, f.area(), theme);
+        palette::render_confirm_popup(f, pending, app.config(), f.area(), theme);
     }
 }
 
