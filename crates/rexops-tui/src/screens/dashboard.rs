@@ -44,7 +44,7 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let count = app.filtered_adapter_names().len();
     SearchBar {
         query: &app.filter,
-        placeholder: "type to filter adapters · esc clears",
+        placeholder: "/ to filter adapters · esc clears",
         match_count: Some(count),
     }
     .render(f, area, theme);

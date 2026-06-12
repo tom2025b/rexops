@@ -53,7 +53,7 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let count = app.filtered_adapter_names().len();
     SearchBar {
         query: &app.filter,
-        placeholder: "type to filter adapters · esc clears",
+        placeholder: "/ to filter adapters · esc clears",
         match_count: Some(count),
     }
     .render(f, area, theme);
@@ -88,7 +88,7 @@ fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         }
     }
 
-    let title = "Adapters (j/k/arrows, enter, chars to filter, esc/backspace)";
+    let title = "Adapters (j/k/arrows move, enter select, / to filter)";
     let list = Paragraph::new(lines)
         .wrap(Wrap { trim: true })
         .block(pane(title, theme));

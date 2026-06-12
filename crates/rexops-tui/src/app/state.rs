@@ -20,6 +20,13 @@ pub struct App {
     pub adapter_names: Vec<String>,
     pub selected_adapter: Option<String>,
     pub filter: String,
+    /// Whether the inline filter on a filter screen is actively capturing
+    /// keystrokes. Entered with `/`, exited with Enter/Esc. While set, the
+    /// keymap runs in `Text` mode so every character (including bound command
+    /// letters like `q`/`r`/digits) types into the filter instead of firing a
+    /// command — the same text-input contract the palette has. Only meaningful
+    /// on a `filter_screen()`; always cleared when leaving one.
+    pub filtering: bool,
     pub selected_tool: usize,
     pub pending_action: Option<PendingAction>,
     pub palette_open: bool,
@@ -55,6 +62,7 @@ impl App {
             adapter_names: Vec::new(),
             selected_adapter: None,
             filter: String::new(),
+            filtering: false,
             selected_tool: 0,
             pending_action: None,
             palette_open: false,
@@ -180,7 +188,7 @@ impl App {
     /// gate in `on_action` and is not a text field, so it stays `Navigation`.)
     pub(crate) fn input_mode(&self) -> crate::input::keymap::InputMode {
         use crate::input::keymap::InputMode;
-        if self.palette_open {
+        if self.palette_open || self.filtering {
             InputMode::Text
         } else {
             InputMode::Navigation

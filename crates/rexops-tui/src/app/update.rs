@@ -72,19 +72,38 @@ impl App {
                 false
             }
             Action::Activate => {
-                self.activate_selection();
+                // While filtering, Enter confirms the filter and returns to nav
+                // (the narrowed list stays applied) rather than activating a row.
+                if self.filtering {
+                    self.filtering = false;
+                    self.log_event("Filter applied");
+                } else {
+                    self.activate_selection();
+                }
                 false
             }
             Action::Cancel => self.cancel_current_context(),
+            // `/` on a filter screen enters filter mode. It is intercepted here
+            // and NOT appended to the query — the slash is the trigger, not text.
+            // (While already filtering we run in Text mode, so `/` arrives as a
+            // normal InputChar below and types literally, as you'd expect.)
+            Action::InputChar('/') if self.filter_screen() && !self.filtering => {
+                self.filtering = true;
+                self.log_event("Filter: type to narrow, Enter to keep, Esc to clear");
+                false
+            }
             Action::InputChar(c) => {
-                if self.filter_screen() && c.is_ascii_graphic() {
+                // Only capture into the filter while actively filtering. In Text
+                // mode every printable char reaches here (no command stole it),
+                // so bound letters like q/r/digits now type into the filter too.
+                if self.filtering && self.filter_screen() && c.is_ascii_graphic() {
                     self.filter.push(c);
                     self.select_first_visible_adapter();
                 }
                 false
             }
             Action::Backspace => {
-                if self.filter_screen() && !self.filter.is_empty() {
+                if self.filtering && self.filter_screen() && !self.filter.is_empty() {
                     self.filter.pop();
                     self.keep_selected_adapter_visible();
                 }
@@ -94,6 +113,10 @@ impl App {
     }
 
     fn switch_to(&mut self, screen: Screen, label: &str) -> bool {
+        // Leaving a screen ends any active filter capture — `filtering` is only
+        // valid on the screen it was started on, and a stale flag would keep the
+        // keymap in Text mode where it doesn't belong.
+        self.filtering = false;
         self.current_screen = screen;
         self.log_event(format!("Switched to {label} screen"));
         false
@@ -135,7 +158,17 @@ impl App {
     }
 
     fn cancel_current_context(&mut self) -> bool {
-        if self.filter_screen() && !self.filter.is_empty() {
+        // Esc while filtering: abandon the filter — exit the mode AND clear the
+        // query, returning the list to its full state.
+        if self.filtering {
+            self.filtering = false;
+            self.filter.clear();
+            self.select_first_visible_adapter();
+            self.log_event("Filter cleared");
+            false
+        } else if self.filter_screen() && !self.filter.is_empty() {
+            // Not filtering, but a filter was applied (Enter then Esc in nav):
+            // Esc clears the applied filter.
             self.filter.clear();
             self.select_first_visible_adapter();
             false

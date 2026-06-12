@@ -24,12 +24,21 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
             ("Esc", "close"),
         ];
     }
+    // While actively filtering, the hints reflect the text-input contract: every
+    // key types, Enter keeps the filter, Esc abandons it.
+    if app.filtering {
+        return &[
+            ("type", "filter"),
+            ("↑/↓", "move"),
+            ("Enter", "apply"),
+            ("Esc", "clear"),
+        ];
+    }
     match app.current_screen {
         Screen::Dashboard => &[
             ("q", "quit"),
             ("^P", "palette"),
-            ("type", "filter"),
-            ("esc", "clear"),
+            ("/", "filter"),
             ("r", "refresh"),
             ("?", "help"),
             ("1-7", "screens"),
@@ -37,7 +46,7 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
         Screen::Adapters => &[
             ("q", "quit"),
             ("^P", "palette"),
-            ("type", "filter"),
+            ("/", "filter"),
             ("j/k", "nav"),
             ("enter", "select"),
             ("1", "dashboard"),

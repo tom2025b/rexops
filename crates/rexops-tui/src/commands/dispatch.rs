@@ -42,6 +42,9 @@ impl App {
         if self.pending_action.is_some() {
             return;
         }
+        // The palette is its own text-input context; end any inline filter
+        // capture so closing the palette doesn't silently resume filtering.
+        self.filtering = false;
         self.palette_open = true;
         self.palette_query.clear();
         self.palette_selected = 0;
