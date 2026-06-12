@@ -26,7 +26,10 @@ pub fn run(
         if let Some(ev) = input::keymap::next_event(Duration::from_millis(100))? {
             match ev {
                 input::keymap::Event::Key(key) => {
-                    if let Some(action) = input::keymap::handle_key(key) {
+                    // The app decides how keys are read (navigating vs typing into
+                    // a text field) — pass that mode so bound letters reach a focused
+                    // field as input instead of being claimed as commands.
+                    if let Some(action) = input::keymap::handle_key(key, app.input_mode()) {
                         if app.on_action(action, tui) {
                             return Ok(());
                         }

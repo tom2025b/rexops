@@ -172,6 +172,21 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    /// How the keymap should interpret the next keypress. `Text` when a text
+    /// field is focused (the command palette today) so printable keys — including
+    /// bound command letters like `q`/`r`/digits — become literal input; else
+    /// `Navigation`, where the global command bindings apply. The runtime passes
+    /// this into `keymap::handle_key`. (A pending confirmation is its own modal
+    /// gate in `on_action` and is not a text field, so it stays `Navigation`.)
+    pub(crate) fn input_mode(&self) -> crate::input::keymap::InputMode {
+        use crate::input::keymap::InputMode;
+        if self.palette_open {
+            InputMode::Text
+        } else {
+            InputMode::Navigation
+        }
+    }
+
     pub(crate) fn clear_toast(&mut self) {
         self.toast = None;
     }
