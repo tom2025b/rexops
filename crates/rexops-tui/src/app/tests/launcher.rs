@@ -23,6 +23,9 @@ pub(super) fn launcher_app_with_proto() -> App {
         },
     );
     select_tool(&mut app, "proto");
+    // Config changed after construction → keep the render-availability cache in
+    // sync, mirroring how production would recompute on any config change.
+    app.refresh_launch_availability();
     app
 }
 

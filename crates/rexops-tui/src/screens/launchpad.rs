@@ -19,7 +19,7 @@ use ratatui::{
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::tools::{self, RunMode, ToolEntry, CATALOG};
+use crate::tools::{RunMode, ToolEntry, CATALOG};
 use crate::ui::widgets;
 
 /// Width the tool name is padded to so the badges and tags line up into columns.
@@ -75,15 +75,16 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
         .unwrap_or(rexops_core::AdapterHealth::Unknown);
     let badge = widgets::render_health_badge(health, theme);
 
-    // Run-mode + availability tag. `resolve_launch_command` is read-only
-    // (no spawn) and includes catalog-owned launch args.
-    let tag = if tools::resolve_launch_command(tool.id, &app.config).is_none() {
-        "· disabled".to_string()
-    } else {
+    // Run-mode + availability tag. Availability is read from the cache (computed
+    // once from config + PATH) so this hot render path — redrawn every ~100ms —
+    // never shells out to `which`.
+    let tag = if app.is_tool_launchable(tool.id) {
         match tool.run_mode {
             RunMode::Background => "· streams".to_string(),
             RunMode::Foreground => "· interactive".to_string(),
         }
+    } else {
+        "· disabled".to_string()
     };
 
     let name = format!("{:<width$}", tool.name, width = NAME_COL);
@@ -124,7 +125,7 @@ fn render_launcher_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             Span::styled(format!("{}: ", tool.name), theme.title()),
             Span::raw(tool.description.to_string()),
         ]));
-        let availability = if tools::resolve_launch_command(tool.id, &app.config).is_some() {
+        let availability = if app.is_tool_launchable(tool.id) {
             "Enabled: Enter opens a confirmation before launch."
         } else {
             "Disabled: no launch command is configured."
@@ -245,6 +246,50 @@ mod tests {
         let proto = proto.expect("Proto must be registered in the launcher catalog");
         assert_eq!(proto.name, "Proto");
         assert!(!proto.description.is_empty());
+    }
+
+    /// Extract the single rendered row line that names the given tool, so a test
+    /// can assert on that row's tag without other rows' tags leaking in.
+    fn row_line(text: &str, tool_name: &str) -> String {
+        text.lines()
+            .find(|line| line.contains(tool_name))
+            .unwrap_or_else(|| panic!("no rendered row for {tool_name}:\n{text}"))
+            .to_owned()
+    }
+
+    #[test]
+    fn render_reads_cached_availability_not_a_live_resolve() {
+        // The Launcher redraws every ~100ms. Availability must come from a cache
+        // computed once — never a per-render `resolve_launch_command` (which
+        // shells out to `which`). We prove render reads the cache by overriding a
+        // single tool's cached availability and asserting its row reflects the
+        // cache, not a live resolve. Asserting on the specific row avoids other
+        // rows' tags (or a real PATH hit elsewhere) leaking into the check.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default());
+
+        // Bulwark is Foreground: launchable → "interactive", otherwise "disabled".
+        // Seed the cache to launchable; with default config + no PATH binary a
+        // live resolve would say "disabled", so the tag proves the source.
+        app.set_tool_launchable("bulwark", true);
+        let bulwark_row = row_line(&render_to_text(&app), "Bulwark");
+        assert!(
+            bulwark_row.contains("interactive"),
+            "cached launchable=true must render interactive:\n{bulwark_row}"
+        );
+        assert!(
+            !bulwark_row.contains("disabled"),
+            "cached launchable=true must not render disabled:\n{bulwark_row}"
+        );
+
+        // Flip the cache to not-launchable: the same row must now read disabled,
+        // independent of whether `which bulwark` would hit on this machine.
+        app.set_tool_launchable("bulwark", false);
+        let bulwark_row = row_line(&render_to_text(&app), "Bulwark");
+        assert!(
+            bulwark_row.contains("disabled"),
+            "cached launchable=false must render disabled:\n{bulwark_row}"
+        );
     }
 
     #[test]
