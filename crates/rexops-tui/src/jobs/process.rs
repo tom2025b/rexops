@@ -26,6 +26,22 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
+/// Bound on the output channel between the reader threads and the UI. A
+/// `sync_channel` of this size applies **backpressure**: when the UI falls
+/// behind, `send` blocks the reader thread, the child's stdout/stderr pipe
+/// fills, and the child blocks on write — so a chatty or runaway job throttles
+/// itself instead of piling unbounded lines in memory. Lines are never dropped;
+/// they wait in order until the UI drains them. Sized generously so a normal
+/// burst never blocks, only a sustained flood the UI can't keep up with.
+const CHANNEL_CAP: usize = 4096;
+
+/// Most lines `drain_into` will move per call. The visible buffer the UI keeps
+/// is itself bounded (`JOB_OUTPUT_CAP`), so pulling more than this per tick is
+/// wasted work — the surplus would be popped before it could ever be shown.
+/// Capping the per-tick drain keeps the UI thread's work per frame bounded even
+/// when the channel is full, so the draw loop never stalls behind a flood.
+const DRAIN_BUDGET: usize = 1024;
+
 /// One output line from a running job, delivered over the channel. Exit is NOT
 /// an event — the loop reaps it via [`JobHandle::poll_done`] — so this carries
 /// pure output, never control.
@@ -58,17 +74,25 @@ pub struct JobHandle {
 }
 
 impl JobHandle {
-    /// Drain every output line available *right now* into `sink`, and report
-    /// whether the output channel has **disconnected** — i.e. both reader threads
-    /// have hit EOF and dropped their senders, so no more output can ever arrive.
+    /// Drain up to [`DRAIN_BUDGET`] output lines available *right now* into
+    /// `sink`, and report whether the output channel has **disconnected** — i.e.
+    /// both reader threads have hit EOF and dropped their senders, so no more
+    /// output can ever arrive.
     ///
     /// This is the race-free completion signal: `try_wait` reporting the child
     /// gone can win against a reader thread still mid-flush of its last line, so
     /// the child being dead does NOT mean the output is complete. The channel
     /// disconnecting does — it can only happen after both readers finish. The
     /// caller drains each tick until this returns `true`, never blocking the UI.
+    ///
+    /// The per-tick budget bounds the UI thread's work per frame: under a flood
+    /// we move at most `DRAIN_BUDGET` lines and return `false` (more pending),
+    /// so the draw loop keeps ticking and drains the rest on later frames rather
+    /// than stalling on a full channel. Disconnect is only ever reported once the
+    /// channel is genuinely drained AND empty, so hitting the budget never
+    /// signals completion early — the trailing-line guarantee is preserved.
     pub fn drain_into(&self, sink: &mut impl Extend<JobOutput>) -> bool {
-        loop {
+        for _ in 0..DRAIN_BUDGET {
             match self.rx.try_recv() {
                 Ok(line) => sink.extend(std::iter::once(line)),
                 // Nothing buffered, but the senders are still alive: more may come.
@@ -77,6 +101,8 @@ impl JobHandle {
                 Err(TryRecvError::Disconnected) => return true,
             }
         }
+        // Budget exhausted with lines still flowing: not disconnected, more to come.
+        false
     }
 
     /// Non-blocking check for completion. Returns `Some(exit)` once the child has
@@ -114,6 +140,15 @@ impl JobHandle {
 /// trade-off, unlike the confirm-gated mutations elsewhere in the TUI); and —
 /// like exec.rs — `kill` reaches the direct child only, never grandchildren,
 /// which is fine today because jobs spawn suite binaries directly.
+///
+/// Backpressure note: with the bounded channel a reader thread can be blocked in
+/// `send` on a full channel while the child is blocked writing to a full pipe.
+/// `kill` is SIGKILL — uncatchable and not deferred by the pending write — so
+/// `wait` still reaps promptly and never deadlocks. The `rx` field drops after
+/// this body returns, which releases any blocked `send` (it returns `Err`) and
+/// lets the reader threads exit. Do NOT replace `kill` with a graceful
+/// terminate here: a child ignoring the signal while blocked on a full pipe
+/// could then hang `wait`.
 impl Drop for JobHandle {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -136,10 +171,14 @@ pub fn spawn(name: &str, command: &str) -> Option<JobHandle> {
         .spawn()
         .ok()?;
 
-    let (tx, rx) = mpsc::channel();
+    // Bounded channel for backpressure: when the UI lags, `send` blocks the
+    // reader, the child's pipe fills, and the child blocks on write. Lines are
+    // never dropped — a flood throttles the producer instead of growing memory.
+    let (tx, rx) = mpsc::sync_channel(CHANNEL_CAP);
 
     // stdout reader: one line → one Stdout event. The thread ends at pipe EOF,
-    // which happens when the child exits.
+    // which happens when the child exits. A blocked `send` (full channel)
+    // simply waits here until the UI drains — that IS the backpressure.
     if let Some(out) = child.stdout.take() {
         let tx = tx.clone();
         thread::spawn(move || {
@@ -248,6 +287,103 @@ mod tests {
             Some(&JobOutput::Stdout("line-200".to_owned())),
             "the trailing line must not be lost"
         );
+    }
+
+    #[test]
+    fn flood_under_backpressure_loses_no_lines() {
+        // The bounded channel must apply BACKPRESSURE, not drop. A producer that
+        // emits far more than CHANNEL_CAP lines (here 4× the cap), drained by a
+        // deliberately slow consumer, fills the channel and blocks the reader's
+        // `send` — the child then blocks on its pipe. The contract: every line
+        // still arrives, in order, none dropped. If `send` silently discarded on
+        // a full channel (the bug this guards), the count would come up short.
+        let n = CHANNEL_CAP * 4;
+        let script = write_script(
+            "flood",
+            &format!("#!/bin/sh\nfor i in $(seq 1 {n}); do echo line-$i; done\n"),
+        );
+        let path = script.to_str().unwrap();
+        let mut job = spawn_script("flood", path);
+
+        // Stall before draining so the producer races ahead and the channel
+        // genuinely fills to CHANNEL_CAP — parking the reader thread in a blocked
+        // `send`. This is the state that distinguishes backpressure from drop: a
+        // drop-on-full sender would shed lines here and the final count would
+        // fall short. (n = 4× cap guarantees the producer cannot have finished.)
+        sleep(Duration::from_millis(50));
+
+        // Then drain to completion. Every line emitted while we stalled — and
+        // while the producer was blocked — must still be delivered, in order.
+        let mut out = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let exit = loop {
+            let drained = job.drain_into(&mut out);
+            if let (Some(exit), true) = (job.poll_done(), drained) {
+                break exit;
+            }
+            assert!(Instant::now() < deadline, "flood job did not finish in time");
+            sleep(Duration::from_millis(1));
+        };
+        let _ = std::fs::remove_file(&script);
+
+        assert_eq!(exit, JobExit::Code(0));
+        assert_eq!(out.len(), n, "every line must survive backpressure (none dropped)");
+        assert_eq!(out.first(), Some(&JobOutput::Stdout("line-1".to_owned())));
+        assert_eq!(
+            out.last(),
+            Some(&JobOutput::Stdout(format!("line-{n}"))),
+            "order must be preserved through a full channel"
+        );
+    }
+
+    #[test]
+    fn drain_into_respects_the_per_tick_budget() {
+        // One `drain_into` call must move at most DRAIN_BUDGET lines, returning
+        // `false` (more pending) when it hits the budget with the child still
+        // running — so the draw loop never stalls behind a full channel. We push
+        // more than the budget through a real job, then drain ONCE and check the
+        // cap held.
+        let n = DRAIN_BUDGET * 2;
+        let script = write_script(
+            "budget",
+            &format!("#!/bin/sh\nfor i in $(seq 1 {n}); do echo line-$i; done\n"),
+        );
+        let path = script.to_str().unwrap();
+        let job = spawn_script("budget", path);
+
+        // Wait until at least DRAIN_BUDGET+1 lines are buffered so a single drain
+        // is guaranteed to hit the budget (the channel caps at CHANNEL_CAP, which
+        // is >= DRAIN_BUDGET, so this is reachable).
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            // Peek by draining into a throwaway, but we need the real buffer — so
+            // instead just give the producer a moment; it emits n >> budget fast.
+            sleep(Duration::from_millis(20));
+            let mut probe = Vec::new();
+            let _ = job.drain_into(&mut probe);
+            assert!(
+                probe.len() <= DRAIN_BUDGET,
+                "a single drain moved {} lines, over the budget of {DRAIN_BUDGET}",
+                probe.len()
+            );
+            if probe.len() == DRAIN_BUDGET {
+                // Proved the cap engaged on a full-enough channel.
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "channel never buffered enough to exercise the budget"
+            );
+        }
+
+        // Drain the rest so the child isn't left blocked on a full pipe at drop.
+        let mut rest = Vec::new();
+        let drain_deadline = Instant::now() + Duration::from_secs(10);
+        while !job.drain_into(&mut rest) {
+            sleep(Duration::from_millis(1));
+            assert!(Instant::now() < drain_deadline, "failed to drain remainder");
+        }
+        let _ = std::fs::remove_file(&script);
     }
 
     #[test]
