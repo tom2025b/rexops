@@ -19,7 +19,7 @@ use ratatui::{
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::tools::{RunMode, ToolEntry, CATALOG};
+use crate::tools::{ToolEntry, CATALOG};
 use crate::ui::widgets;
 
 /// Width the tool name is padded to so the badges and tags line up into columns.
@@ -82,18 +82,10 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
     //   - resolvable AND health != Unavailable → streams / interactive
     //   - resolvable BUT health == Unavailable → unavailable (badge agrees)
     //   - not resolvable at all                → disabled
-    let tag = if app.is_tool_available(tool.id) {
-        match tool.run_mode {
-            RunMode::Background => "· streams".to_string(),
-            RunMode::Foreground => "· interactive".to_string(),
-        }
-    } else if app.is_tool_launchable(tool.id) {
-        // Command resolves, but the adapter probe says it's down: don't invite a
-        // launch the suite just reported as unavailable.
-        "· unavailable".to_string()
-    } else {
-        "· disabled".to_string()
-    };
+    // The 3-state tag is computed by App::availability_tag — the single source
+    // of truth shared with the command palette, so the two run surfaces can
+    // never disagree. We frame it with the leading "· " the rows use.
+    let tag = format!("· {}", app.availability_tag(tool.id));
 
     let name = format!("{:<width$}", tool.name, width = NAME_COL);
     let name_span = if selected {

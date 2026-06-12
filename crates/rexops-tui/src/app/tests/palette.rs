@@ -136,3 +136,59 @@ fn palette_does_not_open_while_confirm_pending() {
     );
     assert!(app.pending_action.is_some(), "pending must be untouched");
 }
+
+#[test]
+fn palette_run_rows_carry_the_availability_tag() {
+    // A run-surface consistency guard: the palette must annotate each
+    // `run <tool>` row with the same availability the Launcher screen shows, so
+    // a disabled/down tool reads as such BEFORE it is picked (rather than
+    // silently no-op'ing on Enter). Under default config no binary resolves, so
+    // every tool reads "disabled".
+    let app = launcher_app();
+    let cmds = app.palette_commands();
+    let scripts = cmds
+        .iter()
+        .find(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    assert!(
+        scripts.desc.ends_with("· disabled"),
+        "an unresolvable tool's palette row must be tagged disabled, got: {:?}",
+        scripts.desc
+    );
+    // A pure navigation row must NOT get a run tag.
+    let nav = cmds.iter().find(|c| c.label == "dashboard").expect("nav present");
+    assert!(
+        !nav.desc.contains("· disabled"),
+        "navigation rows must not carry a run availability tag: {:?}",
+        nav.desc
+    );
+}
+
+#[test]
+fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
+    // Configure scripts with a resolvable binary; its palette row must flip from
+    // "disabled" to its run-mode tag ("streams", since scripts is Background) —
+    // proving the tag is live, not fixed. We point at a real binary on PATH so
+    // resolution succeeds.
+    let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/bin/sh".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    let cmds = app.palette_commands();
+    let scripts = cmds
+        .iter()
+        .find(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    assert!(
+        scripts.desc.ends_with("· streams"),
+        "a configured Background tool must read streams, got: {:?}",
+        scripts.desc
+    );
+}

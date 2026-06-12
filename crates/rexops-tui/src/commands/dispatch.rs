@@ -35,7 +35,19 @@ impl PendingAction {
 
 impl App {
     pub fn palette_commands(&self) -> Vec<PaletteCommand> {
-        super::palette::filter(&self.palette_query)
+        let mut cmds = super::palette::filter(&self.palette_query);
+        // Annotate each `run <tool>` row with its live availability, mirroring
+        // the Launcher screen's 3-state tag so the two run surfaces never
+        // disagree. The palette command set itself stays pure (no App); the tag
+        // is folded in here, where the App's availability is in hand. Tools stay
+        // listed even when down — a disabled/unavailable tool reads as such
+        // before you pick it, instead of silently no-op'ing on Enter.
+        for cmd in &mut cmds {
+            if let Command::RunTool { id, .. } = &cmd.command {
+                cmd.desc = format!("{} · {}", cmd.desc, self.availability_tag(id));
+            }
+        }
+        cmds
     }
 
     pub(crate) fn open_palette(&mut self) {

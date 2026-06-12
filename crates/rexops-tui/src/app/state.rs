@@ -168,6 +168,27 @@ impl App {
         self.is_tool_launchable(tool_id) && self.tool_health(tool_id) != AdapterHealth::Unavailable
     }
 
+    /// The 3-state availability tag for a catalog tool, the single source of
+    /// truth shared by every run surface (the Launcher rows and the command
+    /// palette) so they can never disagree about what's runnable:
+    ///   • available            → "streams" (Background) / "interactive" (Foreground)
+    ///   • resolvable but down   → "unavailable" (adapter health == Unavailable)
+    ///   • not resolvable at all → "disabled"
+    /// Returned without the leading "· " so each caller can frame it to taste.
+    pub(crate) fn availability_tag(&self, tool_id: &str) -> &'static str {
+        if self.is_tool_available(tool_id) {
+            if tools::is_streamable(tool_id) {
+                "streams"
+            } else {
+                "interactive"
+            }
+        } else if self.is_tool_launchable(tool_id) {
+            "unavailable"
+        } else {
+            "disabled"
+        }
+    }
+
     /// Test-only: override a single tool's cached availability so render-path
     /// tests can prove they read the cache rather than resolving live.
     #[cfg(test)]
