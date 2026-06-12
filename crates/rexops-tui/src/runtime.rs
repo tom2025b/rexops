@@ -14,14 +14,29 @@ pub fn run(
     rx: &mpsc::Receiver<OpsSnapshot>,
     theme: Theme,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Redraw only when something could have changed, not on every tick. An idle
+    // TUI (no key, no snapshot, no job output) would otherwise full-render and
+    // diff the whole buffer ~10×/s forever — wasted CPU and a flicker risk. We
+    // draw once up front, then set `dirty` whenever a snapshot is applied, the
+    // job produces output / finishes, or a keypress is handled. The 100 ms poll
+    // still bounds streaming-output latency; nothing here needs a timer-based
+    // redraw (toasts clear on the next action, not on a clock).
+    let mut dirty = true;
+
     loop {
-        tui.terminal().draw(|f| ui::render(f, app, theme))?;
+        if dirty {
+            tui.terminal().draw(|f| ui::render(f, app, theme))?;
+            dirty = false;
+        }
 
         while let Ok(snapshot) = rx.try_recv() {
             app.apply_snapshot(snapshot);
+            dirty = true;
         }
 
-        app.poll_job();
+        if app.poll_job() {
+            dirty = true;
+        }
 
         if let Some(ev) = input::keymap::next_event(Duration::from_millis(100))? {
             match ev {
@@ -33,6 +48,8 @@ pub fn run(
                         if app.on_action(action, tui) {
                             return Ok(());
                         }
+                        // A handled key may have mutated any state; repaint next tick.
+                        dirty = true;
                     }
                 }
             }
