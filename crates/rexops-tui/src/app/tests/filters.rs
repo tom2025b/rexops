@@ -132,3 +132,25 @@ fn opening_the_palette_exits_filter_mode() {
     assert!(!app.filtering, "opening the palette must exit filter mode");
     assert!(app.palette_open);
 }
+
+#[test]
+fn j_k_navigate_the_adapter_selection_on_the_dashboard() {
+    // The regression this guards: the Dashboard rendered the adapter table but
+    // had no move_selection arm, so j/k were silently ignored there (they only
+    // worked on the Adapters screen). Now both screens share the same
+    // selection movement. Names are stored sorted, so selection starts on
+    // "alpha"; Down → "bravo", Up → back to "alpha".
+    let mut app = dashboard_app_with_adapters(&["alpha", "bravo", "charlie"]);
+    assert_eq!(app.current_screen, Screen::Dashboard);
+    assert_eq!(app.selected_adapter.as_deref(), Some("alpha"));
+
+    let mut runner = FakeRunner { calls: 0 };
+    app.on_action(Action::Down, &mut runner);
+    assert_eq!(
+        app.selected_adapter.as_deref(),
+        Some("bravo"),
+        "Down must move the Dashboard selection (was a no-op before)"
+    );
+    app.on_action(Action::Up, &mut runner);
+    assert_eq!(app.selected_adapter.as_deref(), Some("alpha"), "Up moves back");
+}

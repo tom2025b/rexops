@@ -156,7 +156,7 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tip: 'enter' surfaces selection. Press ?/h for full help popup.",
+        "Tip: 'enter' surfaces selection. Press ? for full help popup.",
         theme.dim(),
     )));
 
