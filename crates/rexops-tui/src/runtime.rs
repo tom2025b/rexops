@@ -1,13 +1,16 @@
 //! Draw/input/runtime loop for the RexOps TUI.
 
+use std::io;
+use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use crossterm::event;
 use rexops_core::OpsSnapshot;
 use suite_ui::{Theme, Tui};
 
 use crate::input::keymap::Event;
-use crate::tools::ForegroundRunner;
+use crate::tools::{ChildExit, ForegroundRunner, LaunchCommand};
 use crate::{app::App, input, ui};
 
 /// Outcome of one loop iteration: whether anything changed that needs a repaint
@@ -64,6 +67,39 @@ pub(crate) fn step(
     StepResult { dirty, quit: false }
 }
 
+struct TuiForegroundRunner<'a> {
+    tui: &'a mut Tui,
+}
+
+/// Run a foreground child program on the user's real terminal.
+///
+/// The leave→run→re-enter dance (drop out of raw mode + the alternate screen,
+/// run the child, then re-enter and clear) is owned by the shared
+/// [`suite_ui::Tui::suspended`] guard, which guarantees re-entry even if the
+/// child or a step fails — so the terminal is never left suspended. The trait
+/// lives in rexops-app; this local wrapper is what lets the TUI implement it
+/// without violating Rust's orphan rules for `suite_ui::Tui`.
+impl ForegroundRunner for TuiForegroundRunner<'_> {
+    fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit> {
+        let status: ExitStatus = self
+            .tui
+            .suspended(|| Command::new(&command.program).args(&command.args).status())??;
+        drain_pending_events()?;
+        if status.success() {
+            Ok(ChildExit::Success)
+        } else {
+            Ok(ChildExit::Status(status.to_string()))
+        }
+    }
+}
+
+fn drain_pending_events() -> io::Result<()> {
+    while event::poll(Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+    Ok(())
+}
+
 pub fn run(
     tui: &mut Tui,
     app: &mut App,
@@ -89,7 +125,8 @@ pub fn run(
         // body over it. `step` drains snapshots and the job before applying the
         // key so the most recent state is what the action sees.
         let event = input::keymap::next_event(Duration::from_millis(100))?;
-        let result = step(app, rx, event, tui);
+        let mut runner = TuiForegroundRunner { tui };
+        let result = step(app, rx, event, &mut runner);
         if result.quit {
             return Ok(());
         }

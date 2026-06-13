@@ -1,8 +1,8 @@
-//! jobs.rs — the in-TUI background job runner.
+//! process.rs — shared background job process runner.
 //!
 //! Runs a suite tool in the BACKGROUND (the opposite of `launcher.rs`, which
 //! hands the whole terminal to a foreground child) and streams its output into a
-//! pane while the TUI keeps drawing. Reader threads push output lines over an
+//! pane while the front-end keeps drawing. Reader threads push output lines over an
 //! mpsc channel; the main loop drains them every iteration with `drain_into`,
 //! which also reports when the channel has disconnected (the race-free signal
 //! that a finished job's output is complete).
@@ -253,6 +253,7 @@ pub fn spawn(id: &str, name: &str, program: &str, args: &[String]) -> Option<Job
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::thread::sleep;

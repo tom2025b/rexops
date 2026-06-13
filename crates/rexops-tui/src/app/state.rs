@@ -1,20 +1,17 @@
 //! Owned TUI state, its constructor, and its lifecycle helpers
 //! (background snapshot refresh, the activity log, display toggles).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::mpsc;
 
-use rexops_app::build_snapshot_with_piped;
+use rexops_app::{Availability, JobManager, RefreshController};
 use rexops_core::{AppConfig, OpsSnapshot};
 
 use super::Screen;
 use crate::commands::PendingAction;
-use crate::jobs::{JobHandle, JobOutput, JobRecord, LastOutcome};
-use crate::tools::{self, CATALOG};
 
 pub struct App {
     pub snapshot: OpsSnapshot,
-    pub refreshing: bool,
     pub show_help: bool,
     pub current_screen: Screen,
     pub adapter_names: Vec<String>,
@@ -38,37 +35,32 @@ pub struct App {
     pub palette_open: bool,
     pub palette_query: String,
     pub palette_selected: usize,
-    pub job: Option<JobHandle>,
-    pub job_output: VecDeque<JobOutput>,
-    /// Jobs-output scrollback offset, in lines from the BOTTOM. `0` means
-    /// "follow the bottom" — newest output stays visible as it streams. A
-    /// positive value pins the view that many lines up and pauses auto-follow
-    /// until the user scrolls back to the bottom. Clamped to the buffer so it can
-    /// never point past either end.
-    pub jobs_scroll: usize,
-    pub last_job: Option<String>,
-    pub last_outcome: Option<LastOutcome>,
-    pub job_history: VecDeque<JobRecord>,
+    /// Background-job state machine (rexops-app): owns the one job slot, its
+    /// output buffer + scrollback, the last outcome, and the bounded history. The
+    /// pure transitions live in the manager; App keeps only the UI reactions to
+    /// its results (screen switch, toast, activity log, refresh). The render path
+    /// reads `app.jobs.job` / `.output` / `.history` directly.
+    pub jobs: JobManager,
     pub toast: Option<(String, suite_ui::ToastKind)>,
-    /// Private so it can only be mutated through `set_config` / `modify_config`,
-    /// which keep `launch_availability` coherent. Read it via `config()`.
+    /// Private so it can only be mutated through `modify_config`, which keeps the
+    /// `availability` cache coherent. Read it via `config()`.
     config: AppConfig,
     pub recent_events: VecDeque<String>,
-    /// Per-catalog-tool launch availability, derived from `config` + PATH.
-    /// The Launcher redraws every ~100ms; resolving availability there would
-    /// shell out to `which` on every frame, so the render path reads this cache
-    /// instead. Its coherence with `config` is enforced structurally: `config`
-    /// is private and every write path (`set_config`, `modify_config`) refreshes
-    /// this — there is no way to change config without recomputing availability.
-    launch_availability: HashMap<&'static str, bool>,
-    /// The piped stdin captured ONCE at startup (a Workstate snapshot fed in via
-    /// a pipe), or `None` when stdin was a terminal / empty. Cloned into every
-    /// refresh thread so each refresh routes the same bytes. stdin is
-    /// consume-once: reading it per refresh would drain it after the first probe
-    /// (silent data-source flip) or block forever on a pipe that never closes —
-    /// see `rexops_app::build_snapshot`. Capturing it here is what avoids both.
-    piped_stdin: Option<String>,
-    pub(crate) tx: mpsc::Sender<OpsSnapshot>,
+    /// Launch-availability service (rexops-app): owns the per-tool config+PATH
+    /// resolvability cache the render path reads instead of shelling out to
+    /// `which` every frame. Its coherence with `config` is enforced structurally:
+    /// `config` is private and the only write path (`modify_config`) refreshes
+    /// this — config can never change without the cache being rebuilt. Live
+    /// adapter health is NOT cached here; it is passed in from `snapshot` at each
+    /// query (see the delegating helpers below).
+    availability: Availability,
+    /// Snapshot-refresh controller (rexops-app): owns the send side of the
+    /// refresh channel, the once-captured piped stdin, and the in-flight guard.
+    /// App keeps the *receiver* in the runtime loop and the snapshot itself here;
+    /// the controller only drives spawning and the guard. Reached through
+    /// `request_refresh` / `is_refreshing`; config is passed in (it stays owned by
+    /// App, bound to the availability cache) rather than duplicated in here.
+    refresh: RefreshController,
 }
 
 impl App {
@@ -80,9 +72,14 @@ impl App {
         config: AppConfig,
         piped_stdin: Option<String>,
     ) -> Self {
-        let mut app = Self {
+        // Build the availability service from the config before it is moved in;
+        // `Availability::new` populates the resolvability cache, so there is no
+        // separate refresh step here. The refresh controller takes the channel
+        // sender and the once-captured stdin.
+        let availability = Availability::new(&config);
+        let refresh = RefreshController::new(tx, piped_stdin);
+        Self {
             snapshot: OpsSnapshot::new(),
-            refreshing: false,
             show_help: false,
             current_screen: Screen::default(),
             adapter_names: Vec::new(),
@@ -95,21 +92,13 @@ impl App {
             palette_open: false,
             palette_query: String::new(),
             palette_selected: 0,
-            job: None,
-            job_output: VecDeque::new(),
-            jobs_scroll: 0,
-            last_job: None,
-            last_outcome: None,
-            job_history: VecDeque::new(),
+            jobs: JobManager::default(),
             toast: None,
             config,
             recent_events: VecDeque::from(["TUI started".to_owned()]),
-            launch_availability: HashMap::new(),
-            piped_stdin,
-            tx,
-        };
-        app.refresh_launch_availability();
-        app
+            availability,
+            refresh,
+        }
     }
 
     // --- config access (read via `config`; mutate only via `modify_config`) ---
@@ -120,9 +109,9 @@ impl App {
         &self.config
     }
 
-    /// Mutate the config in place, then refresh the launch-availability cache.
+    /// Mutate the config in place, then refresh the availability cache.
     /// `config` is private with no other writer, so this is the ONLY way config
-    /// changes — `launch_availability` can never drift from it.
+    /// changes — the cache can never drift from it.
     ///
     /// Today config is set once at construction and only read afterwards, so the
     /// sole caller is tests (hence `#[cfg(test)]`). When a production config
@@ -131,37 +120,21 @@ impl App {
     #[cfg(test)]
     pub(crate) fn modify_config(&mut self, f: impl FnOnce(&mut AppConfig)) {
         f(&mut self.config);
-        self.refresh_launch_availability();
+        self.availability.refresh(&self.config);
     }
 
-    // --- launch availability cache ---
+    // --- launch availability (delegated to the rexops-app service) ---
+    //
+    // The resolvability cache and the launchable/available/tag logic live in
+    // `rexops_app::Availability`. These thin wrappers feed it the one input it
+    // does not hold — live adapter health from `self.snapshot` — and keep the
+    // `pub(crate)` names the TUI call sites already use.
 
-    /// Recompute the cached launch availability for every catalog tool from the
-    /// current config (and PATH). Private: config is changed only through
-    /// `modify_config`, which calls this — so availability can never drift from
-    /// config. The render path reads it via `is_tool_launchable`.
-    fn refresh_launch_availability(&mut self) {
-        self.launch_availability = CATALOG
-            .iter()
-            .map(|tool| {
-                (
-                    tool.id,
-                    tools::resolve_launch_command(tool.id, self.config()).is_some(),
-                )
-            })
-            .collect();
-    }
-
-    /// Whether a catalog tool's command RESOLVES — read from the cached
-    /// config+PATH availability. This is the cheap, snapshot-independent half of
-    /// launchability (computed once; see the cache docs above). Unknown ids
-    /// (not in the catalog) read as not resolvable. Prefer `is_tool_available`
-    /// at decision points — it also folds in live adapter health.
+    /// Whether a catalog tool's command RESOLVES — the cheap, snapshot-independent
+    /// half of launchability. Prefer `is_tool_available` at decision points; it
+    /// also folds in live adapter health.
     pub(crate) fn is_tool_launchable(&self, tool_id: &str) -> bool {
-        self.launch_availability
-            .get(tool_id)
-            .copied()
-            .unwrap_or(false)
+        self.availability.is_launchable(tool_id)
     }
 
     /// Live adapter health for a catalog tool from the current snapshot, or
@@ -174,100 +147,51 @@ impl App {
             .unwrap_or(rexops_core::AdapterHealth::Unknown)
     }
 
-    /// Whether a tool should be offered for launch RIGHT NOW: its command must
-    /// resolve (cached config+PATH) AND its adapter must not be `Unavailable`.
-    ///
-    /// Health is combined here, at the decision point, rather than baked into the
-    /// cache — so the cheap once-computed resolvability cache survives and we just
-    /// add a HashMap health lookup (no `which` per frame). `Unknown` and
-    /// `Degraded` stay launchable on purpose: `Unknown` is the pre-probe state
-    /// (blocking it would make every tool unlaunchable for the first moment after
-    /// startup), and a `Degraded` tool is often exactly what you want to launch to
-    /// inspect or fix it. Only `Unavailable` — binary gone or administratively
-    /// disabled — blocks the launch.
+    /// Whether a tool should be offered for launch RIGHT NOW: command resolves
+    /// AND the adapter is not `Unavailable`. The health rule (Unknown/Degraded
+    /// stay launchable, only Unavailable blocks) lives in the service.
     pub(crate) fn is_tool_available(&self, tool_id: &str) -> bool {
-        use rexops_core::AdapterHealth;
-        self.is_tool_launchable(tool_id) && self.tool_health(tool_id) != AdapterHealth::Unavailable
+        self.availability
+            .is_available(tool_id, self.tool_health(tool_id))
     }
 
-    /// The 3-state availability tag for a catalog tool, the single source of
-    /// truth shared by every run surface (the Launcher rows and the command
-    /// palette) so they can never disagree about what's runnable:
-    ///   • available            → "streams" (Background) / "interactive" (Foreground)
-    ///   • resolvable but down   → "unavailable" (adapter health == Unavailable)
-    ///   • not resolvable at all → "disabled"
-    /// Returned without the leading "· " so each caller can frame it to taste.
-    pub(crate) fn availability_tag(&self, tool_id: &str) -> &'static str {
-        if self.is_tool_available(tool_id) {
-            if tools::is_streamable(tool_id) {
-                "streams"
-            } else {
-                "interactive"
-            }
-        } else if self.is_tool_launchable(tool_id) {
-            "unavailable"
-        } else {
-            "disabled"
-        }
+    /// The 3-state availability verdict for a catalog tool — the single source of
+    /// truth shared by every run surface (Launcher rows + command palette) so
+    /// they can never disagree. Returns the domain enum; front-end wording lives
+    /// in `crate::tools::availability_label`.
+    pub(crate) fn availability_tag(&self, tool_id: &str) -> rexops_app::AvailabilityTag {
+        self.availability.tag(tool_id, self.tool_health(tool_id))
     }
 
-    /// Test-only: override a single tool's cached availability so render-path
+    /// Test-only: override a single tool's cached resolvability so render-path
     /// tests can prove they read the cache rather than resolving live.
     #[cfg(test)]
     pub(crate) fn set_tool_launchable(&mut self, tool_id: &'static str, launchable: bool) {
-        self.launch_availability.insert(tool_id, launchable);
+        self.availability.set_launchable(tool_id, launchable);
     }
 
-    // --- snapshot refresh lifecycle ---
+    // --- snapshot refresh lifecycle (controller owns the channel + guard) ---
 
+    /// Whether a background refresh is in flight. Read on the render path to show
+    /// the "refreshing…" indicator. Delegates to the controller's guard.
+    pub fn is_refreshing(&self) -> bool {
+        self.refresh.is_refreshing()
+    }
+
+    /// Kick off a background refresh (no-op if one is already running). The
+    /// controller owns the channel + in-flight guard and does the spawn; App only
+    /// passes its config (kept here, bound to the availability cache) and logs the
+    /// request when one was actually started.
     pub fn request_refresh(&mut self) {
-        if self.refreshing {
-            return;
+        if self.refresh.request(&self.config) {
+            self.log_event("Refresh requested (background thread)");
         }
-        self.refreshing = true;
-        self.log_event("Refresh requested (background thread)");
-
-        let tx = self.tx.clone();
-        let cfg = self.config.clone();
-        // Clone the stdin captured once at startup so this thread routes the same
-        // bytes as every other refresh. We deliberately do NOT read stdin here:
-        // it is consume-once, so a per-refresh read would drain it after the first
-        // probe or block forever on a pipe that never closes (see the field doc).
-        let piped = self.piped_stdin.clone();
-
-        std::thread::spawn(move || {
-            // `refreshing` is only ever cleared when a snapshot arrives over the
-            // channel (apply_snapshot). If build_snapshot panicked, the thread
-            // would unwind before sending, no snapshot would arrive, and the flag
-            // would stay set forever — silently bricking `r`. Catch the unwind so
-            // a panicking probe still delivers a snapshot and the flag always
-            // clears. The fallback carries a NOTE (panicked_snapshot) so the crash
-            // is visible on the Dashboard/log rather than reading as a normal
-            // empty "nothing probed yet" state.
-            let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_snapshot_with_piped(&cfg, piped.as_deref())
-            }))
-            .unwrap_or_else(|_| Self::panicked_snapshot());
-            let _ = tx.send(snapshot);
-        });
-    }
-
-    /// The fallback snapshot delivered when an adapter probe panics mid-refresh.
-    /// It is empty (no probe data survived the unwind) but carries a note so the
-    /// failure surfaces in the Dashboard Messages pane / activity log instead of
-    /// looking identical to a never-probed state — a silent crash is the worst
-    /// outcome for an ops tool. Every other build_snapshot path already reports
-    /// via notes; this keeps the panic path consistent.
-    pub(crate) fn panicked_snapshot() -> OpsSnapshot {
-        let mut snap = OpsSnapshot::new();
-        snap.panicked = true;
-        snap.add_note("refresh failed: an adapter probe panicked — partial/empty results");
-        snap
     }
 
     pub fn apply_snapshot(&mut self, snapshot: OpsSnapshot) {
         self.snapshot = snapshot;
-        self.refreshing = false;
+        // Clear the controller's in-flight guard now the snapshot has landed.
+        self.refresh.mark_applied();
         let mut names: Vec<String> = self
             .snapshot
             .adapter_health

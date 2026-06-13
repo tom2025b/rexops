@@ -1,15 +1,15 @@
-//! launcher.rs — TUI launch orchestration for specialist tools.
+//! launcher.rs — launch orchestration for specialist tools.
 //!
-//! This module decides *what* to launch and how to report the result. It does
-//! not own terminal state; the caller supplies a ForegroundRunner that knows
-//! how to suspend/restore the TUI around a child process.
+//! This module decides what to launch and how to report the result. It does not
+//! own terminal state; the caller supplies a ForegroundRunner that knows how to
+//! suspend/restore its UI around a child process.
 
 use std::io;
 use std::process::Command;
 
 use rexops_core::AppConfig;
 
-use rexops_app::tools::catalog;
+use super::catalog;
 
 /// Small abstraction over "run this with the user's real terminal".
 pub trait ForegroundRunner {
@@ -166,6 +166,7 @@ fn command_from_config(tool_id: &str, config: &AppConfig) -> Option<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use rexops_core::AdapterConfig;
 

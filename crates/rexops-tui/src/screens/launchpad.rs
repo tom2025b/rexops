@@ -85,7 +85,10 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
     // The 3-state tag is computed by App::availability_tag — the single source
     // of truth shared with the command palette, so the two run surfaces can
     // never disagree. We frame it with the leading "· " the rows use.
-    let tag = format!("· {}", app.availability_tag(tool.id));
+    let tag = format!(
+        "· {}",
+        crate::tools::availability_label(app.availability_tag(tool.id))
+    );
 
     let name = format!("{:<width$}", tool.name, width = NAME_COL);
     let name_span = if selected {

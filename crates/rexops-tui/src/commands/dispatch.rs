@@ -44,7 +44,8 @@ impl App {
         // before you pick it, instead of silently no-op'ing on Enter.
         for cmd in &mut cmds {
             if let Command::RunTool { id, .. } = &cmd.command {
-                cmd.desc = format!("{} · {}", cmd.desc, self.availability_tag(id));
+                let label = tools::availability_label(self.availability_tag(id));
+                cmd.desc = format!("{} · {}", cmd.desc, label);
             }
         }
         cmds
