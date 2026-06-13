@@ -10,7 +10,7 @@ use crate::jobs::LastOutcome;
 
 fn app_on(screen: Screen) -> App {
     let (tx, _rx) = mpsc::channel();
-    let mut app = App::new(tx, AppConfig::default());
+    let mut app = App::new(tx, AppConfig::default(), None);
     app.current_screen = screen;
     app
 }
@@ -40,7 +40,10 @@ fn a_pending_action_overrides_the_screen_hints_with_confirm() {
         id: "x".to_owned(),
         name: "x".to_owned(),
     });
-    assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    assert_eq!(
+        screen_hints(&app),
+        &[("Enter/y", "run"), ("n/Esc", "cancel")]
+    );
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn confirm_takes_precedence_over_an_open_palette() {
         id: "x".to_owned(),
         name: "x".to_owned(),
     });
-    assert_eq!(screen_hints(&app), &[("Enter", "run"), ("Esc", "cancel")]);
+    assert_eq!(
+        screen_hints(&app),
+        &[("Enter/y", "run"), ("n/Esc", "cancel")]
+    );
 }
 
 fn footer_text(app: &App) -> String {

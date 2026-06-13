@@ -37,8 +37,19 @@ fn palette_opens_filters_and_dispatches_navigation() {
 #[test]
 fn palette_run_tool_arms_confirm_without_spawning() {
     // Choosing a `run <tool>` command in the palette must arm the SAME
-    // confirm gate as the Launcher — never spawn directly.
+    // confirm gate as the Launcher when the tool has a command — never spawn
+    // directly.
     let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/scripts".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::OpenPalette, &mut runner);
@@ -64,6 +75,35 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     );
     assert_eq!(runner.calls, 0, "arming must not spawn");
     assert!(app.job.is_none(), "must not start a job before confirm");
+}
+
+#[test]
+fn palette_run_disabled_tool_does_not_open_confirm() {
+    let mut app = launcher_app();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::OpenPalette, &mut runner);
+    for c in "run scripts".chars() {
+        app.on_action(Action::InputChar(c), &mut runner);
+    }
+    let pos = app
+        .palette_commands()
+        .iter()
+        .position(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    app.palette_selected = pos;
+    app.on_action(Action::Activate, &mut runner);
+
+    assert!(!app.palette_open, "dispatch closes the palette");
+    assert!(
+        app.pending_action.is_none(),
+        "disabled palette run must not open the confirm modal"
+    );
+    assert_eq!(runner.calls, 0, "disabled command must not spawn");
+    assert!(app
+        .recent_events
+        .iter()
+        .any(|e| e == "Scripts: disabled (no launch command)"));
 }
 
 #[test]
@@ -95,4 +135,63 @@ fn palette_does_not_open_while_confirm_pending() {
         "palette must not open over the confirm modal"
     );
     assert!(app.pending_action.is_some(), "pending must be untouched");
+}
+
+#[test]
+fn palette_run_rows_carry_the_availability_tag() {
+    // A run-surface consistency guard: the palette must annotate each
+    // `run <tool>` row with the same availability the Launcher screen shows, so
+    // a disabled/down tool reads as such BEFORE it is picked (rather than
+    // silently no-op'ing on Enter). Under default config no binary resolves, so
+    // every tool reads "disabled".
+    let app = launcher_app();
+    let cmds = app.palette_commands();
+    let scripts = cmds
+        .iter()
+        .find(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    assert!(
+        scripts.desc.ends_with("· disabled"),
+        "an unresolvable tool's palette row must be tagged disabled, got: {:?}",
+        scripts.desc
+    );
+    // A pure navigation row must NOT get a run tag.
+    let nav = cmds
+        .iter()
+        .find(|c| c.label == "dashboard")
+        .expect("nav present");
+    assert!(
+        !nav.desc.contains("· disabled"),
+        "navigation rows must not carry a run availability tag: {:?}",
+        nav.desc
+    );
+}
+
+#[test]
+fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
+    // Configure scripts with a resolvable binary; its palette row must flip from
+    // "disabled" to its run-mode tag ("streams", since scripts is Background) —
+    // proving the tag is live, not fixed. We point at a real binary on PATH so
+    // resolution succeeds.
+    let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/bin/sh".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    let cmds = app.palette_commands();
+    let scripts = cmds
+        .iter()
+        .find(|c| c.label == "run scripts")
+        .expect("run scripts present");
+    assert!(
+        scripts.desc.ends_with("· streams"),
+        "a configured Background tool must read streams, got: {:?}",
+        scripts.desc
+    );
 }

@@ -24,14 +24,19 @@
 //!
 //! Callers:
 //! - rexops-cli uses load_config + build_snapshot + build_adapter_registry.
-//! - rexops-tui uses load_config + build_snapshot (inside refresh threads).
+//!   It is one-shot, so `build_snapshot` reading stdin inline is correct.
+//! - rexops-tui uses load_config + read_piped_stdin (once, at startup) +
+//!   build_snapshot_with_piped (inside each refresh thread, fed the captured
+//!   stdin). It must never read stdin per refresh — stdin is consume-once.
 
 mod config;
 mod snapshot;
 
 // Re-export the primary public surface in a flat namespace.
 pub use config::load_config;
-pub use snapshot::{build_adapter_registry, build_snapshot};
+pub use snapshot::{
+    build_adapter_registry, build_snapshot, build_snapshot_with_piped, read_piped_stdin,
+};
 
 // Re-export a few core types that callers often need alongside the builders
 // so they don't have to add an extra direct dependency on rexops-core just for

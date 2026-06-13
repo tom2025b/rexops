@@ -15,11 +15,11 @@ path = "src/main.rs"
 
 [dependencies]
 # clap with derive for structopt-style commands — standard for modern Rust CLIs.
-clap = { version = "4.5", features = ["derive"] }
+clap = { workspace = true }
 # For --json output of snapshots etc. Core already re-exports what we need.
-serde_json = "1.0"
+serde_json = { workspace = true }
 # For loading the YAML config (as in examples/config.yaml and AppConfig).
-serde_yaml = "0.9"
+serde_yaml = { workspace = true }
 
 # Thin dependencies — cli owns almost no logic.
 # We depend on rexops-app for the shared load_config / build_snapshot /

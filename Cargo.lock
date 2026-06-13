@@ -455,6 +455,7 @@ dependencies = [
 name = "rexops-adapters"
 version = "0.1.0"
 dependencies = [
+ "rexops-core",
  "serde",
  "serde_json",
  "thiserror",
@@ -485,7 +486,6 @@ dependencies = [
 name = "rexops-core"
 version = "0.1.0"
 dependencies = [
- "rexops-adapters",
  "serde",
  "serde_json",
  "thiserror",
@@ -664,7 +664,7 @@ dependencies = [
 [[package]]
 name = "suite-ui"
 version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=25782d1b54434788a38201a459a4ac0714e206df#25782d1b54434788a38201a459a4ac0714e206df"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=f800520087cdaae59861897ca02a97d388927b25#f800520087cdaae59861897ca02a97d388927b25"
 dependencies = [
  "crossterm",
  "ratatui",

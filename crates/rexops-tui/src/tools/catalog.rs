@@ -14,6 +14,7 @@ pub struct ToolEntry {
     pub name: &'static str,
     pub description: &'static str,
     pub run_mode: RunMode,
+    pub launch_args: &'static [&'static str],
 }
 
 pub const CATALOG: &[ToolEntry] = &[
@@ -22,30 +23,35 @@ pub const CATALOG: &[ToolEntry] = &[
         name: "Bulwark",
         description: "Content/security inspection (live scan)",
         run_mode: RunMode::Foreground,
+        launch_args: &["tui"],
     },
     ToolEntry {
         id: "proto",
         name: "Proto",
         description: "Guided protocol / checklist runner (interactive)",
         run_mode: RunMode::Foreground,
+        launch_args: &[],
     },
     ToolEntry {
         id: "scripts",
         name: "Scripts",
         description: "Script inventory from Workstate",
         run_mode: RunMode::Background,
+        launch_args: &[],
     },
     ToolEntry {
         id: "tools",
         name: "Tools",
         description: "Tool ownership & lifecycle from Workstate",
         run_mode: RunMode::Background,
+        launch_args: &[],
     },
     ToolEntry {
         id: "workstate",
         name: "Workstate",
         description: "Snapshot source of truth",
         run_mode: RunMode::Background,
+        launch_args: &[],
     },
 ];
 

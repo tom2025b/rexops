@@ -12,36 +12,50 @@
 //! side-effecting work (executing adapter probes). Core stays pure data.
 
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
-use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, RiskSummary};
+use rexops_core::{
+    status_to_health, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, Provenance,
+    RiskSummary, WorkstateInfo,
+};
 
-/// Build a live OpsSnapshot by probing adapters that are enabled in config.
+/// Build a live OpsSnapshot by probing adapters that are enabled in config,
+/// reading the piped stdin (if any) inline.
+///
+/// This is the entry point for **one-shot** callers like `rexops status`: stdin
+/// is a process-lifetime resource that can only be consumed once, so reading it
+/// here is correct for a command that builds exactly one snapshot and exits.
+///
+/// Long-lived callers that refresh repeatedly (the TUI) must NOT use this — a
+/// second call would find stdin already drained (silent data-source flip) or, on
+/// a pipe that never closes, block forever on the read and never deliver a
+/// snapshot. They read stdin once at startup with [`read_piped_stdin`] and pass
+/// the captured bytes to [`build_snapshot_with_piped`] on every refresh instead.
 ///
 /// Respects the per-adapter `enabled` flag (default true when key absent).
-/// Always adds a final "config loaded" note.
-/// Populates first-class structured fields from system probes and Workstate,
-/// plus notes for the dashboard/logs. Workstate is the only snapshot input for
-/// scripts/tools/findings.
-///
-/// This is the single implementation used by both `rexops status` and the TUI
-/// refresh thread.
+/// Always adds a final "config loaded" note. Populates first-class structured
+/// fields from system probes and Workstate, plus notes for the dashboard/logs.
+/// Workstate is the only snapshot input for scripts/tools/findings.
 pub fn build_snapshot(config: &AppConfig) -> OpsSnapshot {
     // Thin wrapper: read the single piped stdin (if any), then delegate. The
     // delegate is stdin-free so it can be unit-tested by passing the bytes in.
     build_snapshot_with_piped(config, read_piped_stdin().as_deref())
 }
 
-/// Core of `build_snapshot`, with the piped-stdin bytes (if any) passed in. Kept
-/// separate so the snapshot-routing glue is testable without touching real stdin or
-/// the filesystem.
-fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnapshot {
+/// Build a snapshot from an explicitly supplied piped-stdin blob (or `None`).
+///
+/// This is the **repeatable** builder: it touches neither stdin nor process
+/// global state, so a caller can invoke it as many times as it likes with the
+/// same captured bytes and get identical routing every time. The TUI uses it on
+/// every refresh, passing the stdin it captured once at startup — which is what
+/// keeps every refresh seeing the same data source and never blocking on a
+/// re-read. Also the unit-test seam for the snapshot-routing glue.
+pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnapshot {
     let mut snap = OpsSnapshot::new();
 
     // Bulwark: only probe if enabled in config (defaults to true if absent).
-    let bul_enabled = config.adapters.get("bulwark").map_or(true, |c| c.enabled);
-    if bul_enabled {
+    if config.adapter_enabled("bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
-        if let Ok(id) = AdapterId::new(bul.binary()) {
+        if let Ok(id) = AdapterId::new("bulwark") {
             snap.set_adapter_health(&id, health);
 
             if health.is_available() {
@@ -58,8 +72,7 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
     }
 
     // System: respect enabled (default true). Lightweight, always works.
-    let sys_enabled = config.adapters.get("system").map_or(true, |c| c.enabled);
-    if sys_enabled {
+    if config.adapter_enabled("system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -87,8 +100,7 @@ fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> OpsSnap
     // input is accepted only when it is a recognized Workstate snapshot; any
     // other piped blob is ignored rather than falling back to another path.
     let route = piped.map(classify_snapshot);
-    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
-    if ws_enabled {
+    if config.adapter_enabled("workstate") {
         match (piped, route) {
             (Some(text), Some(SnapshotKind::Workstate)) => {
                 populate_workstate(&mut snap, Some(text.to_owned()));
@@ -116,7 +128,12 @@ enum SnapshotKind {
 
 /// Read piped stdin once. Returns Some(text) only when stdin is NOT a terminal
 /// (i.e. content was piped in) and is non-empty. Errors and empty pipes → None.
-fn read_piped_stdin() -> Option<String> {
+///
+/// Public so long-lived front-ends can capture the pipe a single time at
+/// startup and then feed the captured bytes to [`build_snapshot_with_piped`] on
+/// every refresh — stdin is consume-once, so reading it per refresh is a bug
+/// (see the `build_snapshot` docs).
+pub fn read_piped_stdin() -> Option<String> {
     use std::io::{IsTerminal, Read};
     if std::io::stdin().is_terminal() {
         return None;
@@ -155,10 +172,10 @@ fn note_section_freshness(
     label: &str,
     adapter_id: &str,
     status: &str,
-    provenance: &rexops_adapters::Provenance,
+    provenance: &Provenance,
 ) {
     if let Ok(id) = AdapterId::new(adapter_id) {
-        snap.set_adapter_health(&id, rexops_adapters::status_to_health(status));
+        snap.set_adapter_health(&id, status_to_health(status));
     }
     match provenance.source_observed_at.as_deref() {
         Some(src) => snap.add_note(format!("{label}: {status} (source observed {src})")),
@@ -216,7 +233,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
 }
 
 /// Fold the snapshot's `tools` section into `snap.tools` (+ freshness/notes).
-fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_tools(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(tools) = &info.tools.data else {
         return;
     };
@@ -249,7 +266,7 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) 
 }
 
 /// Fold the snapshot's `scripts` section into `snap.scripts` (+ freshness/notes).
-fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(scripts) = &info.scripts.data else {
         return;
     };
@@ -271,7 +288,7 @@ fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo
 }
 
 /// Fold the snapshot's `findings` section into `snap.findings` and merge its risk.
-fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_findings(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(findings) = &info.findings.data else {
         return;
     };
@@ -325,8 +342,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
 pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
     let mut reg = AdapterRegistry::new();
 
-    let bul_enabled = config.adapters.get("bulwark").map_or(true, |c| c.enabled);
-    if bul_enabled {
+    if config.adapter_enabled("bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
         if let Ok(id) = AdapterId::new("bulwark") {
@@ -338,8 +354,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    let sys_enabled = config.adapters.get("system").map_or(true, |c| c.enabled);
-    if sys_enabled {
+    if config.adapter_enabled("system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -351,8 +366,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    let ws_enabled = config.adapters.get("workstate").map_or(true, |c| c.enabled);
-    if ws_enabled {
+    if config.adapter_enabled("workstate") {
         let ws = WorkstateAdapter::new();
         let ws_health = ws.health();
         if let Ok(id) = AdapterId::new("workstate") {
@@ -459,5 +473,34 @@ mod tests {
         assert!(snap.tools.is_none());
         assert!(snap.scripts.is_none());
         assert!(snap.findings.is_none());
+    }
+
+    #[test]
+    fn repeated_calls_with_the_same_piped_bytes_route_identically() {
+        // The TUI captures stdin once and feeds the SAME bytes to every refresh.
+        // build_snapshot_with_piped must therefore be a pure function of its
+        // (config, piped) inputs — calling it twice with the same Workstate blob
+        // must populate the structured fields BOTH times. The regression this
+        // guards is the old `build_snapshot` reading stdin inline: a second call
+        // found the pipe drained and silently fell back to the no-stdin path, so
+        // refresh #2 lost the data source that refresh #1 had.
+        let cfg = workstate_only_config();
+        let first = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
+        let second = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
+
+        assert!(first.workstate.is_some(), "first call routes the snapshot");
+        assert!(
+            second.workstate.is_some(),
+            "second call with the same bytes must route identically — not fall back to empty"
+        );
+        assert_eq!(
+            first.tools.is_some(),
+            second.tools.is_some(),
+            "tools routing must be stable across repeated calls"
+        );
+        assert_eq!(
+            first.risk.critical, second.risk.critical,
+            "merged risk must be identical across repeated calls"
+        );
     }
 }

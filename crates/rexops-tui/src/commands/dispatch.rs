@@ -7,7 +7,7 @@ use super::{Command, PaletteCommand};
 use crate::app::App;
 use crate::tools::{self, ForegroundRunner};
 
-/// A mutating action armed behind the Enter/Esc confirm gate.
+/// A mutating action armed behind the Enter/y or n/Esc confirm gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     LaunchTool { id: String, name: String },
@@ -26,8 +26,8 @@ impl PendingAction {
         let id = match self {
             PendingAction::LaunchTool { id, .. } | PendingAction::RunJob { id, .. } => id,
         };
-        match tools::resolve_command(id, config) {
-            Some(command) => format!("Will run:  {command}"),
+        match tools::resolve_launch_command(id, config) {
+            Some(command) => format!("Will run:  {}", command.display()),
             None => "No launch command yet (nothing will run)".to_owned(),
         }
     }
@@ -35,13 +35,28 @@ impl PendingAction {
 
 impl App {
     pub fn palette_commands(&self) -> Vec<PaletteCommand> {
-        super::palette::filter(&self.palette_query)
+        let mut cmds = super::palette::filter(&self.palette_query);
+        // Annotate each `run <tool>` row with its live availability, mirroring
+        // the Launcher screen's 3-state tag so the two run surfaces never
+        // disagree. The palette command set itself stays pure (no App); the tag
+        // is folded in here, where the App's availability is in hand. Tools stay
+        // listed even when down — a disabled/unavailable tool reads as such
+        // before you pick it, instead of silently no-op'ing on Enter.
+        for cmd in &mut cmds {
+            if let Command::RunTool { id, .. } = &cmd.command {
+                cmd.desc = format!("{} · {}", cmd.desc, self.availability_tag(id));
+            }
+        }
+        cmds
     }
 
     pub(crate) fn open_palette(&mut self) {
         if self.pending_action.is_some() {
             return;
         }
+        // The palette is its own text-input context; end any inline filter
+        // capture so closing the palette doesn't silently resume filtering.
+        self.filtering = false;
         self.palette_open = true;
         self.palette_query.clear();
         self.palette_selected = 0;
@@ -83,6 +98,19 @@ impl App {
     }
 
     pub(crate) fn arm_tool(&mut self, id: String, name: String) {
+        if tools::resolve_launch_command(&id, self.config()).is_none() {
+            self.log_event(format!("{name}: disabled (no launch command)"));
+            return;
+        }
+        // Health-aware gate: even when the command resolves, refuse to open the
+        // confirm gate for a tool whose adapter probe reports it Unavailable —
+        // matching the launcher's "· unavailable" tag so the UI never invites a
+        // launch it just flagged as down. (Unknown/Degraded still arm: see
+        // App::is_tool_available.)
+        if !self.is_tool_available(&id) {
+            self.log_event(format!("{name}: unavailable (adapter reports it is down)"));
+            return;
+        }
         self.pending_action = Some(if tools::is_streamable(&id) {
             PendingAction::RunJob {
                 id,
@@ -94,7 +122,7 @@ impl App {
                 name: name.clone(),
             }
         });
-        self.log_event(format!("{name}: confirm (Enter) or cancel (Esc)"));
+        self.log_event(format!("{name}: confirm (Enter/y) or cancel (n/Esc)"));
     }
 
     pub(crate) fn confirm_pending(&mut self, runner: &mut impl ForegroundRunner) {
@@ -103,7 +131,7 @@ impl App {
         };
         match action {
             PendingAction::LaunchTool { id, name } => {
-                let report = tools::launch_tool(&id, &name, &self.config, runner);
+                let report = tools::launch_tool(&id, &name, self.config(), runner);
                 self.log_event(report.message());
                 if report.should_refresh() {
                     self.request_refresh();

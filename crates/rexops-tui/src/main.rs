@@ -22,8 +22,10 @@
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
+use std::time::Duration;
 
-use rexops_app::load_config;
+use crossterm::event;
+use rexops_app::{load_config, read_piped_stdin};
 use suite_ui::{ColorChoice, Theme, ThemeChoice, Tui, TuiOptions};
 
 mod app;
@@ -36,11 +38,20 @@ mod tools;
 mod ui;
 
 use app::App;
-use tools::{ChildExit, ForegroundRunner};
+use tools::{ChildExit, ForegroundRunner, LaunchCommand};
 
 /// Entry point. We return a Result so that any setup error is reported after
 /// we have done our best to restore the terminal.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Capture any piped stdin ONCE, before we touch the terminal. A Workstate
+    // snapshot can be fed in via a pipe (`workstate snapshot | rexops-tui`);
+    // stdin is consume-once, so the TUI reads it a single time here and hands the
+    // captured bytes to every refresh thread, rather than re-reading per refresh
+    // (which would drain it after the first probe, or block forever on a pipe
+    // that never closes). Done first, in cooked mode, so the blocking read never
+    // races terminal setup. `None` when stdin is a tty / empty.
+    let piped_stdin = read_piped_stdin();
+
     // Enter TUI mode via the shared suite guard. `Tui` owns terminal setup
     // (raw mode + alternate screen + cursor-hide), installs the panic hook that
     // restores the terminal before the default handler runs, and — via its
@@ -66,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the application state. We start with a fresh empty snapshot and
     // immediately kick off one background refresh so the user sees live data
     // without having to press 'r' first.
-    let mut app = App::new(tx, config);
+    let mut app = App::new(tx, config, piped_stdin);
     app.request_refresh(); // initial probe on startup
 
     // Resolve the shared suite theme once: cyan accent, colour on unless
@@ -92,12 +103,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// replaces RexOps' hand-rolled suspend_terminal_for_child /
 /// resume_terminal_after_child / run_foreground_child trio.
 impl ForegroundRunner for Tui {
-    fn run_foreground(&mut self, command: &str) -> io::Result<ChildExit> {
-        let status: ExitStatus = self.suspended(|| Command::new(command).status())??;
+    fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit> {
+        let status: ExitStatus =
+            self.suspended(|| Command::new(&command.program).args(&command.args).status())??;
+        drain_pending_events()?;
         if status.success() {
             Ok(ChildExit::Success)
         } else {
             Ok(ChildExit::Status(status.to_string()))
         }
     }
+}
+
+fn drain_pending_events() -> io::Result<()> {
+    while event::poll(Duration::from_millis(0))? {
+        let _ = event::read()?;
+    }
+    Ok(())
 }

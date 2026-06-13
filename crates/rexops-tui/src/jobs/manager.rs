@@ -54,20 +54,27 @@ impl App {
             ));
             return;
         }
-        let Some(command) = tools::resolve_command(id, &self.config) else {
+        // Resolve the FULL command — program plus catalog args — through the same
+        // entry point the confirm-gate preview rendered, so the job runs exactly
+        // what the user approved. Resolving only the program here (as before) and
+        // dropping the args would silently diverge from the preview the moment a
+        // background tool needs a subcommand.
+        let Some(command) = tools::resolve_launch_command(id, self.config()) else {
             self.log_event(format!("{name} has no launch command yet"));
             return;
         };
-        match super::spawn(name, &command) {
+        let display = command.display();
+        match super::spawn(name, &command.program, &command.args) {
             Some(handle) => {
                 self.job_output.clear();
+                self.jobs_scroll = 0; // fresh output → follow the bottom
                 self.last_job = None;
                 self.last_outcome = None;
                 self.current_screen = Screen::Jobs;
-                self.log_event(format!("{name}: job started ({command})"));
+                self.log_event(format!("{name}: job started ({display})"));
                 self.job = Some(handle);
             }
-            None => self.log_event(format!("{name}: failed to start ({command})")),
+            None => self.log_event(format!("{name}: failed to start ({display})")),
         }
     }
 
@@ -100,17 +107,42 @@ impl App {
         self.job_output.push_back(out);
     }
 
-    pub fn poll_job(&mut self) {
+    /// Scroll the Jobs output. `up` moves toward older lines (increasing the
+    /// from-bottom offset), `down` toward newer; reaching `0` resumes auto-follow.
+    /// The offset is clamped to the buffer so it can never point past the top.
+    pub(crate) fn scroll_jobs_output(&mut self, up: bool) {
+        if up {
+            // Never scroll so far the whole pane would be above the buffer; one
+            // line must always remain. Render clamps further to the actual pane.
+            let max = self.job_output.len().saturating_sub(1);
+            self.jobs_scroll = (self.jobs_scroll + 1).min(max);
+        } else {
+            self.jobs_scroll = self.jobs_scroll.saturating_sub(1);
+        }
+    }
+
+    /// Poll the running job for new output and completion. Returns `true` if
+    /// anything changed that the UI must repaint — new output lines arrived, or
+    /// the job finished — and `false` when there was nothing to do (no job, or a
+    /// running job that produced nothing this tick). The runtime uses this to
+    /// avoid redrawing an idle frame.
+    pub fn poll_job(&mut self) -> bool {
         let Some(job) = self.job.as_mut() else {
-            return;
+            return false;
         };
 
         let mut scratch = Vec::new();
         let drained = job.drain_into(&mut scratch);
         let exited = job.poll_done();
+        let got_output = !scratch.is_empty();
         for out in scratch {
             self.push_job_output(out);
         }
+        // Auto-follow: when scrolled to the bottom (jobs_scroll == 0) new output
+        // simply stays visible. When scrolled up it holds its offset; the render
+        // clamps it to the buffer. We deliberately keep this simple — no
+        // pin-against-front-pop bookkeeping; a little drift while scrolled up is
+        // fine.
 
         if let (Some(exit), true) = (exited, drained) {
             let job = self.job.as_ref().expect("job present while finishing");
@@ -145,18 +177,22 @@ impl App {
             self.log_event(summary.clone());
             self.last_job = Some(summary.clone());
             self.last_outcome = Some(outcome.clone());
-            self.job_history.push(JobRecord {
+            self.job_history.push_back(JobRecord {
                 name: name.clone(),
                 outcome: outcome.clone(),
                 summary,
             });
             if self.job_history.len() > JOB_HISTORY_CAP {
-                self.job_history.remove(0);
+                self.job_history.pop_front();
             }
             self.toast = Some(toast_for(&outcome));
             self.job = None;
             self.request_refresh();
+            return true; // job finished — header/history/toast all changed
         }
+
+        // Still running: a repaint is only needed if output actually arrived.
+        got_output
     }
 
     pub(crate) fn cancel_job(&mut self) {

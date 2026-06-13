@@ -14,14 +14,18 @@ fn select_tool(app: &mut App, id: &str) {
 /// path these runner-based tests exercise.
 pub(super) fn launcher_app_with_proto() -> App {
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "proto".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/proto".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    // modify_config refreshes the launch-availability cache for us — the cache
+    // can't drift from config because config is only reachable through it.
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/proto".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "proto");
     app
 }
@@ -49,8 +53,19 @@ fn activate_on_launcher_arms_foreground_tool_without_spawning() {
 #[test]
 fn activate_on_launcher_arms_streamable_tool_as_a_job() {
     // A non-interactive tool (scripts) must arm a RunJob — the background,
-    // streamed path — rather than a foreground LaunchTool.
+    // streamed path — rather than a foreground LaunchTool. The command is
+    // pinned so this tests the enabled streamable path, not disabled UX.
     let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/scripts".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
@@ -65,6 +80,26 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
         "a streamable tool must arm a background job"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn a process");
+}
+
+#[test]
+fn activate_on_disabled_launcher_entry_does_not_open_confirm() {
+    let mut app = launcher_app();
+    select_tool(&mut app, "scripts");
+    let mut runner = FakeRunner { calls: 0 };
+
+    let quit = app.on_action(Action::Activate, &mut runner);
+
+    assert!(!quit);
+    assert_eq!(runner.calls, 0, "disabled rows must not spawn");
+    assert!(
+        app.pending_action.is_none(),
+        "disabled rows must not open the confirm modal"
+    );
+    assert!(app
+        .recent_events
+        .iter()
+        .any(|e| e == "Scripts: disabled (no launch command)"));
 }
 
 #[test]
@@ -94,14 +129,16 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
     // spawn fails and is reported — but the runner must never be touched, and
     // no job handle is left dangling.
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "scripts".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/definitely-not-executable".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/definitely-not-executable".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
@@ -138,6 +175,32 @@ fn cancel_discards_pending_action_without_spawning() {
 }
 
 #[test]
+fn n_discards_pending_action_without_escape() {
+    let mut app = launcher_app_with_proto();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::Activate, &mut runner); // arm
+    let quit = app.on_action(Action::InputChar('n'), &mut runner); // cancel
+
+    assert!(!quit, "n must cancel a pending action");
+    assert_eq!(runner.calls, 0, "cancel must not spawn a process");
+    assert!(app.pending_action.is_none(), "pending must be cleared");
+}
+
+#[test]
+fn y_confirms_pending_action_without_enter() {
+    let mut app = launcher_app_with_proto();
+    let mut runner = FakeRunner { calls: 0 };
+
+    app.on_action(Action::Activate, &mut runner); // arm
+    let quit = app.on_action(Action::InputChar('y'), &mut runner); // confirm
+
+    assert!(!quit, "y must confirm a pending action");
+    assert_eq!(runner.calls, 1, "confirm must run exactly once");
+    assert!(app.pending_action.is_none(), "pending must be cleared");
+}
+
+#[test]
 fn other_keys_are_swallowed_while_pending() {
     // The modal is modal: any non-confirm/cancel key while pending is
     // ignored. It must not navigate, must not spawn, and must leave the
@@ -169,20 +232,22 @@ fn preview_shows_resolved_command_or_no_command() {
     // would win and make the assertion environment-dependent (same reason
     // the launcher.rs tests use a fake id).
     let mut app = launcher_app();
-    app.config.adapters.insert(
-        "definitely-not-a-real-tool-xyz".to_owned(),
-        rexops_core::AdapterConfig {
-            enabled: true,
-            binary: Some("/tmp/fake-tool".to_owned()),
-            timeout_secs: None,
-        },
-    );
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "definitely-not-a-real-tool-xyz".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/fake-tool".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
 
     let launch = PendingAction::LaunchTool {
         id: "definitely-not-a-real-tool-xyz".to_owned(),
         name: "FakeTool".to_owned(),
     };
-    assert_eq!(launch.preview(&app.config), "Will run:  /tmp/fake-tool");
+    assert_eq!(launch.preview(app.config()), "Will run:  /tmp/fake-tool");
 
     let feed_only = PendingAction::LaunchTool {
         // A different id that is never on PATH and has no config binary.
@@ -190,7 +255,7 @@ fn preview_shows_resolved_command_or_no_command() {
         name: "Workstate".to_owned(),
     };
     assert_eq!(
-        feed_only.preview(&app.config),
+        feed_only.preview(app.config()),
         "No launch command yet (nothing will run)"
     );
 }
@@ -229,8 +294,18 @@ fn launcher_esc_goes_back_to_dashboard_not_quit() {
 fn launcher_enter_arms_the_selected_tool() {
     // Activate on the Launcher must arm a PendingAction for the *selected*
     // catalog tool, carrying that tool's id and name, and must not spawn.
-    // `tools` is non-interactive → it arms a RunJob.
+    // `tools` is non-interactive → it arms a RunJob once a command exists.
     let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "tools".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/tools".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
     select_tool(&mut app, "tools");
     let entry = &CATALOG[app.selected_tool];
     let mut runner = FakeRunner { calls: 0 };
@@ -246,6 +321,78 @@ fn launcher_enter_arms_the_selected_tool() {
         "Activate must arm the selected tool"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn a process");
+}
+
+#[test]
+fn is_tool_available_requires_resolvable_and_not_unavailable() {
+    use rexops_core::AdapterHealth;
+    let mut app = launcher_app();
+    // Make `proto` resolvable via the cache, holding config+PATH constant so the
+    // test isolates the health contribution.
+    app.set_tool_launchable("proto", true);
+
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+    assert!(
+        !app.is_tool_available("proto"),
+        "resolvable + Unavailable must be unavailable"
+    );
+
+    for h in [
+        AdapterHealth::Healthy,
+        AdapterHealth::Degraded,
+        AdapterHealth::Unknown,
+    ] {
+        app.snapshot.adapter_health.insert("proto".to_owned(), h);
+        assert!(
+            app.is_tool_available("proto"),
+            "resolvable + {h:?} must stay available"
+        );
+    }
+
+    // Not resolvable → never available, regardless of health.
+    app.set_tool_launchable("proto", false);
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Healthy);
+    assert!(
+        !app.is_tool_available("proto"),
+        "an unresolvable tool is never available even when Healthy"
+    );
+}
+
+#[test]
+fn arm_tool_refuses_an_unavailable_tool_and_opens_no_confirm() {
+    use rexops_core::AdapterHealth;
+    // A tool can resolve (pinned binary) yet have its adapter report Unavailable.
+    // Arming it must NOT open the confirm gate — matching the launcher's
+    // "· unavailable" tag — and must log why.
+    let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/proto".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    app.snapshot
+        .adapter_health
+        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+
+    app.arm_tool("proto".to_owned(), "Proto".to_owned());
+
+    assert!(
+        app.pending_action.is_none(),
+        "an Unavailable tool must not open the confirm gate"
+    );
+    assert!(
+        app.recent_events.iter().any(|e| e.contains("unavailable")),
+        "arming an Unavailable tool must log why"
+    );
 }
 
 // --- command palette ----------------------------------------------------

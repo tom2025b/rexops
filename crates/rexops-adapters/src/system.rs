@@ -6,34 +6,12 @@
 //!
 //! Gives the TUI and CLI local host facts for the ops cockpit.
 
-use serde::{Deserialize, Serialize};
-
 use crate::adapter::Adapter;
 use crate::error::AdapterError;
 use crate::exec::{run_optional, DEFAULT_TIMEOUT};
 use crate::types::{AdapterHealth, AdapterOutput};
 
-/// Basic system information collected from standard tools.
-/// All fields optional so partial success (some cmds fail) still gives value.
-/// Uses #[serde(default)] for robustness.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct SystemInfo {
-    /// Hostname (from `hostname` or `uname -n`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hostname: Option<String>,
-
-    /// Kernel/OS info (from `uname -sr` or similar).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kernel: Option<String>,
-
-    /// Uptime string (from `uptime`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uptime: Option<String>,
-
-    /// Simple disk usage summary lines (from `df -h` head).
-    #[serde(default)]
-    pub disk: Vec<String>,
-}
+pub use rexops_core::SystemInfo;
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemAdapter;
