@@ -12,6 +12,7 @@
 //!
 //! Construction is the only way to obtain a valid Id; the inner field is private.
 
+use std::borrow::Borrow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,18 @@ impl fmt::Display for AdapterId {
 impl AsRef<str> for AdapterId {
     fn as_ref(&self) -> &str {
         self.as_str()
+    }
+}
+
+/// Borrow the inner `str` so an `AdapterId`-keyed map can be queried with a
+/// plain `&str` (e.g. `map.get("bulwark")`), exactly as a `String`-keyed map
+/// can. The typing win is at insertion — keys must be validated `AdapterId`s —
+/// without forcing every read site to construct one. The `Borrow` contract
+/// holds: `Hash`, `Eq`, and `Ord` here delegate to the inner string, matching
+/// `str`'s impls.
+impl Borrow<str> for AdapterId {
+    fn borrow(&self) -> &str {
+        &self.0
     }
 }
 

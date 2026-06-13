@@ -330,10 +330,10 @@ fn is_tool_available_requires_resolvable_and_not_unavailable() {
     // Make `proto` resolvable via the cache, holding config+PATH constant so the
     // test isolates the health contribution.
     app.set_tool_launchable("proto", true);
+    let proto = rexops_core::AdapterId::new("proto").expect("test adapter id");
 
     app.snapshot
-        .adapter_health
-        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+        .set_adapter_health(&proto, AdapterHealth::Unavailable);
     assert!(
         !app.is_tool_available("proto"),
         "resolvable + Unavailable must be unavailable"
@@ -344,7 +344,7 @@ fn is_tool_available_requires_resolvable_and_not_unavailable() {
         AdapterHealth::Degraded,
         AdapterHealth::Unknown,
     ] {
-        app.snapshot.adapter_health.insert("proto".to_owned(), h);
+        app.snapshot.set_adapter_health(&proto, h);
         assert!(
             app.is_tool_available("proto"),
             "resolvable + {h:?} must stay available"
@@ -354,8 +354,7 @@ fn is_tool_available_requires_resolvable_and_not_unavailable() {
     // Not resolvable → never available, regardless of health.
     app.set_tool_launchable("proto", false);
     app.snapshot
-        .adapter_health
-        .insert("proto".to_owned(), AdapterHealth::Healthy);
+        .set_adapter_health(&proto, AdapterHealth::Healthy);
     assert!(
         !app.is_tool_available("proto"),
         "an unresolvable tool is never available even when Healthy"
@@ -379,9 +378,9 @@ fn arm_tool_refuses_an_unavailable_tool_and_opens_no_confirm() {
             },
         );
     });
+    let proto = rexops_core::AdapterId::new("proto").expect("test adapter id");
     app.snapshot
-        .adapter_health
-        .insert("proto".to_owned(), AdapterHealth::Unavailable);
+        .set_adapter_health(&proto, AdapterHealth::Unavailable);
 
     app.arm_tool("proto".to_owned(), "Proto".to_owned());
 

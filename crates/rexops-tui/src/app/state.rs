@@ -261,7 +261,12 @@ impl App {
     pub fn apply_snapshot(&mut self, snapshot: OpsSnapshot) {
         self.snapshot = snapshot;
         self.refreshing = false;
-        let mut names: Vec<String> = self.snapshot.adapter_health.keys().cloned().collect();
+        let mut names: Vec<String> = self
+            .snapshot
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
         names.sort();
         self.adapter_names = names;
         self.keep_selected_adapter_visible();

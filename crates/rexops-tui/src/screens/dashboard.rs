@@ -79,7 +79,7 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             .iter()
             .enumerate()
             .filter_map(|(i, name)| {
-                let health = app.snapshot.adapter_health.get(name)?;
+                let health = app.snapshot.adapter_health.get(name.as_str())?;
                 let health_cell = Cell::from(widgets::render_health_badge(*health, theme));
 
                 let info = if health.is_available() {
@@ -220,8 +220,8 @@ mod tests {
         let mut app = App::new(tx, AppConfig::default(), None);
         let mut snap = OpsSnapshot::new();
         for name in names {
-            snap.adapter_health
-                .insert((*name).to_owned(), AdapterHealth::Healthy);
+            let id = rexops_core::AdapterId::new(*name).expect("test adapter id");
+            snap.set_adapter_health(&id, AdapterHealth::Healthy);
         }
         app.apply_snapshot(snap);
         app.selected_adapter = Some(selected.to_owned());
