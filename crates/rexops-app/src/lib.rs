@@ -30,6 +30,7 @@
 //!   stdin). It must never read stdin per refresh — stdin is consume-once.
 
 mod config;
+pub mod jobs;
 mod snapshot;
 pub mod tools;
 
@@ -41,6 +42,9 @@ pub use snapshot::{
 // The tool catalog (shared with the front-ends). `pub mod tools` keeps the
 // submodule path reachable too; these flat re-exports cover the common names.
 pub use tools::{by_id, is_streamable, RunMode, ToolEntry, CATALOG};
+// Background-job outcome/history data types (shared with the front-ends). The
+// front-end maps JobOutcome to its own UI types; rexops-app stays UI-free.
+pub use jobs::{JobOutcome, JobRecord, LastOutcome};
 
 // Re-export a few core types that callers often need alongside the builders
 // so they don't have to add an extra direct dependency on rexops-core just for

@@ -1,45 +1,35 @@
-//! App-owned background job state transitions, plus the finished-job
-//! outcome and history record types they produce.
+//! App-owned background job state transitions, plus the TUI-side mapping of the
+//! domain job outcome (`rexops_app::JobOutcome`) to suite_ui presentation types.
+//!
+//! The outcome/history *data* types (`LastOutcome`, `JobRecord`) and the
+//! domain classifier (`LastOutcome::outcome`) now live in rexops-app. This file
+//! keeps the App glue and the render-boundary translation from domain → UI.
 
 use super::{JobExit, JobOutput};
 use crate::app::{App, Screen};
 use crate::tools;
+use rexops_app::{JobOutcome, JobRecord, LastOutcome};
 
 pub(crate) const JOB_HISTORY_CAP: usize = 50;
 pub(crate) const JOB_OUTPUT_CAP: usize = 1000;
 
-/// How the last job ended, reduced to what the status bar and history need.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LastOutcome {
-    pub name: String,
-    pub ok: bool,
-    pub cancelled: bool,
-}
-
-impl LastOutcome {
-    pub fn as_outcome(&self) -> suite_ui::Outcome {
-        if self.cancelled {
-            suite_ui::Outcome::Cancelled
-        } else if self.ok {
-            suite_ui::Outcome::Success
-        } else {
-            suite_ui::Outcome::Failure
-        }
+/// Map the domain [`JobOutcome`] to the suite_ui presentation enum. This is the
+/// render-boundary translation: rexops-app speaks domain outcomes; the TUI turns
+/// them into the suite-wide `Outcome` (which knows glyphs/colours). Kept here as
+/// a `pub(crate)` free fn because the orphan rule forbids a `From` impl between
+/// two types both foreign to this crate.
+pub(crate) fn to_suite_outcome(outcome: JobOutcome) -> suite_ui::Outcome {
+    match outcome {
+        JobOutcome::Success => suite_ui::Outcome::Success,
+        JobOutcome::Failure => suite_ui::Outcome::Failure,
+        JobOutcome::Cancelled => suite_ui::Outcome::Cancelled,
     }
-}
-
-/// One entry in the bounded job history shown on the Jobs screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JobRecord {
-    pub name: String,
-    pub outcome: LastOutcome,
-    pub summary: String,
 }
 
 pub(crate) fn toast_for(outcome: &LastOutcome) -> (String, suite_ui::ToastKind) {
     use suite_ui::{Outcome, ToastKind};
     let name = &outcome.name;
-    match outcome.as_outcome() {
+    match to_suite_outcome(outcome.outcome()) {
         Outcome::Success => (format!("{name} — done"), ToastKind::Success),
         Outcome::Failure => (format!("{name} — failed"), ToastKind::Failure),
         Outcome::Cancelled => (format!("{name} — cancelled"), ToastKind::Cancelled),
@@ -87,7 +77,7 @@ impl App {
             return suite_ui::JobState::Running { name: &job.name };
         }
         match &self.last_outcome {
-            Some(outcome) => match outcome.as_outcome() {
+            Some(outcome) => match to_suite_outcome(outcome.outcome()) {
                 suite_ui::Outcome::Cancelled => suite_ui::JobState::Cancelled {
                     name: &outcome.name,
                 },
