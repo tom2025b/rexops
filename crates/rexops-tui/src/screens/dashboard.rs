@@ -143,7 +143,7 @@ fn render_risk_summary(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 fn render_messages(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.refreshing {
+    if app.is_refreshing() {
         lines.push(Line::from(Span::styled(
             "⟳ Refresh in progress — UI remains responsive. Press 'q' to quit anytime.",
             theme.working(),

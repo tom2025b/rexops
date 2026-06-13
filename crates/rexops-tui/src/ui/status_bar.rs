@@ -81,7 +81,7 @@ pub(super) fn render_status_bar(f: &mut Frame, app: &App, area: Rect, theme: The
     }
     .line(theme);
 
-    let (right, right_style) = if app.refreshing {
+    let (right, right_style) = if app.is_refreshing() {
         ("working...", theme.working())
     } else if count == 0 {
         ("no adapters probed", theme.dim())

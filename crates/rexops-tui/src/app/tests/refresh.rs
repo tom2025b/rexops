@@ -63,12 +63,13 @@ fn apply_snapshot_always_clears_the_refreshing_flag() {
     // empty fallback if the probe panicked), so this clear is the sole, reliable
     // path back to a refreshable state — `r` can never wedge. Guard it.
     let mut app = dashboard_app_with_adapters(&["bulwark"]);
-    app.refreshing = true;
+    app.request_refresh(); // enter the in-flight state through the real path
+    assert!(app.is_refreshing(), "request_refresh sets the in-flight guard");
 
     app.apply_snapshot(OpsSnapshot::new());
 
     assert!(
-        !app.refreshing,
+        !app.is_refreshing(),
         "receiving any snapshot (even empty) must clear the refreshing flag"
     );
 }
@@ -83,7 +84,7 @@ fn a_panicking_snapshot_build_still_yields_a_snapshot() {
     let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> OpsSnapshot {
         panic!("probe blew up");
     }))
-    .unwrap_or_else(|_| App::panicked_snapshot());
+    .unwrap_or_else(|_| rexops_app::panicked_snapshot());
 
     // A usable (empty) snapshot came back instead of unwinding the thread.
     assert!(snapshot.adapter_health.is_empty());
@@ -91,9 +92,9 @@ fn a_panicking_snapshot_build_still_yields_a_snapshot() {
     // And feeding it through apply_snapshot clears refreshing, just like the
     // real path — so `r` is never permanently stuck after a panicking probe.
     let mut app = bare_app();
-    app.refreshing = true;
+    app.request_refresh(); // enter the in-flight state through the real path
     app.apply_snapshot(snapshot);
-    assert!(!app.refreshing, "a fallback snapshot must un-wedge refresh");
+    assert!(!app.is_refreshing(), "a fallback snapshot must un-wedge refresh");
 }
 
 #[test]
@@ -101,7 +102,7 @@ fn the_panic_fallback_snapshot_carries_a_visible_note() {
     // The silent-failure fix: the panic fallback must NOT be a note-less empty
     // snapshot (indistinguishable from "never probed"). It carries a note so the
     // crash surfaces on the Dashboard Messages pane.
-    let snap = App::panicked_snapshot();
+    let snap = rexops_app::panicked_snapshot();
     assert!(
         snap.adapter_health.is_empty(),
         "no probe data survives a panic"
@@ -125,7 +126,7 @@ fn applying_a_panicked_snapshot_logs_a_distinct_failure_event() {
     // pane is off-screen) — not the generic "Snapshot updated" line that a
     // normal refresh logs.
     let mut app = bare_app();
-    app.apply_snapshot(App::panicked_snapshot());
+    app.apply_snapshot(rexops_app::panicked_snapshot());
     assert!(
         app.recent_events
             .iter()
