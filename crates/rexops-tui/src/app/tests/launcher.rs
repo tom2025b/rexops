@@ -115,7 +115,7 @@ fn confirm_runs_foreground_tool_and_clears_it() {
     assert!(!quit);
     assert_eq!(runner.calls, 1, "confirm must run exactly once");
     assert!(app.pending_action.is_none(), "pending must be cleared");
-    assert!(app.refreshing);
+    assert!(app.is_refreshing());
     assert!(app
         .recent_events
         .iter()
@@ -148,7 +148,7 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
     assert!(!quit);
     assert_eq!(runner.calls, 0, "a job must not use the foreground runner");
     assert!(app.pending_action.is_none(), "pending must be cleared");
-    assert!(app.job.is_none(), "a failed spawn leaves no job handle");
+    assert!(app.jobs.job.is_none(), "a failed spawn leaves no job handle");
     assert!(app
         .recent_events
         .iter()
@@ -420,7 +420,7 @@ fn start_job_reports_a_spawn_failure_and_leaves_clean_state() {
     app.start_job("scripts", "Scripts");
 
     assert!(
-        app.job.is_none(),
+        app.jobs.job.is_none(),
         "a failed spawn must leave no dangling job handle"
     );
     assert_eq!(
@@ -445,7 +445,7 @@ fn start_job_reports_a_spawn_failure_and_leaves_clean_state() {
     });
     app.start_job("scripts", "Scripts");
     assert!(
-        app.job.is_some(),
+        app.jobs.job.is_some(),
         "after a failed spawn the app must still be able to start a job"
     );
 }

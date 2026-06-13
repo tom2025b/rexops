@@ -29,12 +29,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-use std::io;
-use std::process::{Command, ExitStatus};
 use std::sync::mpsc;
-use std::time::Duration;
 
-use crossterm::event;
 use rexops_app::{load_config, read_piped_stdin};
 use suite_ui::{ColorChoice, Theme, ThemeChoice, Tui, TuiOptions};
 
@@ -48,7 +44,6 @@ mod tools;
 mod ui;
 
 use app::App;
-use tools::{ChildExit, ForegroundRunner, LaunchCommand};
 
 /// Launch the RexOps TUI and run it until the user quits.
 ///
@@ -105,32 +100,4 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     runtime::run(&mut tui, &mut app, &rx, theme)
 
     // `tui` drops here → guaranteed terminal restore.
-}
-
-/// Run a foreground child program on the user's real terminal.
-///
-/// The leave→run→re-enter dance (drop out of raw mode + the alternate screen,
-/// run the child, then re-enter and clear) is owned by the shared
-/// [`suite_ui::Tui::suspended`] guard, which guarantees re-entry even if the
-/// child or a step fails — so the terminal is never left suspended. This
-/// replaces RexOps' hand-rolled suspend_terminal_for_child /
-/// resume_terminal_after_child / run_foreground_child trio.
-impl ForegroundRunner for Tui {
-    fn run_foreground(&mut self, command: &LaunchCommand) -> io::Result<ChildExit> {
-        let status: ExitStatus =
-            self.suspended(|| Command::new(&command.program).args(&command.args).status())??;
-        drain_pending_events()?;
-        if status.success() {
-            Ok(ChildExit::Success)
-        } else {
-            Ok(ChildExit::Status(status.to_string()))
-        }
-    }
-}
-
-fn drain_pending_events() -> io::Result<()> {
-    while event::poll(Duration::from_millis(0))? {
-        let _ = event::read()?;
-    }
-    Ok(())
 }
