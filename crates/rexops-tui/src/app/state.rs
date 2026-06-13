@@ -18,6 +18,12 @@ pub struct App {
     pub show_help: bool,
     pub current_screen: Screen,
     pub adapter_names: Vec<String>,
+    /// Cache of `adapter_names` narrowed by `filter`, read on the render hot
+    /// path so it never allocates per frame. Rebuilt by
+    /// `recompute_filtered_names` whenever `adapter_names` (in `apply_snapshot`)
+    /// or `filter` (via the selection-reconcile helpers) changes. Read it
+    /// through `filtered_adapter_names()`.
+    pub(crate) filtered_names: Vec<String>,
     pub selected_adapter: Option<String>,
     pub filter: String,
     /// Whether the inline filter on a filter screen is actively capturing
@@ -80,6 +86,7 @@ impl App {
             show_help: false,
             current_screen: Screen::default(),
             adapter_names: Vec::new(),
+            filtered_names: Vec::new(),
             selected_adapter: None,
             filter: String::new(),
             filtering: false,

@@ -164,3 +164,34 @@ fn j_k_navigate_the_adapter_selection_on_the_dashboard() {
         "Up moves back"
     );
 }
+
+#[test]
+fn filtered_names_cache_tracks_filter_and_snapshot_changes() {
+    // The render path reads a cached filtered list rather than recomputing per
+    // frame; this guards that the cache stays coherent with its two inputs.
+    let mut app = dashboard_app_with_adapters(&["bulwark", "scripts", "system"]);
+    let mut runner = FakeRunner { calls: 0 };
+
+    // Input 1 — the filter: applying "s" narrows the cache to s-matches.
+    enter_filter(&mut app, &mut runner);
+    app.on_action(Action::InputChar('s'), &mut runner);
+    assert_eq!(
+        app.filtered_adapter_names(),
+        vec!["scripts".to_owned(), "system".to_owned()],
+        "cache must reflect the active filter"
+    );
+
+    // Input 2 — a fresh snapshot arriving WHILE the filter is applied: the cache
+    // must rebuild from the new adapter set, still honouring the filter. This is
+    // the path that would silently go stale if apply_snapshot forgot to rebuild.
+    app.apply_snapshot(snapshot_with_adapters(&["sentry", "bulwark", "saturn"]));
+    assert_eq!(
+        app.filter, "s",
+        "the applied filter survives a refresh (sanity)"
+    );
+    assert_eq!(
+        app.filtered_adapter_names(),
+        vec!["saturn".to_owned(), "sentry".to_owned()],
+        "cache must rebuild from the new snapshot, still filtered by 's'"
+    );
+}
