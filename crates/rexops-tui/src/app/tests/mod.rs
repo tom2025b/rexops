@@ -42,8 +42,8 @@ fn dashboard_app_with_adapters(names: &[&str]) -> App {
     let mut app = bare_app();
     let mut snap = OpsSnapshot::new();
     for name in names {
-        snap.adapter_health
-            .insert((*name).to_owned(), rexops_core::AdapterHealth::Healthy);
+        let id = rexops_core::AdapterId::new(*name).expect("test adapter id");
+        snap.set_adapter_health(&id, rexops_core::AdapterHealth::Healthy);
     }
     app.apply_snapshot(snap);
     app.current_screen = Screen::Dashboard;
@@ -55,8 +55,8 @@ fn dashboard_app_with_adapters(names: &[&str]) -> App {
 fn snapshot_with_adapters(names: &[&str]) -> OpsSnapshot {
     let mut snap = OpsSnapshot::new();
     for name in names {
-        snap.adapter_health
-            .insert((*name).to_owned(), rexops_core::AdapterHealth::Healthy);
+        let id = rexops_core::AdapterId::new(*name).expect("test adapter id");
+        snap.set_adapter_health(&id, rexops_core::AdapterHealth::Healthy);
     }
     snap
 }

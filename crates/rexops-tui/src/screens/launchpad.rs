@@ -305,9 +305,9 @@ mod tests {
         let mut app = App::new(tx, AppConfig::default(), None);
         app.set_tool_launchable("bulwark", true);
 
+        let bulwark = rexops_core::AdapterId::new("bulwark").expect("test adapter id");
         app.snapshot
-            .adapter_health
-            .insert("bulwark".to_owned(), AdapterHealth::Unavailable);
+            .set_adapter_health(&bulwark, AdapterHealth::Unavailable);
         let row = row_line(&render_to_text(&app), "Bulwark");
         assert!(
             row.contains("unavailable"),
@@ -320,8 +320,7 @@ mod tests {
 
         // Healthy → launchable again (proves the tag tracks live health).
         app.snapshot
-            .adapter_health
-            .insert("bulwark".to_owned(), AdapterHealth::Healthy);
+            .set_adapter_health(&bulwark, AdapterHealth::Healthy);
         let row = row_line(&render_to_text(&app), "Bulwark");
         assert!(
             row.contains("interactive"),
@@ -331,7 +330,7 @@ mod tests {
         // Degraded and Unknown stay launchable on purpose (run-to-diagnose /
         // pre-probe), so they must NOT read unavailable.
         for h in [AdapterHealth::Degraded, AdapterHealth::Unknown] {
-            app.snapshot.adapter_health.insert("bulwark".to_owned(), h);
+            app.snapshot.set_adapter_health(&bulwark, h);
             let row = row_line(&render_to_text(&app), "Bulwark");
             assert!(
                 row.contains("interactive"),

@@ -19,6 +19,15 @@
 //!   resulting snapshot over the channel.
 //! - The main loop uses try_recv() so drawing continues at full speed.
 
+// This crate drives the terminal and spawns child processes, so an unhandled
+// unwrap/expect here panics the whole UI mid-session. Hold it to the same
+// no-panic floor the library crates (core/adapters/app) already enforce. The
+// single known-safe production site is annotated with a scoped #[allow] +
+// justification. Tests are exempt: a panicking unwrap there fails the test
+// loudly, which is the desired behaviour.
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::sync::mpsc;

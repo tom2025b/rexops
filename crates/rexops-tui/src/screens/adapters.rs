@@ -75,7 +75,7 @@ fn render_adapter_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             let health = app
                 .snapshot
                 .adapter_health
-                .get(name)
+                .get(name.as_str())
                 .copied()
                 .unwrap_or(AdapterHealth::Unknown);
             let info = if health.is_available() {
@@ -122,7 +122,7 @@ fn render_adapter_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         theme.title(),
     )));
 
-    if let Some(health) = app.snapshot.adapter_health.get(name) {
+    if let Some(health) = app.snapshot.adapter_health.get(name.as_str()) {
         let style = theme.health(widgets::health_to_suite(*health));
         lines.push(Line::from(vec![
             Span::raw("Health: "),

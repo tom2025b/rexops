@@ -128,9 +128,12 @@ pub struct OpsSnapshot {
     pub generated_at_ms: u64,
 
     /// Health of every adapter we know about at snapshot time.
-    /// Keyed by adapter id for easy lookup in TUI/CLI.
+    /// Keyed by the typed `AdapterId` so callers cannot accidentally look up a
+    /// raw, unvalidated string and silently miss. `AdapterId` is
+    /// `#[serde(transparent)]` over its inner string, so the JSON wire form is
+    /// unchanged (a plain `{"bulwark": ...}` object).
     #[serde(default)]
-    pub adapter_health: std::collections::HashMap<String, crate::AdapterHealth>,
+    pub adapter_health: std::collections::HashMap<AdapterId, crate::AdapterHealth>,
 
     /// Current risk picture aggregated across adapters that contribute risk.
     #[serde(default)]
@@ -140,7 +143,12 @@ pub struct OpsSnapshot {
     #[serde(default)]
     pub reports: Vec<ReportSummary>,
 
-    /// Active or recent jobs such as scans or syncs.
+    /// Active or recent jobs such as scans or syncs, keyed by job id.
+    ///
+    /// NOTE: currently unpopulated — the live TUI job system tracks jobs in its
+    /// own manager, not here. Left `String`-keyed deliberately: a job id is not
+    /// an adapter id, so it should gain a dedicated `JobId` newtype (not reuse
+    /// `AdapterId`) if/when this field is actually wired up.
     #[serde(default)]
     pub jobs: std::collections::HashMap<String, JobStatus>,
 
@@ -205,7 +213,14 @@ impl OpsSnapshot {
     ///
     /// Call this while building the snapshot from live adapter probes.
     pub fn set_adapter_health(&mut self, id: &AdapterId, health: crate::AdapterHealth) {
-        self.adapter_health.insert(id.as_str().to_owned(), health);
+        self.adapter_health.insert(id.clone(), health);
+    }
+
+    /// Look up the health of an adapter by id. Accepts anything that borrows as
+    /// an `AdapterId` (the map is keyed by the typed id) so call sites read
+    /// naturally: `snap.adapter_health_of(&id)`.
+    pub fn adapter_health_of(&self, id: &AdapterId) -> Option<crate::AdapterHealth> {
+        self.adapter_health.get(id).copied()
     }
 
     /// Merge a risk contribution into the snapshot (e.g. from a Bulwark scan).
@@ -306,5 +321,31 @@ mod tests {
         let json = serde_json::to_string(&snap).unwrap();
         let snap2: OpsSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(snap, snap2);
+
+        // Wire-format guarantee: keying adapter_health by the AdapterId newtype
+        // (instead of String) must NOT change the JSON shape, because AdapterId
+        // is #[serde(transparent)]. The key stays a bare string, so older
+        // String-keyed snapshots deserialize unchanged.
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let health = &value["adapter_health"];
+        assert!(
+            health.get("bulwark").is_some(),
+            "adapter_health must serialize with a bare string key, got: {health}"
+        );
+    }
+
+    #[test]
+    fn adapter_health_deserializes_from_legacy_string_keyed_json() {
+        // A snapshot written before adapter_health was AdapterId-keyed (plain
+        // string keys) must still load: proves the migration is backward
+        // compatible on the wire.
+        let legacy = r#"{
+            "generated_at_ms": 1700000000001,
+            "adapter_health": {"bulwark": "healthy", "system": "degraded"}
+        }"#;
+        let snap: OpsSnapshot = serde_json::from_str(legacy).unwrap();
+        let bul = AdapterId::new("bulwark").unwrap();
+        assert_eq!(snap.adapter_health_of(&bul), Some(AdapterHealth::Healthy));
+        assert_eq!(snap.adapter_health.len(), 2);
     }
 }
