@@ -145,6 +145,12 @@ impl App {
         // fine.
 
         if let (Some(exit), true) = (exited, drained) {
+            // Safe: `poll_job` returns early above (line ~130) when `self.job` is
+            // None, and nothing between there and here clears it — the field is
+            // only set to None at the end of *this* branch. So whenever `exited`
+            // is Some, the job is necessarily still present. The mutable borrow
+            // from the early `as_mut` has ended, so we re-borrow shared here.
+            #[allow(clippy::expect_used)]
             let job = self.job.as_ref().expect("job present while finishing");
             let name = job.name.clone();
             let (summary, outcome) = match exit {
