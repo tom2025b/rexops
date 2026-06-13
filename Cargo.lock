@@ -665,10 +665,11 @@ dependencies = [
 [[package]]
 name = "suite-ui"
 version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=f800520087cdaae59861897ca02a97d388927b25#f800520087cdaae59861897ca02a97d388927b25"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=71a4fe5484abb75b494c010b89033dbc7e0faace#71a4fe5484abb75b494c010b89033dbc7e0faace"
 dependencies = [
  "crossterm",
  "ratatui",
+ "thomas-tui",
 ]
 
 [[package]]
@@ -700,6 +701,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "thomas-tui"
+version = "0.1.0"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=71a4fe5484abb75b494c010b89033dbc7e0faace#71a4fe5484abb75b494c010b89033dbc7e0faace"
+dependencies = [
+ "crossterm",
+ "ratatui",
 ]
 
 [[package]]
