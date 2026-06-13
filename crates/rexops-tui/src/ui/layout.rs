@@ -55,7 +55,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         Screen::Launcher => "Launcher",
         Screen::Jobs => "Jobs",
     };
-    let title = if app.refreshing {
+    let title = if app.is_refreshing() {
         format!("RexOps  —  {screen_name}  (refreshing...)")
     } else {
         format!("RexOps  —  {screen_name}")
