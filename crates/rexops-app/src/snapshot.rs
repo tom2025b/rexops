@@ -12,7 +12,10 @@
 //! side-effecting work (executing adapter probes). Core stays pure data.
 
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
-use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, RiskSummary};
+use rexops_core::{
+    status_to_health, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, Provenance,
+    RiskSummary, WorkstateInfo,
+};
 
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
@@ -170,10 +173,10 @@ fn note_section_freshness(
     label: &str,
     adapter_id: &str,
     status: &str,
-    provenance: &rexops_adapters::Provenance,
+    provenance: &Provenance,
 ) {
     if let Ok(id) = AdapterId::new(adapter_id) {
-        snap.set_adapter_health(&id, rexops_adapters::status_to_health(status));
+        snap.set_adapter_health(&id, status_to_health(status));
     }
     match provenance.source_observed_at.as_deref() {
         Some(src) => snap.add_note(format!("{label}: {status} (source observed {src})")),
@@ -231,7 +234,7 @@ fn populate_workstate(snap: &mut OpsSnapshot, routed_stdin: Option<String>) {
 }
 
 /// Fold the snapshot's `tools` section into `snap.tools` (+ freshness/notes).
-fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_tools(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(tools) = &info.tools.data else {
         return;
     };
@@ -264,7 +267,7 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) 
 }
 
 /// Fold the snapshot's `scripts` section into `snap.scripts` (+ freshness/notes).
-fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(scripts) = &info.scripts.data else {
         return;
     };
@@ -286,7 +289,7 @@ fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo
 }
 
 /// Fold the snapshot's `findings` section into `snap.findings` and merge its risk.
-fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInfo) {
+fn fold_ws_findings(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(findings) = &info.findings.data else {
         return;
     };

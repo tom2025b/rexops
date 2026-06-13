@@ -22,103 +22,15 @@
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-
 use crate::adapter::Adapter;
 use crate::error::AdapterError;
-use crate::models::findings::FindingsInfo;
-use crate::models::scripts::ScriptsInfo;
-use crate::models::tools::ToolsInfo;
 use crate::types::{AdapterHealth, AdapterOutput};
+
+// Pure data types now live in rexops-core; re-export so existing pub API is unchanged.
+pub use rexops_core::{Provenance, Section, WorkstateInfo, status_to_health};
 
 /// The major schema version this consumer understands. Workstate emits v3.
 const SUPPORTED_SCHEMA_VERSION: i64 = 3;
-
-/// Provenance Workstate attaches to each section: who produced it and when it
-/// was fetched / observed at the source. All fields are lenient strings/optionals
-/// so provenance metadata changes do not break the parse.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct Provenance {
-    #[serde(default)]
-    pub feed_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fetched_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_observed_at: Option<String>,
-}
-
-/// One snapshot section: Workstate's freshness `status`, its `provenance`, and
-/// the normalized `data` (absent when the section is Missing/UnsupportedVersion).
-///
-/// Generic over the payload `T` so the same envelope serves all three domains,
-/// each reusing the `*Info` type RexOps already renders.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct Section<T> {
-    /// Workstate's freshness verdict: "Fresh", "Stale", "Missing",
-    /// "UnsupportedVersion", etc. Kept as a String (not a closed enum) so an
-    /// unanticipated status never hard-fails the parse — we map known values to
-    /// health and treat anything else conservatively (see `status_to_health`).
-    #[serde(default)]
-    pub status: String,
-    #[serde(default)]
-    pub provenance: Provenance,
-    /// The normalized payload. `None` when Workstate reports no data for this
-    /// section (Missing / UnsupportedVersion).
-    #[serde(default = "none")]
-    pub data: Option<T>,
-}
-
-/// serde `default` for `Section::data` (a function because `Option::None` is not
-/// a const-evaluable default in the derive).
-fn none<T>() -> Option<T> {
-    None
-}
-
-/// The whole Workstate snapshot envelope (schema v3).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct WorkstateInfo {
-    pub schema_version: i64,
-    /// When this compile ran (UTC). Lenient string — purely informational here.
-    #[serde(default)]
-    pub built_at: String,
-    /// Scripts inventory.
-    #[serde(default)]
-    pub scripts: Section<ScriptsInfo>,
-    /// Tools inventory.
-    #[serde(default)]
-    pub tools: Section<ToolsInfo>,
-    /// Findings inventory.
-    #[serde(default)]
-    pub findings: Section<FindingsInfo>,
-}
-
-/// Translate a Workstate section `status` string into RexOps' AdapterHealth.
-///
-/// - `"Fresh"` → Healthy
-/// - `"Stale"` | `"UnsupportedVersion"` → Degraded
-/// - `"Missing"` → Unavailable
-/// - anything else → Unknown (conservative: we don't pretend it's fine)
-///
-/// Reuses the health states the TUI already renders instead of adding separate
-/// freshness types to core.
-pub fn status_to_health(status: &str) -> AdapterHealth {
-    match status {
-        "Fresh" => AdapterHealth::Healthy,
-        "Stale" | "UnsupportedVersion" => AdapterHealth::Degraded,
-        "Missing" => AdapterHealth::Unavailable,
-        _ => AdapterHealth::Unknown,
-    }
-}
-
-impl WorkstateInfo {
-    /// Number of sections that carry usable data (0–3). Cheap summary for notes.
-    pub fn populated_section_count(&self) -> usize {
-        usize::from(self.scripts.data.is_some())
-            + usize::from(self.tools.data.is_some())
-            + usize::from(self.findings.data.is_some())
-    }
-}
-
 
 /// Read-only Workstate snapshot consumer.
 ///

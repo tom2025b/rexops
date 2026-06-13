@@ -455,6 +455,7 @@ dependencies = [
 name = "rexops-adapters"
 version = "0.1.0"
 dependencies = [
+ "rexops-core",
  "serde",
  "serde_json",
  "thiserror",
@@ -485,7 +486,6 @@ dependencies = [
 name = "rexops-core"
 version = "0.1.0"
 dependencies = [
- "rexops-adapters",
  "serde",
  "serde_json",
  "thiserror",

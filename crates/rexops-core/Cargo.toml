@@ -10,12 +10,7 @@ description = "Core domain models, OpsSnapshot, AppConfig, registries, and pure 
 [dependencies]
 # Keep deps minimal per project rules. No async, no tokio, no anyhow.
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
-# Depend on adapters to lift AdapterOutput<T> and reuse AdapterHealth without duplication.
-# Path dep is fine inside workspace; version alignment comes from workspace.package.
-rexops-adapters = { path = "../rexops-adapters" }
-
 [dev-dependencies]
-# Only for unit tests that do serde roundtrips. Not needed in the lib itself.
-serde_json = { workspace = true }

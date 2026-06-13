@@ -22,39 +22,33 @@
 //! - Every fallible public function returns `Result<T, CoreError>`.
 //! - Zero `unwrap()` / `expect()` in non-test code (denied at crate root).
 //! - Pure data + pure functions. Serde for (de)serialization of snapshots/config.
-//! - Depends on rexops-adapters only to reuse AdapterHealth/AdapterOutput and
-//!   lift them into higher-level OpsSnapshot without duplication.
-//!
-//! Public surface (re-exports for convenience):
-//! - CoreError — the only error type exported from this crate.
-//! - Newtypes: AdapterId, ToolId.
-//! - Health: AdapterHealth (re-exported for callers).
-//! - Config: AppConfig + supporting types.
-//! - Snapshot: OpsSnapshot (includes optional SystemInfo, ScriptsInfo, ToolsInfo, FindingsInfo, WorkstateInfo), RiskSummary, ReportSummary, JobStatus.
-//! - Registries: AdapterRegistry, ToolRegistry (data containers only).
-//!
-//! Everything else lives in focused modules. lib.rs is a table of contents only.
+//! - Does NOT depend on rexops-adapters (execution layer). The dependency flows
+//!   the correct way: adapters → core, not core → adapters.
 
 // Module declarations — order is declaration order, not importance.
+mod adapter_models;
+mod adapter_types;
 mod config;
 mod error;
 mod ids;
 mod models;
 mod registry;
+mod system_info;
+mod workstate_info;
 
 // Re-export the primary public API in a flat namespace so callers can write:
 //   use rexops_core::{AppConfig, OpsSnapshot, AdapterId, CoreError};
+pub use adapter_models::findings::{FindingsInfo, RiskTally, ScanItem, Severity};
+pub use adapter_models::scripts::{Script, ScriptsInfo};
+pub use adapter_models::tools::{Tool, ToolsInfo};
+pub use adapter_types::{AdapterHealth, AdapterOutput};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
 pub use models::{JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
 pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
-
-// Re-export key adapter types so the rest of RexOps does not have to depend
-// directly on rexops-adapters everywhere (reduces coupling at call sites).
-pub use rexops_adapters::{
-    AdapterHealth, AdapterOutput, FindingsInfo, ScriptsInfo, SystemInfo, ToolsInfo, WorkstateInfo,
-};
+pub use system_info::SystemInfo;
+pub use workstate_info::{Provenance, Section, WorkstateInfo, status_to_health};
 
 // lib.rs stays as a directory of contents. Logic and data definitions live in
 // the modules listed above.

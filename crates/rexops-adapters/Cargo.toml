@@ -11,6 +11,7 @@ description = "Adapter layer for RexOps — thin integrations with Bulwark, Syst
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+rexops-core = { path = "../rexops-core" }
 
 # Keep deps minimal. No tokio, no async, no anyhow.
 # Execution is synchronous via std::process. Timeout implemented with std threads + channels.
