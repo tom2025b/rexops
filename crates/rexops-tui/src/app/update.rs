@@ -1,6 +1,6 @@
 //! High-level action handling.
 
-use super::{App, Screen};
+use super::{App, Modal, Screen};
 use crate::input::Action;
 use crate::tools::{self, ForegroundRunner};
 
@@ -8,44 +8,46 @@ impl App {
     pub fn on_action(&mut self, action: Action, launcher: &mut impl ForegroundRunner) -> bool {
         self.clear_toast();
 
-        // The help sheet is a true overlay: it renders over everything, so it
-        // must also CAPTURE input. While it's up, any key dismisses it and is
-        // otherwise swallowed — nothing reaches (or mutates) the screen behind
-        // it. This is the outermost gate, above the pending/palette modals,
-        // because the sheet renders on top of those too.
-        if self.show_help {
-            self.show_help = false;
-            return false;
-        }
-
-        if self.pending_action.is_some() {
-            match action {
-                Action::Activate => self.confirm_pending(launcher),
-                Action::Cancel => self.cancel_pending(),
-                Action::InputChar('y' | 'Y') => self.confirm_pending(launcher),
-                Action::InputChar('n' | 'N') => self.cancel_pending(),
-                _ => {}
+        // Modal input is gated by the SAME precedence the render path layers by
+        // (App::active_modal) — the single source of truth — so the overlay
+        // drawn on top is always the one capturing keys. A modal swallows input;
+        // only `Modal::None` falls through to the screen bindings below.
+        match self.active_modal() {
+            Modal::Help => {
+                // The help sheet is a true overlay: any key dismisses it and is
+                // otherwise swallowed — nothing reaches the screen behind it.
+                self.show_help = false;
+                return false;
             }
-            return false;
-        }
-
-        if self.palette_open {
-            match action {
-                Action::Cancel => self.close_palette(),
-                Action::Activate => return self.palette_activate(launcher),
-                Action::Up => self.palette_move(false),
-                Action::Down => self.palette_move(true),
-                Action::Backspace => {
-                    self.palette_query.pop();
-                    self.palette_selected = 0;
+            Modal::Confirm => {
+                match action {
+                    Action::Activate => self.confirm_pending(launcher),
+                    Action::Cancel => self.cancel_pending(),
+                    Action::InputChar('y' | 'Y') => self.confirm_pending(launcher),
+                    Action::InputChar('n' | 'N') => self.cancel_pending(),
+                    _ => {}
                 }
-                Action::InputChar(c) if c.is_ascii_graphic() || c == ' ' => {
-                    self.palette_query.push(c);
-                    self.palette_selected = 0;
-                }
-                _ => {}
+                return false;
             }
-            return false;
+            Modal::Palette => {
+                match action {
+                    Action::Cancel => self.close_palette(),
+                    Action::Activate => return self.palette_activate(launcher),
+                    Action::Up => self.palette_move(false),
+                    Action::Down => self.palette_move(true),
+                    Action::Backspace => {
+                        self.palette_query.pop();
+                        self.palette_selected = 0;
+                    }
+                    Action::InputChar(c) if c.is_ascii_graphic() || c == ' ' => {
+                        self.palette_query.push(c);
+                        self.palette_selected = 0;
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+            Modal::None => {}
         }
 
         match action {

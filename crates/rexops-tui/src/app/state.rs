@@ -12,6 +12,21 @@ use crate::commands::PendingAction;
 use crate::jobs::{JobHandle, JobOutput, JobRecord, LastOutcome};
 use crate::tools::{self, CATALOG};
 
+/// The active modal overlay, in precedence order. The single source of truth for
+/// modal layering — see [`App::active_modal`]. Render and input both branch on
+/// this, so the visible-top modal and the key-capturing modal are always one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modal {
+    /// No overlay; keys reach the active screen.
+    None,
+    /// The command palette (text input + command list).
+    Palette,
+    /// The confirm gate for a pending mutating action.
+    Confirm,
+    /// The keybinding help sheet (outermost — renders over the others).
+    Help,
+}
+
 pub struct App {
     pub snapshot: OpsSnapshot,
     pub refreshing: bool,
@@ -279,6 +294,28 @@ impl App {
             InputMode::Text
         } else {
             InputMode::Navigation
+        }
+    }
+
+    /// Which modal overlay is active, in PRECEDENCE order — the single source of
+    /// truth for modal layering. Both the render path (which overlay draws on
+    /// top) and the input path (which overlay captures keys) read this, so the
+    /// two can never disagree about what's in front. Previously each encoded the
+    /// order independently and they were inverted for palette vs confirm; a
+    /// future change letting two modals co-exist would then show one on top while
+    /// another ate the keys. Defining it once removes that whole class of bug.
+    ///
+    /// Order: Help is the outermost overlay (it renders over the confirm/palette
+    /// too), then the Confirm gate, then the Palette, then None.
+    pub(crate) fn active_modal(&self) -> Modal {
+        if self.show_help {
+            Modal::Help
+        } else if self.pending_action.is_some() {
+            Modal::Confirm
+        } else if self.palette_open {
+            Modal::Palette
+        } else {
+            Modal::None
         }
     }
 

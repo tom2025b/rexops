@@ -64,6 +64,7 @@ fn snapshot_with_adapters(names: &[&str]) -> OpsSnapshot {
 mod filters;
 mod help;
 mod jobs;
+mod modal;
 mod launcher;
 mod palette;
 mod refresh;

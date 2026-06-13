@@ -9,7 +9,7 @@ use ratatui::{
 use suite_ui::Theme;
 
 use super::{palette, status_bar};
-use crate::app::{App, Screen};
+use crate::app::{App, Modal, Screen};
 use crate::screens;
 
 pub fn render(f: &mut Frame, app: &App, theme: Theme) {
@@ -34,14 +34,19 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
     }
     status_bar::render_status_bar(f, app, chunks[2], theme);
 
-    if app.show_help {
-        palette::render_help_popup(f, f.area(), theme);
-    }
-    if app.palette_open {
-        palette::render_palette(f, app, f.area(), theme);
-    }
-    if let Some(pending) = &app.pending_action {
-        palette::render_confirm_popup(f, pending, app.config(), f.area(), theme);
+    // Render exactly the overlay App::active_modal reports as on top — the SAME
+    // source of truth on_action gates input by, so the modal drawn here is
+    // always the one capturing keys. Only the topmost modal renders; any
+    // lower-precedence state stays behind it.
+    match app.active_modal() {
+        Modal::Help => palette::render_help_popup(f, f.area(), theme),
+        Modal::Palette => palette::render_palette(f, app, f.area(), theme),
+        Modal::Confirm => {
+            if let Some(pending) = &app.pending_action {
+                palette::render_confirm_popup(f, pending, app.config(), f.area(), theme);
+            }
+        }
+        Modal::None => {}
     }
 }
 

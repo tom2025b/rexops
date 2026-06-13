@@ -5,7 +5,7 @@ mod state;
 mod update;
 
 pub use navigation::Screen;
-pub use state::App;
+pub use state::{App, Modal};
 
 #[cfg(test)]
 mod tests;
