@@ -28,3 +28,7 @@ serde_yaml = { workspace = true }
 # adapters is no longer needed directly here.
 rexops-core = { path = "../rexops-core" }
 rexops-app = { path = "../rexops-app" }
+# The default action (no subcommand) is the interactive TUI. We launch it
+# through rexops-tui's single public entry point (rexops_tui::run) rather than
+# shelling out, so `cargo run` drives the exact same code as `rexops-tui`.
+rexops-tui = { path = "../rexops-tui" }

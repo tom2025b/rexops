@@ -1,14 +1,16 @@
-//! main.rs — Tiny CLI entrypoint for rexops.
+//! main.rs — Entrypoint for the `rexops` binary.
 //!
 //! This is intentionally a *thin shell*:
 //! - clap for argument parsing and --help / --version.
-//! - Dispatch to a handful of subcommands.
-//! - For each command, call into rexops-app (shared config + snapshot builder)
-//!   which in turn uses rexops-core + rexops-adapters, then format the result.
-//! - Human output (default) or --json.
-//! - All real work (health, risk, registries) lives in the libraries.
-//!
-//! No domain logic, no TUI, no long-lived state here.
+//! - With NO subcommand, launch the interactive TUI — the default experience
+//!   (`cargo run` / `rexops`). The TUI runs behind rexops-tui's single public
+//!   entry point (`rexops_tui::run`), so we drive the exact same code as the
+//!   standalone `rexops-tui` binary.
+//! - With a subcommand (`status`, `adapters`), call into rexops-app (shared
+//!   config + snapshot builder) which in turn uses rexops-core +
+//!   rexops-adapters, then format the result. Human output (default) or --json.
+//! - All real work (health, risk, registries, the TUI itself) lives in the
+//!   libraries; this binary is only dispatch + formatting.
 //!
 //! Quality: we still follow the project rules at the binary boundary —
 //! good error messages, no silent failures, and the four cargo gates apply.
@@ -23,10 +25,12 @@ use clap::{Parser, Subcommand};
 use rexops_app::{build_adapter_registry, build_snapshot, load_config};
 use rexops_core::{AdapterHealth, AdapterRegistry, OpsSnapshot};
 
-/// rexops — the RexOps ops cockpit CLI.
+/// rexops — the RexOps ops cockpit.
 ///
-/// Provides inspection commands over the adapter layer and core models.
-/// All heavy lifting is delegated; this binary is only glue + formatting.
+/// Run with no subcommand to open the interactive TUI (the default). The
+/// `status` and `adapters` subcommands provide one-shot inspection over the
+/// adapter layer and core models. All heavy lifting is delegated; this binary
+/// is only glue + formatting.
 #[derive(Parser, Debug)]
 #[command(name = "rexops", version, about, long_about = None)]
 struct Cli {
@@ -34,8 +38,9 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Optional subcommand. When omitted, the interactive TUI launches.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -62,8 +67,16 @@ fn main() -> ExitCode {
 
 /// The actual logic, separated so main() can do the exit-code dance cleanly.
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // No subcommand → the interactive TUI is the default experience. It loads
+    // its own config and owns the terminal lifecycle, so we hand off directly
+    // and return its Result (the `--json` flag has no meaning here and is
+    // ignored). Everything below is the one-shot inspection path.
+    let Some(command) = cli.command else {
+        return rexops_tui::run();
+    };
+
     let config = load_config();
-    match cli.command {
+    match command {
         Commands::Status => {
             let snapshot = build_snapshot(&config);
             if cli.json {

@@ -478,6 +478,7 @@ dependencies = [
  "clap",
  "rexops-app",
  "rexops-core",
+ "rexops-tui",
  "serde_json",
  "serde_yaml",
 ]
