@@ -397,4 +397,67 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), total, "catalog tool ids must be unique");
     }
+
+    /// A ForegroundRunner that does nothing — the detail-pane navigation test
+    /// never launches, it only moves the selection.
+    struct NoopRunner;
+    impl crate::tools::ForegroundRunner for NoopRunner {
+        fn run_foreground(
+            &mut self,
+            _command: &crate::tools::LaunchCommand,
+        ) -> std::io::Result<crate::tools::ChildExit> {
+            Ok(crate::tools::ChildExit::Success)
+        }
+    }
+
+    #[test]
+    fn detail_pane_follows_the_selection_as_it_moves() {
+        use crate::app::Screen;
+        use crate::input::Action;
+
+        // The detail pane is derived purely from `selected_tool`, so moving the
+        // selection must swap which tool the pane describes. Drive the REAL
+        // navigation path (`Action::Down` through `on_action` on the Launcher
+        // screen) rather than poking the index, so this guards the whole
+        // keypress → selection → re-render chain, not just the render fn.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        app.current_screen = Screen::Launcher;
+        let mut runner = NoopRunner;
+
+        // Selection starts at 0 → Bulwark. The detail pane names it and shows its
+        // description, and does NOT yet name the next tool.
+        let text = render_to_text(&app);
+        assert!(text.contains("Bulwark:"), "starts on Bulwark:\n{text}");
+        assert!(
+            !text.contains("Proto:"),
+            "Proto's detail must not show while Bulwark is selected:\n{text}"
+        );
+
+        // Down → Proto (index 1). The pane must now follow to Proto, dropping
+        // Bulwark's detail line.
+        app.on_action(Action::Down, &mut runner);
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Proto:") && text.contains("checklist"),
+            "detail must follow the selection to Proto:\n{text}"
+        );
+        assert!(
+            !text.contains("Bulwark:"),
+            "Bulwark's detail must no longer show after moving off it:\n{text}"
+        );
+
+        // Down again → Scripts (index 2). Confirms it keeps tracking, not just a
+        // one-step fluke.
+        app.on_action(Action::Down, &mut runner);
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Scripts:"),
+            "detail must continue to follow the selection to Scripts:\n{text}"
+        );
+        assert!(
+            !text.contains("Proto:"),
+            "Proto's detail must clear once moved past:\n{text}"
+        );
+    }
 }

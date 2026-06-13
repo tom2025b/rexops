@@ -99,17 +99,19 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     // Workstate v3 is the source of truth for scripts/tools/findings. Piped
     // input is accepted only when it is a recognized Workstate snapshot; any
     // other piped blob is ignored rather than falling back to another path.
-    let route = piped.map(classify_snapshot);
+    //
+    // Match on `piped` alone and classify inside the Some arm, so the route is
+    // only ever computed where it exists — there is no "(Some, None)" state to
+    // explain away (it was previously an `unreachable!`).
     if config.adapter_enabled("workstate") {
-        match (piped, route) {
-            (Some(text), Some(SnapshotKind::Workstate)) => {
-                populate_workstate(&mut snap, Some(text.to_owned()));
-            }
-            (Some(_), Some(SnapshotKind::Unknown)) => {
-                snap.add_note("stdin: not a Workstate v3 snapshot — ignored".to_owned());
-            }
-            (None, _) => populate_workstate(&mut snap, None),
-            (Some(_), None) => unreachable!("route is always present when piped is Some"),
+        match piped {
+            Some(text) => match classify_snapshot(text) {
+                SnapshotKind::Workstate => populate_workstate(&mut snap, Some(text.to_owned())),
+                SnapshotKind::Unknown => {
+                    snap.add_note("stdin: not a Workstate v3 snapshot — ignored".to_owned());
+                }
+            },
+            None => populate_workstate(&mut snap, None),
         }
     }
 

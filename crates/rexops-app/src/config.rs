@@ -26,16 +26,25 @@ use rexops_core::AppConfig;
 pub fn load_config() -> AppConfig {
     let candidate_paths = ["./examples/config.yaml", "./rexops.yaml", "./rexops.yml"];
     for p in &candidate_paths {
-        if Path::new(p).exists() {
-            if let Ok(contents) = std::fs::read_to_string(p) {
-                if let Ok(cfg) = serde_yaml::from_str::<AppConfig>(&contents) {
-                    if cfg.validate().is_ok() {
-                        return cfg;
+        if !Path::new(p).exists() {
+            continue;
+        }
+        // A config file is PRESENT here. Falling back to defaults silently when
+        // it can't be used would hide a real misconfiguration (the user thinks
+        // their settings apply; they don't), so each failure mode warns to
+        // stderr before falling through. A merely-absent file stays silent —
+        // that's the normal "adapters are optional" case.
+        match std::fs::read_to_string(p) {
+            Err(e) => eprintln!("rexops: config {p} could not be read ({e}); using defaults"),
+            Ok(contents) => match serde_yaml::from_str::<AppConfig>(&contents) {
+                Err(e) => eprintln!("rexops: config {p} is not valid YAML ({e}); using defaults"),
+                Ok(cfg) => match cfg.validate() {
+                    Ok(()) => return cfg,
+                    Err(e) => {
+                        eprintln!("rexops: config {p} failed validation ({e}); using defaults");
                     }
-                    // If validate fails we fall through to default (silent is ok
-                    // for a dev tool; a real app might log a warning here).
-                }
-            }
+                },
+            },
         }
     }
     AppConfig::default()
