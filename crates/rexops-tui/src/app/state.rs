@@ -213,14 +213,28 @@ impl App {
             // channel (apply_snapshot). If build_snapshot panicked, the thread
             // would unwind before sending, no snapshot would arrive, and the flag
             // would stay set forever — silently bricking `r`. Catch the unwind so
-            // a panicking probe still delivers a snapshot (an empty fallback) and
-            // the flag always clears.
+            // a panicking probe still delivers a snapshot and the flag always
+            // clears. The fallback carries a NOTE (panicked_snapshot) so the crash
+            // is visible on the Dashboard/log rather than reading as a normal
+            // empty "nothing probed yet" state.
             let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 build_snapshot(&cfg)
             }))
-            .unwrap_or_else(|_| OpsSnapshot::new());
+            .unwrap_or_else(|_| Self::panicked_snapshot());
             let _ = tx.send(snapshot);
         });
+    }
+
+    /// The fallback snapshot delivered when an adapter probe panics mid-refresh.
+    /// It is empty (no probe data survived the unwind) but carries a note so the
+    /// failure surfaces in the Dashboard Messages pane / activity log instead of
+    /// looking identical to a never-probed state — a silent crash is the worst
+    /// outcome for an ops tool. Every other build_snapshot path already reports
+    /// via notes; this keeps the panic path consistent.
+    pub(crate) fn panicked_snapshot() -> OpsSnapshot {
+        let mut snap = OpsSnapshot::new();
+        snap.add_note("refresh failed: an adapter probe panicked — partial/empty results");
+        snap
     }
 
     pub fn apply_snapshot(&mut self, snapshot: OpsSnapshot) {
@@ -230,7 +244,14 @@ impl App {
         names.sort();
         self.adapter_names = names;
         self.keep_selected_adapter_visible();
-        self.log_event("Snapshot updated from adapter probes");
+        // A panicked refresh carries the marker note; surface it in the activity
+        // log too (not just the Messages pane) so the failure is visible even
+        // when that pane is off-screen, rather than reading as a normal update.
+        if self.snapshot.notes.iter().any(|n| n.contains("an adapter probe panicked")) {
+            self.log_event("Refresh failed: an adapter probe panicked (results may be empty)");
+        } else {
+            self.log_event("Snapshot updated from adapter probes");
+        }
     }
 
     // --- activity log and display toggles ---
