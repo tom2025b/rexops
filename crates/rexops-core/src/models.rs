@@ -174,6 +174,12 @@ pub struct OpsSnapshot {
     /// was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate: Option<crate::WorkstateInfo>,
+
+    /// Set to `true` when this snapshot was produced by the panic-recovery
+    /// fallback (an adapter probe panicked mid-refresh). A typed flag rather than
+    /// a note substring so callers can branch on it without string matching.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub panicked: bool,
 }
 
 impl OpsSnapshot {
@@ -191,6 +197,7 @@ impl OpsSnapshot {
             tools: None,
             findings: None,
             workstate: None,
+            panicked: false,
         }
     }
 

@@ -253,6 +253,7 @@ impl App {
     /// via notes; this keeps the panic path consistent.
     pub(crate) fn panicked_snapshot() -> OpsSnapshot {
         let mut snap = OpsSnapshot::new();
+        snap.panicked = true;
         snap.add_note("refresh failed: an adapter probe panicked — partial/empty results");
         snap
     }
@@ -264,10 +265,7 @@ impl App {
         names.sort();
         self.adapter_names = names;
         self.keep_selected_adapter_visible();
-        // A panicked refresh carries the marker note; surface it in the activity
-        // log too (not just the Messages pane) so the failure is visible even
-        // when that pane is off-screen, rather than reading as a normal update.
-        if self.snapshot.notes.iter().any(|n| n.contains("an adapter probe panicked")) {
+        if self.snapshot.panicked {
             self.log_event("Refresh failed: an adapter probe panicked (results may be empty)");
         } else {
             self.log_event("Snapshot updated from adapter probes");

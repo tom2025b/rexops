@@ -96,9 +96,10 @@ fn the_panic_fallback_snapshot_carries_a_visible_note() {
     // crash surfaces on the Dashboard Messages pane.
     let snap = App::panicked_snapshot();
     assert!(snap.adapter_health.is_empty(), "no probe data survives a panic");
+    assert!(snap.panicked, "the fallback must set the typed panicked flag");
     assert!(
         snap.notes.iter().any(|n| n.contains("an adapter probe panicked")),
-        "the fallback must carry a panic note, got: {:?}",
+        "the fallback must still carry a note for the Messages pane, got: {:?}",
         snap.notes
     );
 }
