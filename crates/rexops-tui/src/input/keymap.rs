@@ -85,6 +85,15 @@ pub fn handle_key(key: KeyEvent, mode: InputMode) -> Option<Action> {
     if suite_ui::keys::is_palette(key) {
         return Some(Action::OpenPalette);
     }
+    // Cancel is a GLOBAL escape, like Ctrl-C and the palette: it must work in
+    // both modes so a user is never trapped in a text field (palette / filter)
+    // with no way out. `suite_ui::keys::is_cancel` matches Esc OR Ctrl-G — the
+    // Esc-free escape for keyboards without a usable Esc key. Checked here, ahead
+    // of mode dispatch, so Ctrl-G beats the Text-mode `Char(c) => InputChar`
+    // catch-all (a bare `g` still types normally; only the Ctrl chord cancels).
+    if suite_ui::keys::is_cancel(key) {
+        return Some(Action::Cancel);
+    }
 
     match mode {
         InputMode::Text => handle_key_text(key),
@@ -96,8 +105,8 @@ pub fn handle_key(key: KeyEvent, mode: InputMode) -> Option<Action> {
 /// only the control keys a text field needs map to actions. Note `j`/`k` as
 /// CHARACTERS type normally here — only the arrow keys navigate while typing.
 fn handle_key_text(key: KeyEvent) -> Option<Action> {
+    // Cancel (Esc / Ctrl-G) is handled globally in `handle_key`, before this.
     match key.code {
-        KeyCode::Esc => Some(Action::Cancel),
         KeyCode::Enter => Some(Action::Activate),
         KeyCode::Up => Some(Action::Up),
         KeyCode::Down => Some(Action::Down),
@@ -126,7 +135,7 @@ fn handle_key_navigation(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('j') | KeyCode::Down => Some(Action::Down),
         KeyCode::Char('k') | KeyCode::Up => Some(Action::Up),
         KeyCode::Enter => Some(Action::Activate),
-        KeyCode::Esc => Some(Action::Cancel),
+        // Cancel (Esc / Ctrl-G) is handled globally in `handle_key`, before this.
         KeyCode::Backspace => Some(Action::Backspace),
         KeyCode::Char(c) => Some(Action::InputChar(c)),
         _ => None,
@@ -202,11 +211,34 @@ mod tests {
 
     #[test]
     fn ctrl_c_and_palette_are_global_escapes_in_both_modes() {
-        // The two escapes that must work even inside a text field, so the user is
-        // never trapped: Ctrl-C quits, Ctrl-P opens the palette.
+        // The escapes that must work even inside a text field, so the user is
+        // never trapped: Ctrl-C quits, Ctrl-P opens the palette, Ctrl-G cancels.
         for mode in [InputMode::Navigation, InputMode::Text] {
             assert_eq!(handle_key(ctrl('c'), mode), Some(Action::Quit), "{mode:?}");
             assert_eq!(handle_key(ctrl('p'), mode), Some(Action::OpenPalette), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn ctrl_g_cancels_in_both_modes_as_the_esc_free_escape() {
+        // The whole point for a keyboard without a usable Esc key: Ctrl-G must
+        // reach Action::Cancel in BOTH modes, including Text — where it has to
+        // beat the printable-char catch-all so the palette/filter can be left.
+        for mode in [InputMode::Navigation, InputMode::Text] {
+            assert_eq!(handle_key(ctrl('g'), mode), Some(Action::Cancel), "{mode:?}");
+        }
+        // A bare `g` is NOT cancel — it must still type into a focused field and
+        // be an ordinary char in nav mode. Only the Ctrl chord cancels.
+        assert_eq!(handle_key(ch('g'), InputMode::Text), Some(Action::InputChar('g')));
+        assert_eq!(handle_key(ch('g'), InputMode::Navigation), Some(Action::InputChar('g')));
+    }
+
+    #[test]
+    fn esc_still_cancels_in_both_modes() {
+        // Esc keeps working for keyboards that have it — it just routes through
+        // the same global cancel path as Ctrl-G now, not a per-mode arm.
+        for mode in [InputMode::Navigation, InputMode::Text] {
+            assert_eq!(handle_key(key(KeyCode::Esc), mode), Some(Action::Cancel), "{mode:?}");
         }
     }
 }

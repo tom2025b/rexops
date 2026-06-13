@@ -61,6 +61,7 @@ fn snapshot_with_adapters(names: &[&str]) -> OpsSnapshot {
     snap
 }
 
+mod esc;
 mod filters;
 mod help;
 mod jobs;

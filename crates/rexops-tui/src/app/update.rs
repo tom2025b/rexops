@@ -172,6 +172,17 @@ impl App {
         }
     }
 
+    /// Handle Esc. It "backs out one level" through the active context — filter
+    /// capture, then an applied filter, then the Launcher (→ Dashboard). At the
+    /// top level (no context left to back out of) Esc is a deliberate NO-OP, not
+    /// a quit. Quit is `q` / Ctrl-C only.
+    ///
+    /// The old fallback returned quit, so Esc from the Dashboard exited the whole
+    /// app — and because quitting kills a running job without a confirm, Esc on
+    /// the Jobs screen mid-job meant "kill the job AND drop the app" in one
+    /// keystroke. Esc is a back/cancel reflex, not an exit key; making the
+    /// top-level case a no-op removes that footgun while leaving every nested
+    /// "back out" behaviour intact. Always returns `false` (never quits).
     fn cancel_current_context(&mut self) -> bool {
         // Esc while filtering: abandon the filter — exit the mode AND clear the
         // query, returning the list to its full state.
@@ -180,19 +191,20 @@ impl App {
             self.filter.clear();
             self.select_first_visible_adapter();
             self.log_event("Filter cleared");
-            false
         } else if self.filter_screen() && !self.filter.is_empty() {
             // Not filtering, but a filter was applied (Enter then Esc in nav):
             // Esc clears the applied filter.
             self.filter.clear();
             self.select_first_visible_adapter();
-            false
         } else if self.current_screen == Screen::Launcher {
             self.current_screen = Screen::Dashboard;
             self.log_event("Launcher: back to Dashboard");
-            false
         } else {
-            true
+            // Top level: nothing to back out of. Esc does NOT quit — that is `q`
+            // / Ctrl-C. A no-op here is what keeps Esc from killing a running job
+            // and exiting the app in a single keystroke on the Jobs screen.
+            self.log_event("Esc: nothing to cancel here (press q to quit)");
         }
+        false
     }
 }
