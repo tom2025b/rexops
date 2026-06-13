@@ -394,4 +394,60 @@ fn arm_tool_refuses_an_unavailable_tool_and_opens_no_confirm() {
     );
 }
 
+#[test]
+fn start_job_reports_a_spawn_failure_and_leaves_clean_state() {
+    // The spawn-failure branch of start_job (manager.rs) was only ever hit
+    // incidentally by a foreground-runner test. Cover it directly: a tool whose
+    // command resolves (pinned config binary) but cannot exec (path is not an
+    // executable) must log "failed to start", leave NO job handle, and not
+    // switch to the Jobs screen — and the app must remain able to start a job
+    // afterwards (the failure left no half-state).
+    let mut app = launcher_app();
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "scripts".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/nonexistent/definitely-not-a-binary".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    let screen_before = app.current_screen;
+
+    // Drive the manager entry point the audit flagged, not the UI action, so
+    // this test pins the failure handling regardless of how launches are armed.
+    app.start_job("scripts", "Scripts");
+
+    assert!(
+        app.job.is_none(),
+        "a failed spawn must leave no dangling job handle"
+    );
+    assert_eq!(
+        app.current_screen, screen_before,
+        "a failed spawn must not switch to the Jobs screen"
+    );
+    assert!(
+        app.recent_events
+            .iter()
+            .any(|e| e.contains("Scripts: failed to start")),
+        "the spawn failure must be reported to the user: {:?}",
+        app.recent_events
+    );
+
+    // The failed start left clean state: starting another job still works. Pin
+    // `true` (a real, always-present executable) and confirm a handle appears.
+    app.modify_config(|cfg| {
+        cfg.adapters
+            .get_mut("scripts")
+            .expect("scripts adapter")
+            .binary = Some("true".to_owned());
+    });
+    app.start_job("scripts", "Scripts");
+    assert!(
+        app.job.is_some(),
+        "after a failed spawn the app must still be able to start a job"
+    );
+}
+
 // --- command palette ----------------------------------------------------
