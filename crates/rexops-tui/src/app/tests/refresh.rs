@@ -69,14 +69,14 @@ fn apply_snapshot_always_clears_the_refreshing_flag() {
 #[test]
 fn a_panicking_snapshot_build_still_yields_a_snapshot() {
     // The hardening: request_refresh wraps build_snapshot in catch_unwind so a
-    // panicking probe still SENDS a snapshot (empty fallback) and the flag
-    // clears. We can't make the real build_snapshot panic on demand, so we
+    // panicking probe still SENDS a snapshot (the panicked fallback) and the
+    // flag clears. We can't make the real build_snapshot panic on demand, so we
     // exercise the exact recovery pattern request_refresh uses, proving a panic
-    // is converted into the empty fallback rather than a lost send + wedged flag.
+    // is converted into the fallback rather than a lost send + wedged flag.
     let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> OpsSnapshot {
         panic!("probe blew up");
     }))
-    .unwrap_or_else(|_| OpsSnapshot::new());
+    .unwrap_or_else(|_| App::panicked_snapshot());
 
     // A usable (empty) snapshot came back instead of unwinding the thread.
     assert!(snapshot.adapter_health.is_empty());
@@ -87,4 +87,40 @@ fn a_panicking_snapshot_build_still_yields_a_snapshot() {
     app.refreshing = true;
     app.apply_snapshot(snapshot);
     assert!(!app.refreshing, "a fallback snapshot must un-wedge refresh");
+}
+
+#[test]
+fn the_panic_fallback_snapshot_carries_a_visible_note() {
+    // The silent-failure fix: the panic fallback must NOT be a note-less empty
+    // snapshot (indistinguishable from "never probed"). It carries a note so the
+    // crash surfaces on the Dashboard Messages pane.
+    let snap = App::panicked_snapshot();
+    assert!(snap.adapter_health.is_empty(), "no probe data survives a panic");
+    assert!(
+        snap.notes.iter().any(|n| n.contains("an adapter probe panicked")),
+        "the fallback must carry a panic note, got: {:?}",
+        snap.notes
+    );
+}
+
+#[test]
+fn applying_a_panicked_snapshot_logs_a_distinct_failure_event() {
+    // The panic must also reach the activity log (visible even when the Messages
+    // pane is off-screen) — not the generic "Snapshot updated" line that a
+    // normal refresh logs.
+    let mut app = bare_app();
+    app.apply_snapshot(App::panicked_snapshot());
+    assert!(
+        app.recent_events
+            .iter()
+            .any(|e| e.contains("Refresh failed") && e.contains("panicked")),
+        "a panicked refresh must log a distinct failure event, got: {:?}",
+        app.recent_events
+    );
+    assert!(
+        !app.recent_events
+            .iter()
+            .any(|e| e == "Snapshot updated from adapter probes"),
+        "the panic path must NOT log the normal success line"
+    );
 }
