@@ -5,7 +5,6 @@
 //! how to suspend/restore the TUI around a child process.
 
 use std::io;
-use std::process::Command;
 
 use rexops_core::AppConfig;
 
@@ -73,7 +72,7 @@ impl LaunchReport {
 
 /// Resolve and launch any tool by id using the supplied terminal runner.
 ///
-/// `tool_id` keys both the `which <tool_id>` PATH lookup and the per-adapter
+/// `tool_id` keys both the PATH lookup (a std `$PATH` walk) and the per-adapter
 /// config `binary` fallback; `name` is the display name used in messages.
 ///
 /// Not every entry is launchable. When no command resolves we return a
@@ -146,19 +145,59 @@ pub fn resolve_launch_command(tool_id: &str, config: &AppConfig) -> Option<Launc
     Some(LaunchCommand { program, args })
 }
 
-/// Prefer the user's PATH by asking the platform `which` command.
+/// Resolve a bare command name against the user's `PATH`, the way a shell does:
+/// walk each `PATH` entry in order and return the first `entry/tool_id` that
+/// exists and is executable. Returns the full resolved path.
+///
+/// This is a hermetic std-only lookup — no spawning the external `which` binary
+/// (which may be absent on minimal images and pulls in its own PATH/quirks). A
+/// name already containing a path separator is treated as an explicit path and
+/// checked directly, not searched (mirroring shell behaviour).
 fn command_from_path(tool_id: &str) -> Option<String> {
-    let output = Command::new("which").arg(tool_id).output().ok()?;
+    search_path(tool_id, std::env::var_os("PATH").as_deref())
+}
 
-    if !output.status.success() {
-        return None;
+/// PATH resolution against an explicit `path_var` (so tests don't touch the
+/// process-global `PATH`). Walks `path_var` entries in order, returning the
+/// first executable `entry/tool_id`. A name with a separator is an explicit
+/// path, checked directly rather than searched.
+fn search_path(tool_id: &str, path_var: Option<&std::ffi::OsStr>) -> Option<String> {
+    use std::path::Path;
+
+    // An explicit path (contains a separator) isn't PATH-searched — check it
+    // directly, like a shell running `./foo` or `/usr/bin/foo`.
+    if tool_id.contains(std::path::MAIN_SEPARATOR) {
+        let p = Path::new(tool_id);
+        return is_executable_file(p).then(|| tool_id.to_owned());
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_owned)
+    std::env::split_paths(path_var?)
+        .map(|dir| dir.join(tool_id))
+        .find(|candidate| is_executable_file(candidate))
+        .map(|candidate| candidate.to_string_lossy().into_owned())
+}
+
+/// Whether `path` is a regular file the current process may execute. On Unix we
+/// check the executable permission bits; elsewhere, existence as a file is the
+/// best portable proxy.
+fn is_executable_file(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Any execute bit set (owner/group/other) — matches how a shell decides
+        // a PATH hit is runnable without resolving the caller's uid/gid.
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 /// Fall back to an explicit binary configured for this tool's adapter.
@@ -364,5 +403,82 @@ mod tests {
         assert_eq!(report.message(), "Workstate has no launch command yet");
         assert!(!report.should_refresh());
         assert!(runner.called_with.is_none(), "runner must not be called");
+    }
+}
+
+#[cfg(test)]
+mod path_walk_tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Write a file with the given mode into a fresh per-test temp dir; return
+    /// (dir, path). The dir name includes the test name so parallel tests never
+    /// collide. Tests pass the dir as an explicit PATH to `search_path`, so they
+    /// never touch the process-global `PATH` (no env race with other tests).
+    fn write_mode(name: &str, mode: u32) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "rexops-pathwalk-{}-{}",
+            std::process::id(),
+            name
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join(name);
+        std::fs::write(&path, b"#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        (dir, path)
+    }
+
+    #[test]
+    fn path_walk_finds_an_executable_in_a_later_path_entry() {
+        // The std walk must behave like a shell: scan PATH entries in order and
+        // return the first executable hit — no external `which`. A junk dir comes
+        // first; the tool only exists in our dir.
+        let (dir, path) = write_mode("pw-exec-tool", 0o755);
+        let path_var = format!("/nonexistent-rexops-xyz:{}", dir.display());
+
+        let got = search_path("pw-exec-tool", Some(OsStr::new(&path_var)));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            got,
+            Some(path.to_string_lossy().into_owned()),
+            "PATH walk must resolve the executable to its full path"
+        );
+    }
+
+    #[test]
+    fn path_walk_skips_a_non_executable_file() {
+        // A same-named NON-executable file on PATH must not count as a hit — a
+        // shell wouldn't run it, and neither do we (what the `which` shell-out
+        // got for free, the std walk must reproduce).
+        let (dir, _path) = write_mode("pw-plain-tool", 0o644); // no execute bits
+
+        let got = search_path("pw-plain-tool", Some(OsStr::new(&dir.display().to_string())));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(got, None, "a non-executable file is not a runnable PATH hit");
+    }
+
+    #[test]
+    fn an_explicit_path_is_checked_directly_not_searched() {
+        // A name containing a separator is an explicit path: check it as-is,
+        // don't PATH-search. Empty PATH proves we did NOT rely on searching.
+        let (dir, path) = write_mode("pw-explicit", 0o755);
+
+        let got = search_path(&path.to_string_lossy(), Some(OsStr::new("")));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            got,
+            Some(path.to_string_lossy().into_owned()),
+            "an explicit executable path resolves to itself"
+        );
+    }
+
+    #[test]
+    fn no_path_var_resolves_nothing() {
+        // With no PATH at all, a bare name can't resolve.
+        assert_eq!(search_path("anything", None), None);
     }
 }
