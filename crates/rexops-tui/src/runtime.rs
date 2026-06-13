@@ -142,7 +142,13 @@ mod tests {
         // No snapshot, no job, no input: the loop must do nothing and report
         // clean so the real `run` skips the redraw (the whole point of `dirty`).
         let r = step(&mut app, &rx, None, &mut runner);
-        assert_eq!(r, StepResult { dirty: false, quit: false });
+        assert_eq!(
+            r,
+            StepResult {
+                dirty: false,
+                quit: false
+            }
+        );
     }
 
     #[test]
@@ -191,7 +197,13 @@ mod tests {
         // arm) must not force a redraw — `step` only marks dirty when a key
         // actually produces an Action.
         let r = step(&mut app, &rx, key(KeyCode::Tab), &mut runner);
-        assert_eq!(r, StepResult { dirty: false, quit: false });
+        assert_eq!(
+            r,
+            StepResult {
+                dirty: false,
+                quit: false
+            }
+        );
     }
 
     #[test]
@@ -239,6 +251,9 @@ mod tests {
         // We drew exactly on the up-front paint + the two dirty ticks; the idle
         // tick added no render. This is the dirty-flag contract the loop relies
         // on to stay quiet when nothing is happening.
-        assert_eq!(renders, 3, "one initial + two dirty redraws, no idle redraw");
+        assert_eq!(
+            renders, 3,
+            "one initial + two dirty redraws, no idle redraw"
+        );
     }
 }
