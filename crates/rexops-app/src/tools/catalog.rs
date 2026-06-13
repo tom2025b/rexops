@@ -1,12 +1,11 @@
 //! Static launcher catalog and per-tool execution-mode metadata.
 
-/// How a tool runs when launched from the TUI.
+/// How a tool runs when launched from a front-end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunMode {
     /// Hands over the real terminal (interactive tools).
     Foreground,
-    /// Streams output into the Jobs screen.
-    #[allow(dead_code)]
+    /// Streams output into a background-job view.
     Background,
 }
 
@@ -66,8 +65,8 @@ pub fn by_id(id: &str) -> Option<&'static ToolEntry> {
     CATALOG.iter().find(|tool| tool.id == id)
 }
 
-/// True when the tool runs as a background job whose output can stream into
-/// the Jobs screen (as opposed to taking over the terminal).
+/// True when the tool runs as a background job whose output can stream into a
+/// view (as opposed to taking over the terminal).
 pub fn is_streamable(tool_id: &str) -> bool {
     matches!(
         by_id(tool_id).map(|tool| tool.run_mode),
