@@ -17,7 +17,6 @@ use rexops_core::{
     RiskSummary, WorkstateInfo,
 };
 
-
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
 ///

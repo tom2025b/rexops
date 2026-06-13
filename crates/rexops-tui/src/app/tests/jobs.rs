@@ -296,6 +296,9 @@ fn poll_job_reports_change_when_a_job_finishes() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert!(last, "the tick that finished the job must request a repaint");
+    assert!(
+        last,
+        "the tick that finished the job must request a repaint"
+    );
     assert_eq!(app.job_history.len(), 1, "completion was recorded");
 }

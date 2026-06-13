@@ -78,7 +78,10 @@ mod tests {
     fn status_to_health_covers_known_and_unknown_values() {
         assert_eq!(status_to_health("Fresh"), AdapterHealth::Healthy);
         assert_eq!(status_to_health("Stale"), AdapterHealth::Degraded);
-        assert_eq!(status_to_health("UnsupportedVersion"), AdapterHealth::Degraded);
+        assert_eq!(
+            status_to_health("UnsupportedVersion"),
+            AdapterHealth::Degraded
+        );
         assert_eq!(status_to_health("Missing"), AdapterHealth::Unavailable);
         // An unanticipated status is Unknown, never silently treated as healthy.
         assert_eq!(status_to_health("WeirdNewStatus"), AdapterHealth::Unknown);
@@ -134,6 +137,9 @@ mod tests {
     fn provenance_optional_fields_omitted_when_none() {
         let json = serde_json::to_string(&Provenance::default()).unwrap();
         assert!(!json.contains("fetched_at"), "None omitted, got: {json}");
-        assert!(!json.contains("source_observed_at"), "None omitted, got: {json}");
+        assert!(
+            !json.contains("source_observed_at"),
+            "None omitted, got: {json}"
+        );
     }
 }

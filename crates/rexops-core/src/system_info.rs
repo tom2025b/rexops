@@ -58,8 +58,14 @@ mod tests {
     fn none_fields_are_omitted_but_disk_vec_is_kept() {
         // hostname/kernel/uptime skip when None; disk has no skip and stays as [].
         let json = serde_json::to_string(&SystemInfo::default()).unwrap();
-        assert!(!json.contains("hostname"), "None hostname omitted, got: {json}");
-        assert!(json.contains("\"disk\":[]"), "empty disk still present, got: {json}");
+        assert!(
+            !json.contains("hostname"),
+            "None hostname omitted, got: {json}"
+        );
+        assert!(
+            json.contains("\"disk\":[]"),
+            "empty disk still present, got: {json}"
+        );
     }
 
     #[test]

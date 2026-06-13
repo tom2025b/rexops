@@ -37,7 +37,10 @@ fn any_key_dismisses_help_and_does_not_reach_the_screen_behind() {
     app.on_action(Action::ToggleHelp, &mut FakeRunner { calls: 0 });
     app.on_action(Action::InputChar('/'), &mut FakeRunner { calls: 0 });
     assert!(!app.show_help, "any key closes help");
-    assert!(!app.filtering, "/ must not enter filter mode behind the overlay");
+    assert!(
+        !app.filtering,
+        "/ must not enter filter mode behind the overlay"
+    );
 }
 
 #[test]

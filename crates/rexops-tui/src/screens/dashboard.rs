@@ -91,7 +91,8 @@ fn render_adapters_table(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
                 let is_selected = i == sel_pos;
                 let marker = if is_selected { "▶ " } else { "  " };
                 let name_cell = if is_selected {
-                    Cell::from(format!("{marker}{name}")).style(Style::default().add_modifier(Modifier::BOLD))
+                    Cell::from(format!("{marker}{name}"))
+                        .style(Style::default().add_modifier(Modifier::BOLD))
                 } else {
                     Cell::from(format!("{marker}{name}"))
                 };

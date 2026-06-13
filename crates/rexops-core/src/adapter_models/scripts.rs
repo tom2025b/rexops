@@ -102,8 +102,14 @@ mod tests {
             ..ScriptsInfo::default()
         };
         assert!(info.is_favorite(&script(Some("fav-id"), None)), "id match");
-        assert!(info.is_favorite(&script(None, Some("fav-name"))), "name fallback");
-        assert!(!info.is_favorite(&script(Some("other"), Some("nope"))), "no match");
+        assert!(
+            info.is_favorite(&script(None, Some("fav-name"))),
+            "name fallback"
+        );
+        assert!(
+            !info.is_favorite(&script(Some("other"), Some("nope"))),
+            "no match"
+        );
     }
 
     #[test]
@@ -112,6 +118,9 @@ mod tests {
         // them through `rest` rather than dropping or rejecting them.
         let s: Script = serde_json::from_str(r#"{"id":"x","custom":"keepme"}"#).unwrap();
         assert_eq!(s.id.as_deref(), Some("x"));
-        assert_eq!(s.rest.get("custom").and_then(|v| v.as_str()), Some("keepme"));
+        assert_eq!(
+            s.rest.get("custom").and_then(|v| v.as_str()),
+            Some("keepme")
+        );
     }
 }

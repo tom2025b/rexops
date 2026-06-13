@@ -156,7 +156,10 @@ fn palette_run_rows_carry_the_availability_tag() {
         scripts.desc
     );
     // A pure navigation row must NOT get a run tag.
-    let nav = cmds.iter().find(|c| c.label == "dashboard").expect("nav present");
+    let nav = cmds
+        .iter()
+        .find(|c| c.label == "dashboard")
+        .expect("nav present");
     assert!(
         !nav.desc.contains("· disabled"),
         "navigation rows must not carry a run availability tag: {:?}",

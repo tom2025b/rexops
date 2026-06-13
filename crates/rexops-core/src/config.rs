@@ -222,7 +222,10 @@ mod tests {
             },
         );
         assert!(!cfg.adapter_enabled("bulwark"), "explicit false → disabled");
-        assert!(cfg.adapter_enabled("system"), "other adapters still default-on");
+        assert!(
+            cfg.adapter_enabled("system"),
+            "other adapters still default-on"
+        );
     }
 
     #[test]

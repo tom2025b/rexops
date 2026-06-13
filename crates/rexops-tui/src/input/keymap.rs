@@ -176,10 +176,22 @@ mod tests {
     #[test]
     fn text_mode_still_maps_the_control_whitelist() {
         // The small whitelist a text field needs still acts in Text mode.
-        assert_eq!(handle_key(key(KeyCode::Esc), InputMode::Text), Some(Action::Cancel));
-        assert_eq!(handle_key(key(KeyCode::Enter), InputMode::Text), Some(Action::Activate));
-        assert_eq!(handle_key(key(KeyCode::Up), InputMode::Text), Some(Action::Up));
-        assert_eq!(handle_key(key(KeyCode::Down), InputMode::Text), Some(Action::Down));
+        assert_eq!(
+            handle_key(key(KeyCode::Esc), InputMode::Text),
+            Some(Action::Cancel)
+        );
+        assert_eq!(
+            handle_key(key(KeyCode::Enter), InputMode::Text),
+            Some(Action::Activate)
+        );
+        assert_eq!(
+            handle_key(key(KeyCode::Up), InputMode::Text),
+            Some(Action::Up)
+        );
+        assert_eq!(
+            handle_key(key(KeyCode::Down), InputMode::Text),
+            Some(Action::Down)
+        );
         assert_eq!(
             handle_key(key(KeyCode::Backspace), InputMode::Text),
             Some(Action::Backspace)
@@ -188,15 +200,30 @@ mod tests {
 
     #[test]
     fn navigation_mode_resolves_global_commands() {
-        assert_eq!(handle_key(ch('q'), InputMode::Navigation), Some(Action::Quit));
-        assert_eq!(handle_key(ch('r'), InputMode::Navigation), Some(Action::Refresh));
-        assert_eq!(handle_key(ch('x'), InputMode::Navigation), Some(Action::CancelJob));
+        assert_eq!(
+            handle_key(ch('q'), InputMode::Navigation),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            handle_key(ch('r'), InputMode::Navigation),
+            Some(Action::Refresh)
+        );
+        assert_eq!(
+            handle_key(ch('x'), InputMode::Navigation),
+            Some(Action::CancelJob)
+        );
         assert_eq!(
             handle_key(ch('1'), InputMode::Navigation),
             Some(Action::SwitchToDashboard)
         );
-        assert_eq!(handle_key(ch('j'), InputMode::Navigation), Some(Action::Down));
-        assert_eq!(handle_key(ch('?'), InputMode::Navigation), Some(Action::ToggleHelp));
+        assert_eq!(
+            handle_key(ch('j'), InputMode::Navigation),
+            Some(Action::Down)
+        );
+        assert_eq!(
+            handle_key(ch('?'), InputMode::Navigation),
+            Some(Action::ToggleHelp)
+        );
     }
 
     #[test]
@@ -204,9 +231,18 @@ mod tests {
         // `h` collided with vim-style navigation; it must NOT open help. Help is
         // `?` only. In nav mode `h` is a plain InputChar (no binding); in text
         // mode it types normally.
-        assert_eq!(handle_key(ch('h'), InputMode::Navigation), Some(Action::InputChar('h')));
-        assert_eq!(handle_key(ch('h'), InputMode::Text), Some(Action::InputChar('h')));
-        assert_ne!(handle_key(ch('h'), InputMode::Navigation), Some(Action::ToggleHelp));
+        assert_eq!(
+            handle_key(ch('h'), InputMode::Navigation),
+            Some(Action::InputChar('h'))
+        );
+        assert_eq!(
+            handle_key(ch('h'), InputMode::Text),
+            Some(Action::InputChar('h'))
+        );
+        assert_ne!(
+            handle_key(ch('h'), InputMode::Navigation),
+            Some(Action::ToggleHelp)
+        );
     }
 
     #[test]
@@ -215,7 +251,11 @@ mod tests {
         // never trapped: Ctrl-C quits, Ctrl-P opens the palette, Ctrl-G cancels.
         for mode in [InputMode::Navigation, InputMode::Text] {
             assert_eq!(handle_key(ctrl('c'), mode), Some(Action::Quit), "{mode:?}");
-            assert_eq!(handle_key(ctrl('p'), mode), Some(Action::OpenPalette), "{mode:?}");
+            assert_eq!(
+                handle_key(ctrl('p'), mode),
+                Some(Action::OpenPalette),
+                "{mode:?}"
+            );
         }
     }
 
@@ -225,12 +265,22 @@ mod tests {
         // reach Action::Cancel in BOTH modes, including Text — where it has to
         // beat the printable-char catch-all so the palette/filter can be left.
         for mode in [InputMode::Navigation, InputMode::Text] {
-            assert_eq!(handle_key(ctrl('g'), mode), Some(Action::Cancel), "{mode:?}");
+            assert_eq!(
+                handle_key(ctrl('g'), mode),
+                Some(Action::Cancel),
+                "{mode:?}"
+            );
         }
         // A bare `g` is NOT cancel — it must still type into a focused field and
         // be an ordinary char in nav mode. Only the Ctrl chord cancels.
-        assert_eq!(handle_key(ch('g'), InputMode::Text), Some(Action::InputChar('g')));
-        assert_eq!(handle_key(ch('g'), InputMode::Navigation), Some(Action::InputChar('g')));
+        assert_eq!(
+            handle_key(ch('g'), InputMode::Text),
+            Some(Action::InputChar('g'))
+        );
+        assert_eq!(
+            handle_key(ch('g'), InputMode::Navigation),
+            Some(Action::InputChar('g'))
+        );
     }
 
     #[test]
@@ -238,7 +288,11 @@ mod tests {
         // Esc keeps working for keyboards that have it — it just routes through
         // the same global cancel path as Ctrl-G now, not a per-mode arm.
         for mode in [InputMode::Navigation, InputMode::Text] {
-            assert_eq!(handle_key(key(KeyCode::Esc), mode), Some(Action::Cancel), "{mode:?}");
+            assert_eq!(
+                handle_key(key(KeyCode::Esc), mode),
+                Some(Action::Cancel),
+                "{mode:?}"
+            );
         }
     }
 }

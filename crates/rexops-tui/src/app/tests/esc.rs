@@ -16,7 +16,10 @@ fn esc_at_top_level_is_a_no_op_not_a_quit() {
 
     let quit = app.on_action(Action::Cancel, &mut runner);
 
-    assert!(!quit, "Esc at the top level must not quit — q / Ctrl-C does");
+    assert!(
+        !quit,
+        "Esc at the top level must not quit — q / Ctrl-C does"
+    );
     assert_eq!(
         app.current_screen,
         Screen::Dashboard,
@@ -65,5 +68,8 @@ fn esc_still_clears_an_applied_filter_before_reaching_the_top_level() {
     assert!(app.filter.is_empty(), "first Esc clears the applied filter");
 
     let quit = app.on_action(Action::Cancel, &mut runner);
-    assert!(!quit, "the follow-up top-level Esc is a no-op, still not a quit");
+    assert!(
+        !quit,
+        "the follow-up top-level Esc is a no-op, still not a quit"
+    );
 }

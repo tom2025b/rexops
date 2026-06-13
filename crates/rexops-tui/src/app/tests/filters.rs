@@ -33,7 +33,10 @@ fn filter_mode_captures_bound_command_letters_as_text() {
         let quit = app.on_action(Action::InputChar(c), &mut runner);
         assert!(!quit, "no character may quit while filtering (got '{c}')");
     }
-    assert_eq!(app.filter, "queue7", "every bound letter must type into the filter");
+    assert_eq!(
+        app.filter, "queue7",
+        "every bound letter must type into the filter"
+    );
     assert_eq!(app.filtered_adapter_names(), vec!["queue7".to_owned()]);
 }
 
@@ -98,7 +101,10 @@ fn typing_without_entering_filter_mode_does_not_filter() {
         app.on_action(Action::InputChar(c), &mut runner);
     }
     assert!(!app.filtering);
-    assert!(app.filter.is_empty(), "typing must not filter until '/' is pressed");
+    assert!(
+        app.filter.is_empty(),
+        "typing must not filter until '/' is pressed"
+    );
 }
 
 #[test]
@@ -152,5 +158,9 @@ fn j_k_navigate_the_adapter_selection_on_the_dashboard() {
         "Down must move the Dashboard selection (was a no-op before)"
     );
     app.on_action(Action::Up, &mut runner);
-    assert_eq!(app.selected_adapter.as_deref(), Some("alpha"), "Up moves back");
+    assert_eq!(
+        app.selected_adapter.as_deref(),
+        Some("alpha"),
+        "Up moves back"
+    );
 }

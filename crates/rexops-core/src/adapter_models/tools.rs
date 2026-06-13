@@ -80,32 +80,25 @@ mod tests {
         // The crux of bool_or_null: Workstate sends review_due as JSON null for
         // compat. Plain serde rejects null for a non-Option bool; our custom
         // deserializer must turn it into false rather than failing the parse.
-        let t: Tool = serde_json::from_str(
-            r#"{"id":"x","display_name":"X","review_due":null}"#,
-        )
-        .unwrap();
+        let t: Tool =
+            serde_json::from_str(r#"{"id":"x","display_name":"X","review_due":null}"#).unwrap();
         assert!(!t.review_due, "explicit null → false");
     }
 
     #[test]
     fn review_due_absent_and_true_both_work() {
-        let absent: Tool =
-            serde_json::from_str(r#"{"id":"x","display_name":"X"}"#).unwrap();
+        let absent: Tool = serde_json::from_str(r#"{"id":"x","display_name":"X"}"#).unwrap();
         assert!(!absent.review_due, "omitted → false");
 
-        let truthy: Tool = serde_json::from_str(
-            r#"{"id":"x","display_name":"X","review_due":true}"#,
-        )
-        .unwrap();
+        let truthy: Tool =
+            serde_json::from_str(r#"{"id":"x","display_name":"X","review_due":true}"#).unwrap();
         assert!(truthy.review_due, "explicit true → true");
     }
 
     #[test]
     fn required_fields_parse_and_optionals_default() {
-        let t: Tool = serde_json::from_str(
-            r#"{"id":"svc","display_name":"Service","status":"ok"}"#,
-        )
-        .unwrap();
+        let t: Tool =
+            serde_json::from_str(r#"{"id":"svc","display_name":"Service","status":"ok"}"#).unwrap();
         assert_eq!(t.id, "svc");
         assert_eq!(t.display_name, "Service");
         assert_eq!(t.owner, "", "absent owner defaults empty");

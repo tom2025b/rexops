@@ -147,10 +147,22 @@ mod tests {
 
     #[test]
     fn severity_bucket_is_case_insensitive_and_maps_unknowns() {
-        assert_eq!(item(Some("CRITICAL")).severity_bucket(), Some(Severity::Critical));
-        assert_eq!(item(Some("  high ")).severity_bucket(), Some(Severity::High));
-        assert_eq!(item(Some("medium")).severity_bucket(), Some(Severity::Medium));
-        assert_eq!(item(Some("nonsense")).severity_bucket(), Some(Severity::Unknown));
+        assert_eq!(
+            item(Some("CRITICAL")).severity_bucket(),
+            Some(Severity::Critical)
+        );
+        assert_eq!(
+            item(Some("  high ")).severity_bucket(),
+            Some(Severity::High)
+        );
+        assert_eq!(
+            item(Some("medium")).severity_bucket(),
+            Some(Severity::Medium)
+        );
+        assert_eq!(
+            item(Some("nonsense")).severity_bucket(),
+            Some(Severity::Unknown)
+        );
         // No severity field at all is None (distinct from "present but weird").
         assert_eq!(item(None).severity_bucket(), None);
     }
@@ -228,18 +240,19 @@ mod tests {
     fn items_absorb_the_findings_alias() {
         // The `alias = "findings"` on `items` lets a Workstate `findings[]` array
         // deserialize straight into FindingsInfo.items.
-        let info: FindingsInfo = serde_json::from_str(
-            r#"{"schema_version":3,"findings":[{"severity":"high"}]}"#,
-        )
-        .unwrap();
+        let info: FindingsInfo =
+            serde_json::from_str(r#"{"schema_version":3,"findings":[{"severity":"high"}]}"#)
+                .unwrap();
         assert_eq!(info.items.len(), 1);
         assert_eq!(info.items[0].severity.as_deref(), Some("high"));
     }
 
     #[test]
     fn scan_item_preserves_unknown_keys_in_rest() {
-        let i: ScanItem =
-            serde_json::from_str(r#"{"severity":"low","extra":123}"#).unwrap();
-        assert_eq!(i.rest.get("extra").and_then(serde_json::Value::as_i64), Some(123));
+        let i: ScanItem = serde_json::from_str(r#"{"severity":"low","extra":123}"#).unwrap();
+        assert_eq!(
+            i.rest.get("extra").and_then(serde_json::Value::as_i64),
+            Some(123)
+        );
     }
 }

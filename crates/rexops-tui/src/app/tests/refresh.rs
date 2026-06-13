@@ -15,11 +15,16 @@ fn refresh_while_filtered_preserves_filter_and_selection_by_name() {
     for c in "bu".chars() {
         app.on_action(Action::InputChar(c), &mut runner);
     }
-    assert_eq!(app.filtered_adapter_names(), vec!["buffer".to_owned(), "bulwark".to_owned()]);
+    assert_eq!(
+        app.filtered_adapter_names(),
+        vec!["buffer".to_owned(), "bulwark".to_owned()]
+    );
     app.selected_adapter = Some("bulwark".to_owned());
 
     // A refresh lands, still containing bulwark (plus a new adapter).
-    app.apply_snapshot(snapshot_with_adapters(&["bulwark", "buffer", "scripts", "newcomer"]));
+    app.apply_snapshot(snapshot_with_adapters(&[
+        "bulwark", "buffer", "scripts", "newcomer",
+    ]));
 
     assert_eq!(app.filter, "bu", "refresh must not clear the filter");
     assert!(app.filtering, "refresh must not exit filter mode");
@@ -30,7 +35,9 @@ fn refresh_while_filtered_preserves_filter_and_selection_by_name() {
     );
     // The new adapter is present in the unfiltered list but filtered out of view.
     assert!(app.adapter_names.contains(&"newcomer".to_owned()));
-    assert!(!app.filtered_adapter_names().contains(&"newcomer".to_owned()));
+    assert!(!app
+        .filtered_adapter_names()
+        .contains(&"newcomer".to_owned()));
 }
 
 #[test]
@@ -95,10 +102,18 @@ fn the_panic_fallback_snapshot_carries_a_visible_note() {
     // snapshot (indistinguishable from "never probed"). It carries a note so the
     // crash surfaces on the Dashboard Messages pane.
     let snap = App::panicked_snapshot();
-    assert!(snap.adapter_health.is_empty(), "no probe data survives a panic");
-    assert!(snap.panicked, "the fallback must set the typed panicked flag");
     assert!(
-        snap.notes.iter().any(|n| n.contains("an adapter probe panicked")),
+        snap.adapter_health.is_empty(),
+        "no probe data survives a panic"
+    );
+    assert!(
+        snap.panicked,
+        "the fallback must set the typed panicked flag"
+    );
+    assert!(
+        snap.notes
+            .iter()
+            .any(|n| n.contains("an adapter probe panicked")),
         "the fallback must still carry a note for the Messages pane, got: {:?}",
         snap.notes
     );

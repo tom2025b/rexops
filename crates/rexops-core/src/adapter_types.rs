@@ -106,8 +106,8 @@ mod tests {
 
     #[test]
     fn with_version_attaches_and_is_chainable() {
-        let out = AdapterOutput::new("system", AdapterHealth::Degraded, "data")
-            .with_version("1.2.3");
+        let out =
+            AdapterOutput::new("system", AdapterHealth::Degraded, "data").with_version("1.2.3");
         assert_eq!(out.version.as_deref(), Some("1.2.3"));
     }
 
@@ -117,10 +117,16 @@ mod tests {
         // must not emit the key at all, keeping snapshots lean.
         let out = AdapterOutput::new("x", AdapterHealth::Healthy, 1u8);
         let json = serde_json::to_string(&out).unwrap();
-        assert!(!json.contains("version"), "absent version omitted, got: {json}");
+        assert!(
+            !json.contains("version"),
+            "absent version omitted, got: {json}"
+        );
 
         let out = out.with_version("9");
         let json = serde_json::to_string(&out).unwrap();
-        assert!(json.contains("\"version\":\"9\""), "present version emitted, got: {json}");
+        assert!(
+            json.contains("\"version\":\"9\""),
+            "present version emitted, got: {json}"
+        );
     }
 }

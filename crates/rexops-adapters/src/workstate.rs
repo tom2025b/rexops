@@ -27,7 +27,7 @@ use crate::error::AdapterError;
 use crate::types::{AdapterHealth, AdapterOutput};
 
 // Pure data types now live in rexops-core; re-export so existing pub API is unchanged.
-pub use rexops_core::{Provenance, Section, WorkstateInfo, status_to_health};
+pub use rexops_core::{status_to_health, Provenance, Section, WorkstateInfo};
 
 /// The major schema version this consumer understands. Workstate emits v3.
 const SUPPORTED_SCHEMA_VERSION: i64 = 3;
@@ -99,7 +99,9 @@ impl WorkstateAdapter {
     /// Malformed JSON stays a hard JsonParse error so real bugs surface.
     pub fn parse_feed(text: &str) -> Result<Option<WorkstateInfo>, AdapterError> {
         let value: serde_json::Value = serde_json::from_str(text)?;
-        let version = value.get("schema_version").and_then(serde_json::Value::as_i64);
+        let version = value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64);
         match version {
             Some(v) if v == SUPPORTED_SCHEMA_VERSION => {
                 let info: WorkstateInfo = serde_json::from_value(value)?;

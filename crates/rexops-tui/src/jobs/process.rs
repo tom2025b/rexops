@@ -334,13 +334,20 @@ mod tests {
             if let (Some(exit), true) = (job.poll_done(), drained) {
                 break exit;
             }
-            assert!(Instant::now() < deadline, "flood job did not finish in time");
+            assert!(
+                Instant::now() < deadline,
+                "flood job did not finish in time"
+            );
             sleep(Duration::from_millis(1));
         };
         let _ = std::fs::remove_file(&script);
 
         assert_eq!(exit, JobExit::Code(0));
-        assert_eq!(out.len(), n, "every line must survive backpressure (none dropped)");
+        assert_eq!(
+            out.len(),
+            n,
+            "every line must survive backpressure (none dropped)"
+        );
         assert_eq!(out.first(), Some(&JobOutput::Stdout("line-1".to_owned())));
         assert_eq!(
             out.last(),

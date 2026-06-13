@@ -48,7 +48,7 @@ pub use ids::{AdapterId, ToolId};
 pub use models::{JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
 pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 pub use system_info::SystemInfo;
-pub use workstate_info::{Provenance, Section, WorkstateInfo, status_to_health};
+pub use workstate_info::{status_to_health, Provenance, Section, WorkstateInfo};
 
 // lib.rs stays as a directory of contents. Logic and data definitions live in
 // the modules listed above.
