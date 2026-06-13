@@ -34,6 +34,25 @@ fn every_screen_has_non_empty_hints() {
 }
 
 #[test]
+fn footer_hints_advertise_navigation_and_scrollback() {
+    // The footer is the always-visible discoverability surface; it must match
+    // behaviour. The Dashboard is navigable (j/k move the adapter selection) and
+    // the Jobs screen scrolls its output (j/k) — both must be advertised, or the
+    // legend trains users to think the keys are inert.
+    let dash = screen_hints(&app_on(Screen::Dashboard));
+    assert!(
+        dash.iter().any(|(k, _)| *k == "j/k"),
+        "the Dashboard is navigable; its hints must advertise j/k: {dash:?}"
+    );
+
+    let jobs = screen_hints(&app_on(Screen::Jobs));
+    assert!(
+        jobs.iter().any(|(k, v)| *k == "j/k" && v.contains("scroll")),
+        "the Jobs screen scrolls output; its hints must advertise j/k scroll: {jobs:?}"
+    );
+}
+
+#[test]
 fn a_pending_action_overrides_the_screen_hints_with_confirm() {
     let mut app = app_on(Screen::Dashboard);
     app.pending_action = Some(PendingAction::RunJob {

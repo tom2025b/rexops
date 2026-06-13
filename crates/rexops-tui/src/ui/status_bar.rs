@@ -39,6 +39,7 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
             ("q", "quit"),
             ("^P", "palette"),
             ("/", "filter"),
+            ("j/k", "nav"),
             ("r", "refresh"),
             ("?", "help"),
             ("1-7", "screens"),
@@ -67,6 +68,7 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
         Screen::Jobs => &[
             ("q", "quit"),
             ("^P", "palette"),
+            ("j/k", "scroll"),
             ("x", "cancel job"),
             ("1", "dashboard"),
         ],
