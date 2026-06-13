@@ -89,7 +89,7 @@ fn footer_text(app: &App) -> String {
 #[test]
 fn an_active_toast_replaces_the_status_bar_job_segment() {
     let mut app = app_on(Screen::Jobs);
-    app.last_outcome = Some(LastOutcome {
+    app.jobs.last_outcome = Some(LastOutcome {
         name: "backup".into(),
         ok: true,
         cancelled: false,
@@ -111,7 +111,7 @@ fn an_active_toast_replaces_the_status_bar_job_segment() {
 #[test]
 fn the_status_bar_job_segment_shows_once_the_toast_is_cleared() {
     let mut app = app_on(Screen::Jobs);
-    app.last_outcome = Some(LastOutcome {
+    app.jobs.last_outcome = Some(LastOutcome {
         name: "backup".into(),
         ok: true,
         cancelled: false,

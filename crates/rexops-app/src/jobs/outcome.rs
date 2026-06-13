@@ -10,6 +10,15 @@ pub enum JobOutcome {
     Cancelled,
 }
 
+/// Where the single background-job slot is in its lifecycle, as domain truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobLifecycle {
+    Idle,
+    Running { name: String },
+    Done { name: String, ok: bool },
+    Cancelled { name: String },
+}
+
 /// How the last job ended, reduced to what a status bar and history need.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastOutcome {
@@ -69,5 +78,20 @@ mod tests {
         };
         assert_eq!(ok.outcome(), JobOutcome::Success);
         assert_eq!(bad.outcome(), JobOutcome::Failure);
+    }
+
+    #[test]
+    fn job_lifecycle_variants_construct() {
+        let _ = JobLifecycle::Idle;
+        let _ = JobLifecycle::Running {
+            name: "j".to_owned(),
+        };
+        let _ = JobLifecycle::Done {
+            name: "j".to_owned(),
+            ok: true,
+        };
+        let _ = JobLifecycle::Cancelled {
+            name: "j".to_owned(),
+        };
     }
 }

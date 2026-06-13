@@ -37,14 +37,14 @@ pub fn render_jobs(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 }
 
 fn render_jobs_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let line = if let Some(job) = &app.job {
+    let line = if let Some(job) = &app.jobs.job {
         // A live marker (● green/bold, or bold under NO_COLOR) signals streaming.
         Line::from(vec![
             Span::styled("● ", theme.live_marker()),
             Span::styled(format!("running {} ", job.name), theme.title()),
             Span::styled(format!("({})", job.command), theme.dim()),
         ])
-    } else if let Some(last) = &app.last_job {
+    } else if let Some(last) = &app.jobs.last_summary {
         Line::from(vec![
             Span::raw("idle — "),
             Span::styled(last.clone(), theme.dim()),
@@ -61,31 +61,31 @@ fn render_jobs_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 }
 
 fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let title = if app.job.is_some() {
+    let title = if app.jobs.job.is_some() {
         "output (live)"
     } else {
         "output (last job)"
     };
 
-    let lines: Vec<Line> = if app.job_output.is_empty() {
+    let lines: Vec<Line> = if app.jobs.output.is_empty() {
         vec![Line::from(Span::styled("(no output yet)", theme.dim()))]
     } else {
         // Window the output to the pane. The pane shows `visible` rows; lines are
         // NOT wrapped (long lines truncate horizontally) so one output line is
         // exactly one row — that makes the from-bottom scroll offset exact and
         // stops wrapped rows from pushing the newest line off the bottom.
-        let total = app.job_output.len();
+        let total = app.jobs.output.len();
         let visible = (area.height.saturating_sub(2) as usize).max(1);
         // `jobs_scroll` is lines from the bottom; clamp so the window stays
         // inside the buffer (can't scroll past the top).
         let max_scroll = total.saturating_sub(visible);
-        let scroll = app.jobs_scroll.min(max_scroll);
+        let scroll = app.jobs.scroll.min(max_scroll);
         let end = total - scroll;
         let start = end.saturating_sub(visible);
         // Truncate each line to the pane's inner width (minus borders) so a long
         // line never wraps or overflows; truncate_desc adds a single `…`.
         let inner_w = area.width.saturating_sub(2) as usize;
-        app.job_output
+        app.jobs.output
             .iter()
             .take(end)
             .skip(start)
@@ -108,7 +108,7 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     };
 
     // A footer note when scrolled up, so the user knows auto-follow is paused.
-    let title = if app.jobs_scroll > 0 {
+    let title = if app.jobs.scroll > 0 {
         format!("{title} — scrolled (↓/j to follow)")
     } else {
         title.to_string()
@@ -136,7 +136,7 @@ fn history_line(record: &JobRecord, theme: Theme) -> Line<'static> {
 /// fits. A roll-up of outcomes (not a log archive) so the user can see what ran
 /// without scrolling back through live output.
 fn render_jobs_history(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let lines: Vec<Line> = if app.job_history.is_empty() {
+    let lines: Vec<Line> = if app.jobs.history.is_empty() {
         vec![Line::from(Span::styled(
             "(no finished jobs yet)",
             theme.dim(),
@@ -144,7 +144,7 @@ fn render_jobs_history(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     } else {
         // Newest first; show only what fits the pane (minus border).
         let visible = area.height.saturating_sub(2) as usize;
-        app.job_history
+        app.jobs.history
             .iter()
             .rev()
             .take(visible)
@@ -152,7 +152,7 @@ fn render_jobs_history(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             .collect()
     };
 
-    let title = format!("history ({})", app.job_history.len());
+    let title = format!("history ({})", app.jobs.history.len());
     let history = Paragraph::new(lines).block(pane(&title, theme));
     f.render_widget(history, area);
 }
@@ -191,7 +191,7 @@ mod tests {
     fn app_with_history(records: Vec<JobRecord>) -> App {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default(), None);
-        app.job_history = records.into_iter().collect();
+        app.jobs.history = records.into_iter().collect();
         app
     }
 

@@ -74,7 +74,7 @@ fn palette_run_tool_arms_confirm_without_spawning() {
         "run command must arm a job behind the confirm gate"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn");
-    assert!(app.job.is_none(), "must not start a job before confirm");
+    assert!(app.jobs.job.is_none(), "must not start a job before confirm");
 }
 
 #[test]
