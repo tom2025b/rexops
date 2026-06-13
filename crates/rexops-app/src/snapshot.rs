@@ -14,12 +14,6 @@
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
 use rexops_core::{AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, RiskSummary};
 
-/// Whether a named adapter is enabled in config. Defaults to `true` when the
-/// key is absent so every adapter is on by default. Shared by `build_snapshot`
-/// and `build_adapter_registry` so the enabled-check is in one place.
-fn adapter_enabled(config: &AppConfig, name: &str) -> bool {
-    config.adapters.get(name).map_or(true, |c| c.enabled)
-}
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
@@ -56,7 +50,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     let mut snap = OpsSnapshot::new();
 
     // Bulwark: only probe if enabled in config (defaults to true if absent).
-    if adapter_enabled(config, "bulwark") {
+    if config.adapter_enabled("bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
         if let Ok(id) = AdapterId::new("bulwark") {
@@ -76,7 +70,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     }
 
     // System: respect enabled (default true). Lightweight, always works.
-    if adapter_enabled(config, "system") {
+    if config.adapter_enabled("system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -104,7 +98,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     // input is accepted only when it is a recognized Workstate snapshot; any
     // other piped blob is ignored rather than falling back to another path.
     let route = piped.map(classify_snapshot);
-    if adapter_enabled(config, "workstate") {
+    if config.adapter_enabled("workstate") {
         match (piped, route) {
             (Some(text), Some(SnapshotKind::Workstate)) => {
                 populate_workstate(&mut snap, Some(text.to_owned()));
@@ -346,7 +340,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &rexops_adapters::WorkstateInf
 pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
     let mut reg = AdapterRegistry::new();
 
-    if adapter_enabled(config, "bulwark") {
+    if config.adapter_enabled("bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
         if let Ok(id) = AdapterId::new("bulwark") {
@@ -358,7 +352,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    if adapter_enabled(config, "system") {
+    if config.adapter_enabled("system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -370,7 +364,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    if adapter_enabled(config, "workstate") {
+    if config.adapter_enabled("workstate") {
         let ws = WorkstateAdapter::new();
         let ws_health = ws.health();
         if let Ok(id) = AdapterId::new("workstate") {

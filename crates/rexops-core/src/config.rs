@@ -50,6 +50,12 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Whether a named adapter is enabled. An adapter absent from config is
+    /// enabled by default; one present with `enabled: false` is disabled.
+    pub fn adapter_enabled(&self, name: &str) -> bool {
+        self.adapters.get(name).map_or(true, |c| c.enabled)
+    }
+
     /// Validate the config for semantic correctness.
     ///
     /// Returns Ok(()) for a usable config. Returns CoreError::ConfigValidation
@@ -195,6 +201,28 @@ mod tests {
         let cfg2: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg, cfg2);
         assert!(cfg2.validate().is_ok());
+    }
+
+    #[test]
+    fn adapter_enabled_absent_key_defaults_to_true() {
+        let cfg = AppConfig::default();
+        assert!(cfg.adapter_enabled("bulwark"), "absent key → enabled");
+        assert!(cfg.adapter_enabled("system"), "absent key → enabled");
+    }
+
+    #[test]
+    fn adapter_enabled_respects_explicit_false() {
+        let mut cfg = AppConfig::default();
+        cfg.adapters.insert(
+            "bulwark".to_owned(),
+            AdapterConfig {
+                enabled: false,
+                binary: None,
+                timeout_secs: None,
+            },
+        );
+        assert!(!cfg.adapter_enabled("bulwark"), "explicit false → disabled");
+        assert!(cfg.adapter_enabled("system"), "other adapters still default-on");
     }
 
     #[test]

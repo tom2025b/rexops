@@ -115,20 +115,10 @@ pub fn launch_tool(
 /// `pub(crate)` so the confirmation layer (PendingAction::preview) can show the
 /// resolved command as a dry-run *without* spawning anything.
 pub fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
-    if !adapter_enabled(tool_id, config) {
+    if !config.adapter_enabled(tool_id) {
         return None;
     }
     command_from_config(tool_id, config).or_else(|| command_from_path(tool_id))
-}
-
-/// Whether an adapter is administratively enabled. An adapter absent from config
-/// is enabled by default; one present with `enabled: false` is disabled. Mirrors
-/// the snapshot layer's `map_or(true, |c| c.enabled)` semantics.
-fn adapter_enabled(tool_id: &str, config: &AppConfig) -> bool {
-    config
-        .adapters
-        .get(tool_id)
-        .is_none_or(|adapter| adapter.enabled)
 }
 
 /// Resolve the complete launch command for a catalog tool, including any
