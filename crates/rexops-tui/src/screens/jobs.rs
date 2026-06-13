@@ -125,7 +125,7 @@ fn history_line(record: &JobRecord, theme: Theme) -> Line<'static> {
     // Same (glyph, style) source the status bar and footer toast use, via the
     // shared Outcome — so a history row can never drift from how the same outcome
     // reads elsewhere.
-    let (glyph, style) = record.outcome.as_outcome().glyph_style(theme);
+    let (glyph, style) = crate::jobs::to_suite_outcome(record.outcome.outcome()).glyph_style(theme);
     Line::from(vec![
         Span::styled(glyph, style),
         Span::styled(record.summary.clone(), style),
