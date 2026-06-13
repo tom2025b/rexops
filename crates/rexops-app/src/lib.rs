@@ -31,12 +31,16 @@
 
 mod config;
 mod snapshot;
+pub mod tools;
 
 // Re-export the primary public surface in a flat namespace.
 pub use config::load_config;
 pub use snapshot::{
     build_adapter_registry, build_snapshot, build_snapshot_with_piped, read_piped_stdin,
 };
+// The tool catalog (shared with the front-ends). `pub mod tools` keeps the
+// submodule path reachable too; these flat re-exports cover the common names.
+pub use tools::{by_id, is_streamable, RunMode, ToolEntry, CATALOG};
 
 // Re-export a few core types that callers often need alongside the builders
 // so they don't have to add an extra direct dependency on rexops-core just for

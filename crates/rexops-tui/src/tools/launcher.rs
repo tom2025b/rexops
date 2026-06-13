@@ -9,7 +9,7 @@ use std::process::Command;
 
 use rexops_core::AppConfig;
 
-use super::catalog;
+use rexops_app::tools::catalog;
 
 /// Small abstraction over "run this with the user's real terminal".
 pub trait ForegroundRunner {

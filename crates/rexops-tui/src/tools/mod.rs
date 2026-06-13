@@ -1,9 +1,12 @@
 //! Tool catalog, run mode, and launch orchestration.
+//!
+//! The catalog now lives in `rexops_app` (shared business logic). This module
+//! re-exports it so TUI call sites (`crate::tools::CATALOG`, etc.) are
+//! unchanged. Launch orchestration still lives here in `launcher`.
 
-pub mod catalog;
 pub mod launcher;
 
-pub use catalog::{is_streamable, ToolEntry, CATALOG};
+pub use rexops_app::{is_streamable, ToolEntry, CATALOG};
 // `resolve_launch_command` is the single public entry point for "what runs when
 // this tool launches" — program plus catalog args. Both run surfaces (the
 // foreground launcher and the background job manager) and the confirm-gate
