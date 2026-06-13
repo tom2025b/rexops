@@ -139,7 +139,7 @@ impl App {
             Screen::Dashboard | Screen::Adapters => self.move_adapter_selection(down),
             // On the Jobs screen, Up/Down scroll the output viewport instead of
             // moving a list selection. Up = toward older output.
-            Screen::Jobs => self.scroll_jobs_output(!down),
+            Screen::Jobs => self.jobs.scroll(!down),
             Screen::Launcher => {
                 let len = tools::CATALOG.len();
                 if len > 0 {

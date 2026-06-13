@@ -36,19 +36,19 @@ fn esc_on_the_jobs_screen_with_a_running_job_neither_quits_nor_kills_it() {
     let mut app = bare_app();
     app.current_screen = Screen::Jobs;
     // `sleep` won't exit during the test, so the handle is provably still live.
-    app.job = Some(spawn("live-tool", "live-tool", "sleep", &[]).expect("spawn sleep"));
+    app.jobs.job = Some(spawn("live-tool", "live-tool", "sleep", &[]).expect("spawn sleep"));
     let mut runner = FakeRunner { calls: 0 };
 
     let quit = app.on_action(Action::Cancel, &mut runner);
 
     assert!(!quit, "Esc mid-job must not quit the app");
     assert!(
-        app.job.is_some(),
+        app.jobs.job.is_some(),
         "Esc must not cancel/kill the running job — that is `x`"
     );
 
     // Clean up the lingering child so the test leaves nothing behind.
-    if let Some(job) = app.job.as_mut() {
+    if let Some(job) = app.jobs.job.as_mut() {
         job.cancel();
     }
 }
