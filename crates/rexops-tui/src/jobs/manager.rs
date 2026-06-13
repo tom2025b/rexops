@@ -54,21 +54,27 @@ impl App {
             ));
             return;
         }
-        let Some(command) = tools::resolve_command(id, self.config()) else {
+        // Resolve the FULL command — program plus catalog args — through the same
+        // entry point the confirm-gate preview rendered, so the job runs exactly
+        // what the user approved. Resolving only the program here (as before) and
+        // dropping the args would silently diverge from the preview the moment a
+        // background tool needs a subcommand.
+        let Some(command) = tools::resolve_launch_command(id, self.config()) else {
             self.log_event(format!("{name} has no launch command yet"));
             return;
         };
-        match super::spawn(name, &command) {
+        let display = command.display();
+        match super::spawn(name, &command.program, &command.args) {
             Some(handle) => {
                 self.job_output.clear();
                 self.jobs_scroll = 0; // fresh output → follow the bottom
                 self.last_job = None;
                 self.last_outcome = None;
                 self.current_screen = Screen::Jobs;
-                self.log_event(format!("{name}: job started ({command})"));
+                self.log_event(format!("{name}: job started ({display})"));
                 self.job = Some(handle);
             }
-            None => self.log_event(format!("{name}: failed to start ({command})")),
+            None => self.log_event(format!("{name}: failed to start ({display})")),
         }
     }
 

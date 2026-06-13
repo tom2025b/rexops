@@ -1,7 +1,7 @@
 use super::*;
 
 fn run_job_to_completion(app: &mut App, name: &str, command: &str) {
-    app.job = Some(spawn(name, command).expect("spawn test job"));
+    app.job = Some(spawn(name, command, &[]).expect("spawn test job"));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while app.job.is_some() {
         app.poll_job();
@@ -194,7 +194,7 @@ fn a_live_job_outranks_the_last_outcome_in_the_status_bar() {
         ok: true,
         cancelled: false,
     });
-    app.job = Some(spawn("live-tool", "sleep").expect("spawn sleep"));
+    app.job = Some(spawn("live-tool", "sleep", &[]).expect("spawn sleep"));
     assert_eq!(app.job_state(), JobState::Running { name: "live-tool" });
     if let Some(job) = app.job.as_mut() {
         job.cancel();
@@ -284,7 +284,7 @@ fn poll_job_reports_change_when_a_job_finishes() {
     // with no output; we drive ticks until the job clears, and the final tick —
     // the one that observed completion — must have reported a change.
     let mut app = bare_app();
-    app.job = Some(spawn("false", "false").expect("spawn test job"));
+    app.job = Some(spawn("false", "false", &[]).expect("spawn test job"));
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut last = false;

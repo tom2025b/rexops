@@ -9,7 +9,9 @@
 //!
 //! Scope: non-interactive tools only (they emit output and exit). Interactive
 //! tools keep `launcher.rs`'s foreground hand-over — piping a TUI into a pane
-//! would not work. The app decides which path a tool takes.
+//! would not work. The app decides which path a tool takes. A job is spawned
+//! from a resolved program plus its catalog args (the same `resolve_launch_command`
+//! the confirm-gate preview renders), so what runs matches what the user approved.
 //!
 //! Concurrency: one job at a time. The app holds a single [`JobHandle`]; arming a
 //! new job while one is active is refused upstream. [`JobHandle::cancel`] kills
@@ -156,15 +158,18 @@ impl Drop for JobHandle {
     }
 }
 
-/// Spawn `command` as a background job, returning a handle that streams its
-/// output. Returns `None` if the process could not be spawned (bad path,
-/// permission) — the caller reports that and stays idle.
+/// Spawn `program` (with `args`) as a background job, returning a handle that
+/// streams its output. Returns `None` if the process could not be spawned (bad
+/// path, permission) — the caller reports that and stays idle.
 ///
-/// `command` is a single program token (the resolved binary). The suite's tools
-/// are invoked by name with no arguments, matching `launcher.rs`. Stdin is nulled:
-/// background jobs are non-interactive by definition.
-pub fn spawn(name: &str, command: &str) -> Option<JobHandle> {
-    let mut child = Command::new(command)
+/// `program` is the resolved binary and `args` its catalog-owned arguments
+/// (e.g. a `tui`/`status` subcommand). The pair must match exactly what the
+/// confirm-gate preview rendered via `resolve_launch_command`, so what the user
+/// approved is what runs. Stdin is nulled: background jobs are non-interactive by
+/// definition.
+pub fn spawn(name: &str, program: &str, args: &[String]) -> Option<JobHandle> {
+    let mut child = Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -201,9 +206,17 @@ pub fn spawn(name: &str, command: &str) -> Option<JobHandle> {
         });
     }
 
+    // The pane header shows the full invocation, args included, so it matches
+    // the command the user confirmed.
+    let command = if args.is_empty() {
+        program.to_owned()
+    } else {
+        format!("{program} {}", args.join(" "))
+    };
+
     Some(JobHandle {
         name: name.to_owned(),
-        command: command.to_owned(),
+        command,
         child,
         rx,
     })
@@ -254,7 +267,7 @@ mod tests {
     fn spawn_script(name: &str, path: &str) -> JobHandle {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(job) = spawn(name, path) {
+            if let Some(job) = spawn(name, path, &[]) {
                 return job;
             }
             assert!(
@@ -391,7 +404,7 @@ mod tests {
         // `true` exits immediately with no output. `drain_into` must eventually
         // report disconnect (senders dropped) — that is what lets the production
         // loop know the output is complete.
-        let job = spawn("true", "true").expect("spawn true");
+        let job = spawn("true", "true", &[]).expect("spawn true");
         let mut out = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -408,7 +421,7 @@ mod tests {
     fn spawn_streams_stdout_and_reports_zero_exit() {
         // `true` exits 0 with no output; use a tiny `sh -c` would need args, so we
         // run a guaranteed-present no-output success first.
-        let job = spawn("true", "true").expect("spawn true");
+        let job = spawn("true", "true", &[]).expect("spawn true");
         let (out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(0));
         assert!(out.is_empty(), "`true` produces no output");
@@ -418,7 +431,7 @@ mod tests {
     fn spawn_captures_stdout_lines() {
         // `printf` is not guaranteed as a standalone binary, but `echo` is on
         // PATH on Linux and prints one line then exits 0.
-        let job = spawn("echo", "echo").expect("spawn echo");
+        let job = spawn("echo", "echo", &[]).expect("spawn echo");
         let (out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(0));
         // `echo` with no args prints a single empty line.
@@ -426,9 +439,31 @@ mod tests {
     }
 
     #[test]
+    fn spawn_passes_args_to_the_child_and_reflects_them_in_command() {
+        // Args must reach the spawned child AND the displayed command, so a
+        // background tool launched with a subcommand runs exactly what the
+        // confirm-gate preview showed. `echo hello world` proves the args were
+        // handed to the program (the output is the joined args), and the
+        // `command` field must carry them too for the pane header.
+        let args = vec!["hello".to_owned(), "world".to_owned()];
+        let job = spawn("echo", "echo", &args).expect("spawn echo with args");
+        assert_eq!(
+            job.command, "echo hello world",
+            "the displayed command must include the args"
+        );
+        let (out, exit) = run_via_drain_into(job);
+        assert_eq!(exit, JobExit::Code(0));
+        assert_eq!(
+            out,
+            vec![JobOutput::Stdout("hello world".to_owned())],
+            "the child must actually receive the args"
+        );
+    }
+
+    #[test]
     fn spawn_reports_nonzero_exit() {
         // `false` exits 1.
-        let job = spawn("false", "false").expect("spawn false");
+        let job = spawn("false", "false", &[]).expect("spawn false");
         let (_out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(1));
     }
@@ -436,7 +471,7 @@ mod tests {
     #[test]
     fn spawn_missing_binary_returns_none() {
         assert!(
-            spawn("nope", "definitely-not-a-real-binary-xyz").is_none(),
+            spawn("nope", "definitely-not-a-real-binary-xyz", &[]).is_none(),
             "a missing binary must not yield a handle"
         );
     }
@@ -450,7 +485,7 @@ mod tests {
         // ETXTBSY race two concurrent write-script tests would hit), so the
         // child is provably still running at drop. A reaped pid has no /proc
         // entry (a zombie still would), so the assert proves both kill and reap.
-        let job = spawn("yes", "yes").expect("spawn yes");
+        let job = spawn("yes", "yes", &[]).expect("spawn yes");
         let pid = job.child.id();
         let proc_path = format!("/proc/{pid}");
         assert!(
@@ -472,7 +507,7 @@ mod tests {
         // on one that already exited. After cancelling, `poll_done` must always
         // reach a terminal result (the child is gone either way). We use a
         // short-lived process; calling cancel twice exercises the no-op path too.
-        let mut job = spawn("true", "true").expect("spawn true");
+        let mut job = spawn("true", "true", &[]).expect("spawn true");
         job.cancel();
         job.cancel(); // idempotent — must not panic
         let deadline = Instant::now() + Duration::from_secs(5);
