@@ -10,7 +10,7 @@ use crate::jobs::LastOutcome;
 
 fn app_on(screen: Screen) -> App {
     let (tx, _rx) = mpsc::channel();
-    let mut app = App::new(tx, AppConfig::default());
+    let mut app = App::new(tx, AppConfig::default(), None);
     app.current_screen = screen;
     app
 }

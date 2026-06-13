@@ -4,7 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc;
 
-use rexops_app::build_snapshot;
+use rexops_app::build_snapshot_with_piped;
 use rexops_core::{AppConfig, OpsSnapshot};
 
 use super::Screen;
@@ -55,11 +55,25 @@ pub struct App {
     /// is private and every write path (`set_config`, `modify_config`) refreshes
     /// this — there is no way to change config without recomputing availability.
     launch_availability: HashMap<&'static str, bool>,
+    /// The piped stdin captured ONCE at startup (a Workstate snapshot fed in via
+    /// a pipe), or `None` when stdin was a terminal / empty. Cloned into every
+    /// refresh thread so each refresh routes the same bytes. stdin is
+    /// consume-once: reading it per refresh would drain it after the first probe
+    /// (silent data-source flip) or block forever on a pipe that never closes —
+    /// see `rexops_app::build_snapshot`. Capturing it here is what avoids both.
+    piped_stdin: Option<String>,
     pub(crate) tx: mpsc::Sender<OpsSnapshot>,
 }
 
 impl App {
-    pub fn new(tx: mpsc::Sender<OpsSnapshot>, config: AppConfig) -> Self {
+    /// Build the app state. `piped_stdin` is the snapshot blob captured once at
+    /// startup (or `None`); it is the only place stdin is read, so refresh
+    /// threads can clone it instead of re-reading the consume-once pipe.
+    pub fn new(
+        tx: mpsc::Sender<OpsSnapshot>,
+        config: AppConfig,
+        piped_stdin: Option<String>,
+    ) -> Self {
         let mut app = Self {
             snapshot: OpsSnapshot::new(),
             refreshing: false,
@@ -84,6 +98,7 @@ impl App {
             config,
             recent_events: VecDeque::from(["TUI started".to_owned()]),
             launch_availability: HashMap::new(),
+            piped_stdin,
             tx,
         };
         app.refresh_launch_availability();
@@ -207,6 +222,11 @@ impl App {
 
         let tx = self.tx.clone();
         let cfg = self.config.clone();
+        // Clone the stdin captured once at startup so this thread routes the same
+        // bytes as every other refresh. We deliberately do NOT read stdin here:
+        // it is consume-once, so a per-refresh read would drain it after the first
+        // probe or block forever on a pipe that never closes (see the field doc).
+        let piped = self.piped_stdin.clone();
 
         std::thread::spawn(move || {
             // `refreshing` is only ever cleared when a snapshot arrives over the
@@ -218,7 +238,7 @@ impl App {
             // is visible on the Dashboard/log rather than reading as a normal
             // empty "nothing probed yet" state.
             let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                build_snapshot(&cfg)
+                build_snapshot_with_piped(&cfg, piped.as_deref())
             }))
             .unwrap_or_else(|_| Self::panicked_snapshot());
             let _ = tx.send(snapshot);

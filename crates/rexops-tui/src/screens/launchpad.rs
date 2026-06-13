@@ -175,7 +175,7 @@ mod tests {
     /// every tool reads as Unknown health — fine for layout/tag assertions).
     fn app_with_selection(selected: usize) -> App {
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
+        let mut app = App::new(tx, AppConfig::default(), None);
         app.selected_tool = selected;
         app
     }
@@ -268,7 +268,7 @@ mod tests {
         // cache, not a live resolve. Asserting on the specific row avoids other
         // rows' tags (or a real PATH hit elsewhere) leaking into the check.
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
+        let mut app = App::new(tx, AppConfig::default(), None);
 
         // Bulwark is Foreground: launchable → "interactive", otherwise "disabled".
         // Seed the cache to launchable; with default config + no PATH binary a
@@ -302,7 +302,7 @@ mod tests {
         // health back to Healthy restores the launchable tag. Resolvability is held
         // constant (cache=true) so this isolates the HEALTH contribution.
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
+        let mut app = App::new(tx, AppConfig::default(), None);
         app.set_tool_launchable("bulwark", true);
 
         app.snapshot
@@ -350,7 +350,7 @@ mod tests {
         // refreshed the cache. No `refresh_launch_availability` appears here by
         // design: if the cache could go stale, this test would fail.
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
+        let mut app = App::new(tx, AppConfig::default(), None);
 
         // scripts is Background → launchable renders "streams", else "disabled".
         // Default config + no PATH binary → starts disabled.

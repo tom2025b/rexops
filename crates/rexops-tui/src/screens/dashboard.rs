@@ -216,7 +216,7 @@ mod tests {
     /// An App carrying the given adapters (all Healthy), with `selected` chosen.
     fn app_with_adapters(names: &[&str], selected: &str) -> App {
         let (tx, _rx) = mpsc::channel();
-        let mut app = App::new(tx, AppConfig::default());
+        let mut app = App::new(tx, AppConfig::default(), None);
         let mut snap = OpsSnapshot::new();
         for name in names {
             snap.adapter_health
