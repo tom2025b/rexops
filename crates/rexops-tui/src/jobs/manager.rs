@@ -43,6 +43,10 @@ pub(crate) fn toast_for(outcome: &LastOutcome) -> (String, suite_ui::ToastKind) 
         Outcome::Success => (format!("{name} — done"), ToastKind::Success),
         Outcome::Failure => (format!("{name} — failed"), ToastKind::Failure),
         Outcome::Cancelled => (format!("{name} — cancelled"), ToastKind::Cancelled),
+        // suite_ui::Outcome is #[non_exhaustive]: a future variant we don't yet
+        // model falls back to the neutral cancelled/indeterminate styling rather
+        // than misreporting a job as cleanly done or failed.
+        _ => (format!("{name} — finished"), ToastKind::Cancelled),
     }
 }
 
@@ -92,6 +96,13 @@ impl App {
                     ok: true,
                 },
                 suite_ui::Outcome::Failure => suite_ui::JobState::Done {
+                    name: &outcome.name,
+                    ok: false,
+                },
+                // suite_ui::Outcome is #[non_exhaustive]: an unmodeled future
+                // variant surfaces as a non-clean Done rather than falsely
+                // claiming a successful exit.
+                _ => suite_ui::JobState::Done {
                     name: &outcome.name,
                     ok: false,
                 },
