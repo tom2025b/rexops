@@ -665,7 +665,7 @@ dependencies = [
 [[package]]
 name = "suite-ui"
 version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=71a4fe5484abb75b494c010b89033dbc7e0faace#71a4fe5484abb75b494c010b89033dbc7e0faace"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=2f5fa8231ea85f0827d11aef1cb13d3ddb347249#2f5fa8231ea85f0827d11aef1cb13d3ddb347249"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -706,7 +706,7 @@ dependencies = [
 [[package]]
 name = "thomas-tui"
 version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=71a4fe5484abb75b494c010b89033dbc7e0faace#71a4fe5484abb75b494c010b89033dbc7e0faace"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=2f5fa8231ea85f0827d11aef1cb13d3ddb347249#2f5fa8231ea85f0827d11aef1cb13d3ddb347249"
 dependencies = [
  "crossterm",
  "ratatui",
