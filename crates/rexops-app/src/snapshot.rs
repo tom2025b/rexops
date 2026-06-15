@@ -516,8 +516,7 @@ mod tests {
         let snap = build_snapshot_with_piped(&cfg, None);
         assert!(
             snap.adapter_health_of(&bul)
-                .map(|h| h.is_available())
-                .unwrap_or(false),
+                .is_some_and(|h| h.is_available()),
             "a configured bulwark binary that exists (echo) must probe available"
         );
     }
