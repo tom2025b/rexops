@@ -65,6 +65,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // terminal setup. `None` when stdin is a tty / empty.
     let piped_stdin = read_piped_stdin();
 
+    // Load config BEFORE entering the alternate screen. `load_config` announces
+    // the chosen config path (or "using defaults") on stderr; doing it here, while
+    // the terminal is still in cooked mode, keeps that diagnostic OUT of the TUI —
+    // running it after `Tui::new` painted those lines straight into the alternate
+    // screen for one frame on every startup. The resulting AppConfig is cloned
+    // into the App and into each refresh worker thread.
+    let config = load_config();
+
     // Enter TUI mode via the shared suite guard. `Tui` owns terminal setup
     // (raw mode + alternate screen + cursor-hide), installs the panic hook that
     // restores the terminal before the default handler runs, and — via its
@@ -81,11 +89,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // completed OpsSnapshot values. We move the Sender into the App so that
     // App::request_refresh can clone it when spawning workers.
     let (tx, rx) = mpsc::channel();
-
-    // Load config once via the shared rexops-app layer (no more duplication
-    // with CLI). The resulting AppConfig is cloned into the App and into
-    // each refresh worker thread.
-    let config = load_config();
 
     // Build the application state. We start with a fresh empty snapshot and
     // immediately kick off one background refresh so the user sees live data

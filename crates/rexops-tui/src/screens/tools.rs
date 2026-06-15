@@ -34,15 +34,17 @@ pub fn render_tools(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 }
 
 fn render_tools_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    // Look up the section health recorded for tools (set during build_snapshot).
-    // Falls back to Unknown if not present (graceful degradation, per error handling doc).
-    let health = app
+    // Tools is a Workstate *section*, not an adapter — it carries FRESHNESS, not
+    // health, and is deliberately absent from `adapter_health` (see app/snapshot).
+    // Querying adapter_health here always missed and rendered a permanent
+    // "? Unknown" badge. Badge the section's freshness instead, read from the
+    // typed `WorkstateInfo` the snapshot already holds.
+    let freshness = app
         .snapshot
-        .adapter_health
-        .get("tools")
-        .copied()
-        .unwrap_or(rexops_core::AdapterHealth::Unknown);
-    let badge = widgets::render_health_badge(health, theme);
+        .workstate
+        .as_ref()
+        .map(|ws| rexops_core::status_to_freshness(&ws.tools.status));
+    let badge = widgets::render_freshness_badge(freshness, theme);
 
     // Header shows the conceptual name + live badge (same pattern as scripts/system headers).
     let header = Paragraph::new(Line::from(vec![Span::raw("Tools / Inventory "), badge]))

@@ -20,6 +20,7 @@
 //! Read-only: never writes back, never spawns a binary. Workstate is itself
 //! strictly read-only, so there is nothing to mutate on our side either.
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use crate::adapter::Adapter;
@@ -31,6 +32,12 @@ pub use rexops_core::{status_to_freshness, Freshness, Provenance, Section, Works
 
 /// The major schema version this consumer understands. Workstate emits v3.
 const SUPPORTED_SCHEMA_VERSION: i64 = 3;
+
+/// Upper bound on a snapshot file/feed read. A real snapshot is kilobytes; this
+/// is orders of magnitude of headroom while refusing to slurp a pathologically
+/// large file into memory. Over-cap input is truncated (then fails to parse and
+/// is skipped gracefully) rather than driving an unbounded allocation.
+const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Read-only Workstate snapshot consumer.
 ///
@@ -90,7 +97,12 @@ impl WorkstateAdapter {
         if !path.exists() {
             return Ok(None);
         }
-        Ok(Some(std::fs::read_to_string(&path)?))
+        // Bounded read (see MAX_SNAPSHOT_BYTES) — never slurp an unbounded file.
+        let mut buf = String::new();
+        std::fs::File::open(&path)?
+            .take(MAX_SNAPSHOT_BYTES)
+            .read_to_string(&mut buf)?;
+        Ok(Some(buf))
     }
 
     /// Parse feed text, gating on schema version.

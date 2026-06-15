@@ -204,6 +204,11 @@ impl App {
             }
             self.toast = Some(toast_for(&outcome));
             self.job = None;
+            // Snap back to following the bottom so the job's FINAL lines are
+            // visible. If the user had scrolled up mid-run to read earlier output,
+            // leaving the offset pinned would strand the pane on a now-static
+            // buffer showing "— scrolled" against a job that's already done.
+            self.jobs_scroll = 0;
             self.request_refresh();
             return true; // job finished — header/history/toast all changed
         }

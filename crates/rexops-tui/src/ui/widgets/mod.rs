@@ -10,7 +10,7 @@
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 
-use rexops_core::AdapterHealth;
+use rexops_core::{AdapterHealth, Freshness};
 use suite_ui::{Health, Theme};
 
 /// Convert an `AdapterHealth` into the suite's `Health` (a 1:1 mapping).
@@ -36,6 +36,27 @@ pub fn render_health_badge(health: AdapterHealth, theme: Theme) -> Span<'static>
         format!("{symbol} {text}"),
         theme.health(health_to_suite(health)),
     )
+}
+
+/// Render a Workstate *section*'s freshness as a badge Span.
+///
+/// Sections carry freshness, not health (see `rexops_core::Freshness`), so this
+/// uses neutral styling — `stale` must NOT read as a red/yellow fault. `None`
+/// means no Workstate snapshot has been read yet, which renders as "? Unknown".
+/// Example output: "✓ fresh", "• stale", "? Unknown".
+pub fn render_freshness_badge(freshness: Option<Freshness>, theme: Theme) -> Span<'static> {
+    let Some(freshness) = freshness else {
+        // No snapshot read yet — distinct from "read, and stale/missing".
+        return Span::styled("? Unknown", theme.health(Health::Unknown));
+    };
+    match freshness {
+        // Fresh is the only "good, current" state — green, like a healthy badge.
+        Freshness::Fresh => Span::styled("✓ fresh", theme.health(Health::Healthy)),
+        // Stale/Missing/Unknown are neutral informational states, not alarms: dim.
+        Freshness::Stale => Span::styled("• stale", theme.dim()),
+        Freshness::Missing => Span::styled("• missing", theme.dim()),
+        Freshness::Unknown => Span::styled("? unknown", theme.dim()),
+    }
 }
 
 /// Renders an adapter list item as a Line.
@@ -65,4 +86,46 @@ pub fn render_adapter_item(
 /// Render a log/event line for the Dashboard's Events pane.
 pub fn render_log_line(msg: &str) -> Line<'static> {
     Line::from(format!("• {msg}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn freshness_badge_text_distinguishes_each_state() {
+        let theme = Theme::with_color(false);
+        // None = no snapshot read yet → Unknown (NOT a fresh/stale claim).
+        assert_eq!(render_freshness_badge(None, theme).content, "? Unknown");
+        // Fresh is the only "current/good" badge.
+        assert_eq!(
+            render_freshness_badge(Some(Freshness::Fresh), theme).content,
+            "✓ fresh"
+        );
+        // Stale/Missing/Unknown are neutral, lowercase, dot-marked — not alarms.
+        assert_eq!(
+            render_freshness_badge(Some(Freshness::Stale), theme).content,
+            "• stale"
+        );
+        assert_eq!(
+            render_freshness_badge(Some(Freshness::Missing), theme).content,
+            "• missing"
+        );
+        assert_eq!(
+            render_freshness_badge(Some(Freshness::Unknown), theme).content,
+            "? unknown"
+        );
+    }
+
+    #[test]
+    fn fresh_section_does_not_render_the_permanent_unknown_badge() {
+        // Regression for the P2: a present, Fresh section must NOT read "? Unknown"
+        // (the bug was querying adapter_health, where sections never appear).
+        let theme = Theme::with_color(false);
+        let badge = render_freshness_badge(Some(Freshness::Fresh), theme).content;
+        assert_ne!(
+            badge, "? Unknown",
+            "a fresh section must not badge as Unknown"
+        );
+    }
 }
