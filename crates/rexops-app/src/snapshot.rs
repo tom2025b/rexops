@@ -11,6 +11,8 @@
 //! The functions still live in the "app" crate (not core) because they perform
 //! side-effecting work (executing adapter probes). Core stays pure data.
 
+use std::time::Duration;
+
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
 use rexops_core::{
     status_to_freshness, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot,
@@ -43,6 +45,36 @@ fn real_adapter_enabled(config: &AppConfig, id: &str) -> bool {
         "{id} is not a real adapter; only {REAL_ADAPTERS:?} may be probed"
     );
     REAL_ADAPTERS.contains(&id) && config.adapter_enabled(id)
+}
+
+/// The configured probe timeout for an adapter, as a `Duration`. Resolves the
+/// per-adapter `timeout_secs` override (else the global default) via core, so the
+/// configured value is finally honoured — it used to be parsed and ignored.
+fn adapter_timeout(config: &AppConfig, id: &str) -> Duration {
+    Duration::from_secs(config.adapter_timeout_secs(id))
+}
+
+/// Construct a Bulwark adapter wired to its configured binary (if any) and
+/// timeout. Shared by the snapshot and registry builders so both probe the
+/// SAME adapter the same way.
+fn bulwark_adapter(config: &AppConfig) -> BulwarkAdapter {
+    let timeout = adapter_timeout(config, "bulwark");
+    match config
+        .adapters
+        .get("bulwark")
+        .and_then(|a| a.binary.as_deref())
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+    {
+        Some(binary) => BulwarkAdapter::with_binary(binary),
+        None => BulwarkAdapter::new(),
+    }
+    .with_timeout(timeout)
+}
+
+/// Construct a System adapter wired to its configured timeout.
+fn system_adapter(config: &AppConfig) -> SystemAdapter {
+    SystemAdapter::new().with_timeout(adapter_timeout(config, "system"))
 }
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
@@ -80,14 +112,16 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     let mut snap = OpsSnapshot::new();
 
     // Bulwark: only probe if enabled in config (defaults to true if absent).
+    // ONE probe gives both health and version — no more spawning the binary
+    // three times (check_available + version + version) for a single refresh.
     if real_adapter_enabled(config, "bulwark") {
-        let bul = BulwarkAdapter::new();
-        let health = bul.health();
+        let bul = bulwark_adapter(config);
+        let (health, version) = bul.probe();
         if let Ok(id) = AdapterId::new("bulwark") {
             snap.set_adapter_health(&id, health);
 
             if health.is_available() {
-                if let Ok(Some(ver)) = bul.version() {
+                if let Some(ver) = version {
                     snap.add_note(format!("bulwark version: {ver}"));
                 }
             } else {
@@ -99,27 +133,39 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
         }
     }
 
-    // System: respect enabled (default true). Lightweight, always works.
+    // System: respect enabled (default true). Lightweight, always works. A single
+    // `info()` call yields health, version, AND the data — reuse all three rather
+    // than calling health()/version() again on the side.
     if real_adapter_enabled(config, "system") {
-        let sys = SystemAdapter::new();
-        let sys_health = sys.health();
-        if let Ok(id) = AdapterId::new("system") {
-            snap.set_adapter_health(&id, sys_health);
-        }
-        if let Ok(out) = sys.info() {
-            let i = &out.data;
-            snap.system = Some(i.clone());
-            if let Some(h) = &i.hostname {
-                snap.add_note(format!("system hostname: {h}"));
+        let sys = system_adapter(config);
+        let id = AdapterId::new("system").ok();
+        match sys.info() {
+            Ok(out) => {
+                if let Some(id) = &id {
+                    snap.set_adapter_health(id, out.health);
+                }
+                let i = &out.data;
+                snap.system = Some(i.clone());
+                if let Some(h) = &i.hostname {
+                    snap.add_note(format!("system hostname: {h}"));
+                }
+                if let Some(k) = &i.kernel {
+                    snap.add_note(format!("system kernel: {k}"));
+                }
+                if let Some(u) = &i.uptime {
+                    snap.add_note(format!("system uptime: {u}"));
+                }
+                for d in i.disk.iter().take(2) {
+                    snap.add_note(format!("system disk: {d}"));
+                }
             }
-            if let Some(k) = &i.kernel {
-                snap.add_note(format!("system kernel: {k}"));
-            }
-            if let Some(u) = &i.uptime {
-                snap.add_note(format!("system uptime: {u}"));
-            }
-            for d in i.disk.iter().take(2) {
-                snap.add_note(format!("system disk: {d}"));
+            // info() is effectively infallible, but if it ever errors we still
+            // record the adapter (Unavailable) so `system` never silently drops
+            // out of the roster.
+            Err(_) => {
+                if let Some(id) = &id {
+                    snap.set_adapter_health(id, rexops_core::AdapterHealth::Unavailable);
+                }
             }
         }
     }
@@ -165,11 +211,24 @@ enum SnapshotKind {
 /// (see the `build_snapshot` docs).
 pub fn read_piped_stdin() -> Option<String> {
     use std::io::{IsTerminal, Read};
+    // Cap the read so a huge or endless pipe can't drive an unbounded allocation
+    // (and can't block the TUI's one-time startup read forever). A Workstate
+    // snapshot is kilobytes; 16 MiB is orders of magnitude of headroom. `take`
+    // truncates at the cap rather than erroring — a snapshot near the cap is
+    // unheard of, and a truncated giant blob simply fails the v3 classify and is
+    // ignored, which is the right graceful outcome.
+    const MAX_PIPED_BYTES: u64 = 16 * 1024 * 1024;
+
     if std::io::stdin().is_terminal() {
         return None;
     }
     let mut buf = String::new();
-    if std::io::stdin().read_to_string(&mut buf).is_ok() && !buf.trim().is_empty() {
+    if std::io::stdin()
+        .take(MAX_PIPED_BYTES)
+        .read_to_string(&mut buf)
+        .is_ok()
+        && !buf.trim().is_empty()
+    {
         Some(buf)
     } else {
         None
@@ -370,8 +429,8 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
     let mut reg = AdapterRegistry::new();
 
     if real_adapter_enabled(config, "bulwark") {
-        let bul = BulwarkAdapter::new();
-        let health = bul.health();
+        // One probe; reuse the same config-wired adapter the snapshot builder uses.
+        let (health, _version) = bulwark_adapter(config).probe();
         if let Ok(id) = AdapterId::new("bulwark") {
             reg.insert(AdapterEntry {
                 id,
@@ -382,8 +441,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
     }
 
     if real_adapter_enabled(config, "system") {
-        let sys = SystemAdapter::new();
-        let sys_health = sys.health();
+        let (sys_health, _version) = system_adapter(config).probe();
         if let Ok(id) = AdapterId::new("system") {
             reg.insert(AdapterEntry {
                 id,
@@ -419,6 +477,114 @@ mod tests {
     #[test]
     fn classify_recognizes_workstate_v3_snapshot() {
         assert_eq!(classify_snapshot(WORKSTATE_FEED), SnapshotKind::Workstate);
+    }
+
+    #[test]
+    fn bulwark_probe_uses_the_configured_binary() {
+        // The config `binary` for bulwark must drive the ADAPTER probe (it used to
+        // be ignored — the builder always probed plain "bulwark"). Point it at a
+        // binary that definitely does not exist → Unavailable; point it at `echo`
+        // (always present) → available. Proves config → adapter wiring.
+        let mut cfg = AppConfig::default();
+        // System + workstate off so we isolate bulwark.
+        for name in ["system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "bulwark".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("rexops-no-such-bulwark-xyz987".to_owned()),
+                timeout_secs: None,
+            },
+        );
+        let snap = build_snapshot_with_piped(&cfg, None);
+        let bul = AdapterId::new("bulwark").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&bul),
+            Some(rexops_core::AdapterHealth::Unavailable),
+            "a configured-but-missing bulwark binary must probe Unavailable"
+        );
+
+        cfg.adapters.get_mut("bulwark").unwrap().binary = Some("echo".to_owned());
+        let snap = build_snapshot_with_piped(&cfg, None);
+        assert!(
+            snap.adapter_health_of(&bul)
+                .map(|h| h.is_available())
+                .unwrap_or(false),
+            "a configured bulwark binary that exists (echo) must probe available"
+        );
+    }
+
+    #[test]
+    fn configured_timeout_bounds_a_hanging_adapter_binary() {
+        // THE TIMEOUT-WIRING PROOF: a tiny `timeout_secs` must actually cap the
+        // probe. Point bulwark at a script whose `--version` hangs far longer than
+        // the configured timeout; the build must return promptly (well under the
+        // hang) and report the adapter not-healthy — proving the configured value
+        // is threaded into the spawn (it used to be ignored; this would block for
+        // the full hang under the old hardcoded 30s default).
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Instant;
+
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("rexops-app-hang-{}", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            // Ignores all args (including --version) and sleeps well past the
+            // timeout. `exec` replaces the shell with `sleep` so there is no
+            // grandchild holding the stdout pipe open past the kill — this
+            // exercises the timeout-kill path directly (a plain `sleep 30` would
+            // leave a grandchild and is a separate exec concern).
+            writeln!(f, "#!/bin/sh\nexec sleep 30").unwrap();
+            let mut perms = f.metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+        }
+
+        let mut cfg = AppConfig::default();
+        for name in ["system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "bulwark".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(path.to_string_lossy().into_owned()),
+                timeout_secs: Some(1), // 1s cap vs a 30s hang
+            },
+        );
+
+        let begin = Instant::now();
+        let snap = build_snapshot_with_piped(&cfg, None);
+        let elapsed = begin.elapsed();
+        let _ = std::fs::remove_file(&path);
+
+        // Generous ceiling (probe may spawn twice on the absent-vs-present path,
+        // each capped at ~1s) but FAR below the 30s hang the old code would wait.
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "configured 1s timeout must bound the probe; took {elapsed:?}"
+        );
+        let bul = AdapterId::new("bulwark").unwrap();
+        assert_ne!(
+            snap.adapter_health_of(&bul),
+            Some(rexops_core::AdapterHealth::Healthy),
+            "a hanging (timed-out) probe must not report Healthy"
+        );
     }
 
     #[test]

@@ -74,22 +74,42 @@ pub enum BulwarkAction {
     Block,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BulwarkAdapter {
     binary: String,
+    /// Hard timeout applied to every probe/scan spawn for this adapter. Set from
+    /// config (`adapters.bulwark.timeout_secs`, else the global default) by the
+    /// snapshot builder; defaults to [`DEFAULT_TIMEOUT`] when unset.
+    timeout: Duration,
+}
+
+impl Default for BulwarkAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BulwarkAdapter {
     pub fn new() -> Self {
         Self {
             binary: "bulwark".to_owned(),
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 
     pub fn with_binary(binary: impl Into<String>) -> Self {
         Self {
             binary: binary.into(),
+            timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    /// Override the per-spawn timeout (chainable). Used by the snapshot builder to
+    /// honour the configured `timeout_secs`.
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     pub fn binary(&self) -> &str {
@@ -99,37 +119,55 @@ impl BulwarkAdapter {
     /// Invoke `bulwark inspect scan --format json --text <text>` and return envelope.
     pub fn scan(&self, text: &str) -> Result<AdapterOutput<BulwarkScanResult>, AdapterError> {
         let args = ["inspect", "scan", "--format", "json", "--text", text];
-        let data: BulwarkScanResult = run_json(&self.binary, &args, DEFAULT_TIMEOUT)?;
-        let health = self.health();
-        let version = self.version().ok().flatten();
+        let data: BulwarkScanResult = run_json(&self.binary, &args, self.timeout)?;
+        let (health, version) = self.probe();
         let mut out = AdapterOutput::new("bulwark", health, data);
         if let Some(v) = version {
             out = out.with_version(v);
         }
         Ok(out)
     }
+
+    /// Probe presence + version in ONE pass and derive health, so callers that
+    /// want both (the snapshot builder) don't spawn the binary three times
+    /// (`check_available` + `version` + `version` again). A single
+    /// `<binary> --version` decides everything: a missing binary yields
+    /// `(Unavailable, None)`; a present binary with a parseable version yields
+    /// `(Healthy, Some(ver))`; present-but-unparseable yields `(Degraded, None)`.
+    pub fn probe(&self) -> (AdapterHealth, Option<String>) {
+        match probe_version(&self.binary, self.timeout) {
+            Ok(Some(ver)) => (AdapterHealth::Healthy, Some(ver)),
+            // Binary present but version unparseable/empty → Degraded.
+            Ok(None) if self.binary_present() => (AdapterHealth::Degraded, None),
+            // Binary genuinely absent (probe_version returns Ok(None) on ENOENT too,
+            // so confirm absence) → Unavailable.
+            Ok(None) => (AdapterHealth::Unavailable, None),
+            Err(_) => (AdapterHealth::Degraded, None),
+        }
+    }
+
+    /// Cheap presence check used only to disambiguate the `Ok(None)` version case
+    /// (absent vs present-but-no-version). Kept separate so `probe` stays a single
+    /// spawn on the common (healthy) path.
+    fn binary_present(&self) -> bool {
+        matches!(
+            run_optional(&self.binary, &["--help"], self.timeout),
+            Ok(Some(_))
+        )
+    }
 }
 
 impl Adapter for BulwarkAdapter {
     fn check_available(&self) -> bool {
-        matches!(
-            run_optional(&self.binary, &["--help"], Duration::from_secs(3)),
-            Ok(Some(_))
-        )
+        self.binary_present()
     }
 
     fn version(&self) -> Result<Option<String>, AdapterError> {
-        probe_version(&self.binary)
+        probe_version(&self.binary, self.timeout)
     }
 
     fn health(&self) -> AdapterHealth {
-        if !self.check_available() {
-            return AdapterHealth::Unavailable;
-        }
-        match self.version() {
-            Ok(Some(_)) => AdapterHealth::Healthy,
-            _ => AdapterHealth::Degraded,
-        }
+        self.probe().0
     }
 }
 

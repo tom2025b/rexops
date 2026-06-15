@@ -103,10 +103,19 @@ fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinH
     })
 }
 
-/// Kill the child and reap it, then join the pipe readers. Reaping closes the
-/// pipes, so the readers hit EOF and finish — nothing is left running. (kill
-/// reaches the direct child only, not grandchildren of a shell wrapper —
-/// adapters spawn binaries directly, so that limitation doesn't bite here.)
+/// Kill the child and reap it, then DETACH the pipe readers (do not join).
+///
+/// Killing the direct child closes the pipe ends it owns, so in the common case
+/// the readers hit EOF and exit on their own. But `kill` reaches only the direct
+/// child — a grandchild that inherited the pipes (a shell wrapper's `sleep`, a
+/// daemonizing tool) keeps them open after the child dies, so joining the readers
+/// here would block for the grandchild's whole lifetime and defeat the very
+/// timeout that called us. We therefore drop the handles instead of joining:
+/// returning promptly is the point of a timeout. A detached reader blocked on a
+/// still-open pipe is harmless — it holds only its own buffer and exits when the
+/// pipe finally closes; nothing leaks that the OS won't reclaim. (Adapters spawn
+/// binaries directly, so this grandchild case is rare in practice, but the
+/// timeout must stay honest when it does happen.)
 fn kill_and_reap(
     child: &mut std::process::Child,
     stdout_reader: thread::JoinHandle<Vec<u8>>,
@@ -114,8 +123,10 @@ fn kill_and_reap(
 ) {
     let _ = child.kill();
     let _ = child.wait();
-    let _ = stdout_reader.join();
-    let _ = stderr_reader.join();
+    // Detach, don't join: see the doc comment. Dropping the handles is what keeps
+    // a grandchild holding the pipe from hanging the timeout path.
+    drop(stdout_reader);
+    drop(stderr_reader);
 }
 
 /// run_optional + require present + serde_json::from_str. Missing -> BinaryNotFound.
@@ -133,8 +144,12 @@ where
 }
 
 /// Run <binary> --version, extract first semver-ish token (strips leading v).
-pub(crate) fn probe_version(binary: &str) -> Result<Option<String>, AdapterError> {
-    let out = run_optional(binary, &["--version"], DEFAULT_TIMEOUT)?;
+/// `timeout` bounds the spawn (callers thread their configured value through).
+pub(crate) fn probe_version(
+    binary: &str,
+    timeout: Duration,
+) -> Result<Option<String>, AdapterError> {
+    let out = run_optional(binary, &["--version"], timeout)?;
     let Some(line) = out else {
         // Binary was not present — the caller (Adapter impl) will map to health.
         return Ok(None);
@@ -237,7 +252,7 @@ mod tests {
 
     #[test]
     fn probe_version_does_not_panic() {
-        let _ = probe_version("echo").expect("echo probe");
+        let _ = probe_version("echo", DEFAULT_TIMEOUT).expect("echo probe");
     }
 
     #[test]
@@ -263,6 +278,27 @@ mod tests {
         assert!(
             begin.elapsed() < Duration::from_secs(2),
             "must return at the deadline, not wait out the grandchild"
+        );
+    }
+
+    #[test]
+    fn timeout_with_grandchild_holding_the_pipe_still_returns_promptly() {
+        // Regression: on a TIMEOUT-kill, a grandchild that inherited the stdout
+        // pipe (here `sh -c 'sleep 5 & ...'` backgrounds a sleep that outlives the
+        // killed `sh`) used to hang kill_and_reap's reader join for the
+        // grandchild's whole lifetime — defeating the timeout. The call must now
+        // return at the deadline by DETACHING the readers, not waiting them out.
+        let begin = Instant::now();
+        let res = run_optional(
+            "sh",
+            &["-c", "sleep 5 & sleep 5"],
+            Duration::from_millis(200),
+        );
+        assert!(matches!(res, Err(AdapterError::Timeout(_))));
+        assert!(
+            begin.elapsed() < Duration::from_secs(2),
+            "timeout-kill must not block on a grandchild holding the pipe (took {:?})",
+            begin.elapsed()
         );
     }
 

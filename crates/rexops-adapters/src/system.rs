@@ -6,6 +6,8 @@
 //!
 //! Gives the TUI and CLI local host facts for the ops cockpit.
 
+use std::time::Duration;
+
 use crate::adapter::Adapter;
 use crate::error::AdapterError;
 use crate::exec::{run_optional, DEFAULT_TIMEOUT};
@@ -13,12 +15,32 @@ use crate::types::{AdapterHealth, AdapterOutput};
 
 pub use rexops_core::SystemInfo;
 
-#[derive(Debug, Clone, Default)]
-pub struct SystemAdapter;
+#[derive(Debug, Clone)]
+pub struct SystemAdapter {
+    /// Hard timeout applied to each system command spawn. Set from config
+    /// (`adapters.system.timeout_secs`, else the global default) by the snapshot
+    /// builder; defaults to [`DEFAULT_TIMEOUT`].
+    timeout: Duration,
+}
+
+impl Default for SystemAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SystemAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            timeout: DEFAULT_TIMEOUT,
+        }
+    }
+
+    /// Override the per-command timeout (chainable).
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 
     /// Collect system info. Individual command failures are tolerated
@@ -28,12 +50,12 @@ impl SystemAdapter {
         let mut info = SystemInfo::default();
 
         // hostname
-        if let Ok(Some(h)) = run_optional("hostname", &[], DEFAULT_TIMEOUT) {
+        if let Ok(Some(h)) = run_optional("hostname", &[], self.timeout) {
             let h = h.trim();
             if !h.is_empty() {
                 info.hostname = Some(h.to_owned());
             }
-        } else if let Ok(Some(u)) = run_optional("uname", &["-n"], DEFAULT_TIMEOUT) {
+        } else if let Ok(Some(u)) = run_optional("uname", &["-n"], self.timeout) {
             let u = u.trim();
             if !u.is_empty() {
                 info.hostname = Some(u.to_owned());
@@ -41,7 +63,7 @@ impl SystemAdapter {
         }
 
         // kernel
-        if let Ok(Some(k)) = run_optional("uname", &["-sr"], DEFAULT_TIMEOUT) {
+        if let Ok(Some(k)) = run_optional("uname", &["-sr"], self.timeout) {
             let k = k.trim();
             if !k.is_empty() {
                 info.kernel = Some(k.to_owned());
@@ -49,7 +71,7 @@ impl SystemAdapter {
         }
 
         // uptime
-        if let Ok(Some(u)) = run_optional("uptime", &[], DEFAULT_TIMEOUT) {
+        if let Ok(Some(u)) = run_optional("uptime", &[], self.timeout) {
             let u = u.trim();
             if !u.is_empty() {
                 info.uptime = Some(u.to_owned());
@@ -57,7 +79,7 @@ impl SystemAdapter {
         }
 
         // disk (take a few lines)
-        if let Ok(Some(d)) = run_optional("df", &["-h"], DEFAULT_TIMEOUT) {
+        if let Ok(Some(d)) = run_optional("df", &["-h"], self.timeout) {
             for line in d.lines().take(6) {
                 let t = line.trim();
                 if !t.is_empty() {
@@ -66,13 +88,21 @@ impl SystemAdapter {
             }
         }
 
-        let health = self.health();
-        let version = self.version().ok().flatten();
+        let (health, version) = self.probe();
         let mut out = AdapterOutput::new("system", health, info);
         if let Some(v) = version {
             out = out.with_version(v);
         }
         Ok(out)
+    }
+
+    /// Probe health + version in one pass (presence check + a single `uname -v`),
+    /// so the snapshot builder reuses one result instead of calling
+    /// `check_available`/`health` and `version` separately.
+    pub fn probe(&self) -> (AdapterHealth, Option<String>) {
+        let health = self.health();
+        let version = self.version().ok().flatten();
+        (health, version)
     }
 }
 
@@ -80,13 +110,14 @@ impl Adapter for SystemAdapter {
     fn check_available(&self) -> bool {
         // System adapter is "always" conceptually available (uses std + common cmds).
         // We still do a cheap probe so the trait contract is satisfied.
-        // Use "true" or "echo" which are ubiquitous.
-        run_optional("true", &[], std::time::Duration::from_secs(1)).is_ok()
+        // Use "true" or "echo" which are ubiquitous. Capped at 1s regardless of the
+        // configured timeout — this is a liveness ping, not a data fetch.
+        run_optional("true", &[], Duration::from_secs(1).min(self.timeout)).is_ok()
     }
 
     fn version(&self) -> Result<Option<String>, AdapterError> {
         // Use uname for a "version" of the system info provider.
-        let out = run_optional("uname", &["-v"], DEFAULT_TIMEOUT)?;
+        let out = run_optional("uname", &["-v"], self.timeout)?;
         Ok(out.and_then(|s| {
             let t = s.trim();
             if t.is_empty() {

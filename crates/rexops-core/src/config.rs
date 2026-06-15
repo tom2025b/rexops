@@ -56,6 +56,19 @@ impl AppConfig {
         self.adapters.get(name).map_or(true, |c| c.enabled)
     }
 
+    /// The effective probe/operation timeout (in seconds) for a named adapter:
+    /// the adapter's own `timeout_secs` if set, otherwise the global
+    /// `defaults.timeout_secs`. Centralizes the override precedence so every call
+    /// site (the snapshot builder) resolves it the same way. Until this existed,
+    /// `timeout_secs` was parsed and validated but never applied — adapters always
+    /// used a hardcoded default.
+    pub fn adapter_timeout_secs(&self, name: &str) -> u64 {
+        self.adapters
+            .get(name)
+            .and_then(|c| c.timeout_secs)
+            .unwrap_or(self.defaults.timeout_secs)
+    }
+
     /// Validate the config for semantic correctness.
     ///
     /// Returns Ok(()) for a usable config. Returns CoreError::ConfigValidation
@@ -226,6 +239,37 @@ mod tests {
             cfg.adapter_enabled("system"),
             "other adapters still default-on"
         );
+    }
+
+    #[test]
+    fn adapter_timeout_prefers_adapter_override_then_global_default() {
+        let mut cfg = AppConfig::default();
+        cfg.defaults.timeout_secs = 45;
+
+        // No adapter entry → falls back to the global default.
+        assert_eq!(cfg.adapter_timeout_secs("bulwark"), 45);
+
+        // Adapter entry WITHOUT its own timeout → still the global default.
+        cfg.adapters.insert(
+            "system".to_owned(),
+            AdapterConfig {
+                enabled: true,
+                binary: None,
+                timeout_secs: None,
+            },
+        );
+        assert_eq!(cfg.adapter_timeout_secs("system"), 45);
+
+        // Adapter entry WITH its own timeout → the override wins.
+        cfg.adapters.insert(
+            "bulwark".to_owned(),
+            AdapterConfig {
+                enabled: true,
+                binary: None,
+                timeout_secs: Some(7),
+            },
+        );
+        assert_eq!(cfg.adapter_timeout_secs("bulwark"), 7);
     }
 
     #[test]
