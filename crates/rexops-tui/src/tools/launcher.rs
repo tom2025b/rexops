@@ -112,9 +112,12 @@ pub fn launch_tool(
 /// (the same control surface as `enabled`), so a stray same-named binary on PATH
 /// must not silently shadow the build an operator chose.
 ///
-/// `pub(crate)` so the confirmation layer (PendingAction::preview) can show the
-/// resolved command as a dry-run *without* spawning anything.
-pub fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
+/// Private: this is the *program-only* half. Every caller outside this module —
+/// the confirm-gate preview, the foreground launch, and the background job — must
+/// go through [`resolve_launch_command`], which appends the catalog args. Routing
+/// them all through the one full resolver is what guarantees the dry-run preview
+/// shows exactly what later runs (CR-2: no preview/run arg divergence).
+fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     if !config.adapter_enabled(tool_id) {
         return None;
     }

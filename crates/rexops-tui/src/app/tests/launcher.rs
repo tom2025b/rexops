@@ -8,14 +8,55 @@ fn select_tool(app: &mut App, id: &str) {
     app.selected_tool = idx;
 }
 
-/// A Launcher app with `proto` selected and pinned to an explicit binary.
-/// `proto` is the INTERACTIVE tool, so arming it yields a foreground
-/// `LaunchTool` that drives the (fake) `ForegroundRunner` on confirm — the
-/// path these runner-based tests exercise.
+/// A Launcher app with `bulwark` selected and pinned to an explicit binary.
+/// `bulwark` is the FOREGROUND tool, so arming it yields a `LaunchTool` that
+/// drives the (fake) `ForegroundRunner` on confirm — the path these
+/// runner-based tests exercise. (Proto now runs as a background job, so it no
+/// longer drives the foreground runner.)
 pub(super) fn launcher_app_with_proto() -> App {
     let mut app = launcher_app();
     // modify_config refreshes the launch-availability cache for us — the cache
     // can't drift from config because config is only reachable through it.
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "bulwark".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/tmp/bulwark".to_owned()),
+                timeout_secs: None,
+            },
+        );
+    });
+    select_tool(&mut app, "bulwark");
+    app
+}
+
+#[test]
+fn activate_on_launcher_arms_foreground_tool_without_spawning() {
+    // Enter on the Launcher must only *arm* a pending action — never spawn
+    // before the user confirms. `bulwark` is foreground → LaunchTool.
+    let mut app = launcher_app_with_proto();
+    let mut runner = FakeRunner { calls: 0 };
+
+    let quit = app.on_action(Action::Activate, &mut runner);
+
+    assert!(!quit);
+    assert_eq!(
+        app.pending_action,
+        Some(PendingAction::LaunchTool {
+            id: "bulwark".to_owned(),
+            name: "Bulwark".to_owned(),
+        })
+    );
+    assert_eq!(runner.calls, 0, "arming must not spawn a process");
+}
+
+#[test]
+fn activate_on_launcher_arms_streamable_tool_as_a_job() {
+    // A non-interactive tool (proto) must arm a RunJob — the background,
+    // streamed path — rather than a foreground LaunchTool. The command is
+    // pinned so this tests the enabled streamable path, not disabled UX.
+    let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
             "proto".to_owned(),
@@ -27,46 +68,6 @@ pub(super) fn launcher_app_with_proto() -> App {
         );
     });
     select_tool(&mut app, "proto");
-    app
-}
-
-#[test]
-fn activate_on_launcher_arms_foreground_tool_without_spawning() {
-    // Enter on the Launcher must only *arm* a pending action — never spawn
-    // before the user confirms. `proto` is interactive → foreground LaunchTool.
-    let mut app = launcher_app_with_proto();
-    let mut runner = FakeRunner { calls: 0 };
-
-    let quit = app.on_action(Action::Activate, &mut runner);
-
-    assert!(!quit);
-    assert_eq!(
-        app.pending_action,
-        Some(PendingAction::LaunchTool {
-            id: "proto".to_owned(),
-            name: "Proto".to_owned(),
-        })
-    );
-    assert_eq!(runner.calls, 0, "arming must not spawn a process");
-}
-
-#[test]
-fn activate_on_launcher_arms_streamable_tool_as_a_job() {
-    // A non-interactive tool (scripts) must arm a RunJob — the background,
-    // streamed path — rather than a foreground LaunchTool. The command is
-    // pinned so this tests the enabled streamable path, not disabled UX.
-    let mut app = launcher_app();
-    app.modify_config(|cfg| {
-        cfg.adapters.insert(
-            "scripts".to_owned(),
-            rexops_core::AdapterConfig {
-                enabled: true,
-                binary: Some("/tmp/scripts".to_owned()),
-                timeout_secs: None,
-            },
-        );
-    });
-    select_tool(&mut app, "scripts");
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::Activate, &mut runner);
@@ -74,8 +75,8 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
     assert_eq!(
         app.pending_action,
         Some(PendingAction::RunJob {
-            id: "scripts".to_owned(),
-            name: "Scripts".to_owned(),
+            id: "proto".to_owned(),
+            name: "Proto".to_owned(),
         }),
         "a streamable tool must arm a background job"
     );
@@ -84,8 +85,23 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
 
 #[test]
 fn activate_on_disabled_launcher_entry_does_not_open_confirm() {
+    // A catalog tool with no resolvable command is "disabled": Enter must not
+    // spawn or open the confirm modal. Administratively disabling proto's
+    // adapter (`enabled: false`) guarantees it never resolves — independent of
+    // whether a `proto` binary is on the dev PATH (a disabled adapter is refused
+    // by resolve_command even when its binary exists).
     let mut app = launcher_app();
-    select_tool(&mut app, "scripts");
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: false,
+                binary: None,
+                timeout_secs: None,
+            },
+        );
+    });
+    select_tool(&mut app, "proto");
     let mut runner = FakeRunner { calls: 0 };
 
     let quit = app.on_action(Action::Activate, &mut runner);
@@ -99,7 +115,7 @@ fn activate_on_disabled_launcher_entry_does_not_open_confirm() {
     assert!(app
         .recent_events
         .iter()
-        .any(|e| e == "Scripts: disabled (no launch command)"));
+        .any(|e| e == "Proto: disabled (no launch command)"));
 }
 
 #[test]
@@ -119,7 +135,7 @@ fn confirm_runs_foreground_tool_and_clears_it() {
     assert!(app
         .recent_events
         .iter()
-        .any(|e| e == "Proto exited successfully"));
+        .any(|e| e == "Bulwark exited successfully"));
 }
 
 #[test]
@@ -131,7 +147,7 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
-            "scripts".to_owned(),
+            "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
                 binary: Some("/tmp/definitely-not-executable".to_owned()),
@@ -139,7 +155,7 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
             },
         );
     });
-    select_tool(&mut app, "scripts");
+    select_tool(&mut app, "proto");
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::Activate, &mut runner); // arm RunJob
@@ -294,19 +310,19 @@ fn launcher_esc_goes_back_to_dashboard_not_quit() {
 fn launcher_enter_arms_the_selected_tool() {
     // Activate on the Launcher must arm a PendingAction for the *selected*
     // catalog tool, carrying that tool's id and name, and must not spawn.
-    // `tools` is non-interactive → it arms a RunJob once a command exists.
+    // `proto` is non-interactive → it arms a RunJob once a command exists.
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
-            "tools".to_owned(),
+            "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
-                binary: Some("/tmp/tools".to_owned()),
+                binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
             },
         );
     });
-    select_tool(&mut app, "tools");
+    select_tool(&mut app, "proto");
     let entry = &CATALOG[app.selected_tool];
     let mut runner = FakeRunner { calls: 0 };
 

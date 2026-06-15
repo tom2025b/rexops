@@ -42,10 +42,10 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
-            "scripts".to_owned(),
+            "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
-                binary: Some("/tmp/scripts".to_owned()),
+                binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
             },
         );
@@ -53,14 +53,14 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::OpenPalette, &mut runner);
-    for c in "run scripts".chars() {
+    for c in "run proto".chars() {
         app.on_action(Action::InputChar(c), &mut runner);
     }
     let pos = app
         .palette_commands()
         .iter()
-        .position(|c| c.label == "run scripts")
-        .expect("run scripts present");
+        .position(|c| c.label == "run proto")
+        .expect("run proto present");
     app.palette_selected = pos;
     app.on_action(Action::Activate, &mut runner);
 
@@ -68,8 +68,8 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     assert_eq!(
         app.pending_action,
         Some(PendingAction::RunJob {
-            id: "scripts".to_owned(),
-            name: "Scripts".to_owned(),
+            id: "proto".to_owned(),
+            name: "Proto".to_owned(),
         }),
         "run command must arm a job behind the confirm gate"
     );
@@ -80,17 +80,30 @@ fn palette_run_tool_arms_confirm_without_spawning() {
 #[test]
 fn palette_run_disabled_tool_does_not_open_confirm() {
     let mut app = launcher_app();
+    // Administratively disable proto's adapter so it never resolves a command,
+    // independent of the dev PATH (arm_tool resolves live, so the cache alone
+    // would not be enough here — a disabled adapter is the deterministic gate).
+    app.modify_config(|cfg| {
+        cfg.adapters.insert(
+            "proto".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: false,
+                binary: None,
+                timeout_secs: None,
+            },
+        );
+    });
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::OpenPalette, &mut runner);
-    for c in "run scripts".chars() {
+    for c in "run proto".chars() {
         app.on_action(Action::InputChar(c), &mut runner);
     }
     let pos = app
         .palette_commands()
         .iter()
-        .position(|c| c.label == "run scripts")
-        .expect("run scripts present");
+        .position(|c| c.label == "run proto")
+        .expect("run proto present");
     app.palette_selected = pos;
     app.on_action(Action::Activate, &mut runner);
 
@@ -103,7 +116,7 @@ fn palette_run_disabled_tool_does_not_open_confirm() {
     assert!(app
         .recent_events
         .iter()
-        .any(|e| e == "Scripts: disabled (no launch command)"));
+        .any(|e| e == "Proto: disabled (no launch command)"));
 }
 
 #[test]
@@ -142,18 +155,19 @@ fn palette_run_rows_carry_the_availability_tag() {
     // A run-surface consistency guard: the palette must annotate each
     // `run <tool>` row with the same availability the Launcher screen shows, so
     // a disabled/down tool reads as such BEFORE it is picked (rather than
-    // silently no-op'ing on Enter). Under default config no binary resolves, so
-    // every tool reads "disabled".
-    let app = launcher_app();
+    // silently no-op'ing on Enter). We force proto unresolvable so the row reads
+    // "disabled" regardless of whether a `proto` binary is on the dev PATH.
+    let mut app = launcher_app();
+    app.set_tool_launchable("proto", false);
     let cmds = app.palette_commands();
-    let scripts = cmds
+    let proto = cmds
         .iter()
-        .find(|c| c.label == "run scripts")
-        .expect("run scripts present");
+        .find(|c| c.label == "run proto")
+        .expect("run proto present");
     assert!(
-        scripts.desc.ends_with("· disabled"),
+        proto.desc.ends_with("· disabled"),
         "an unresolvable tool's palette row must be tagged disabled, got: {:?}",
-        scripts.desc
+        proto.desc
     );
     // A pure navigation row must NOT get a run tag.
     let nav = cmds
@@ -169,14 +183,14 @@ fn palette_run_rows_carry_the_availability_tag() {
 
 #[test]
 fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
-    // Configure scripts with a resolvable binary; its palette row must flip from
-    // "disabled" to its run-mode tag ("streams", since scripts is Background) —
+    // Configure proto with a resolvable binary; its palette row must flip from
+    // "disabled" to its run-mode tag ("streams", since proto is Background) —
     // proving the tag is live, not fixed. We point at a real binary on PATH so
     // resolution succeeds.
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
-            "scripts".to_owned(),
+            "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
                 binary: Some("/bin/sh".to_owned()),
@@ -185,13 +199,13 @@ fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
         );
     });
     let cmds = app.palette_commands();
-    let scripts = cmds
+    let proto = cmds
         .iter()
-        .find(|c| c.label == "run scripts")
-        .expect("run scripts present");
+        .find(|c| c.label == "run proto")
+        .expect("run proto present");
     assert!(
-        scripts.desc.ends_with("· streams"),
+        proto.desc.ends_with("· streams"),
         "a configured Background tool must read streams, got: {:?}",
-        scripts.desc
+        proto.desc
     );
 }

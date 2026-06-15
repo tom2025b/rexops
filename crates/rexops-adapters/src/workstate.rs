@@ -27,7 +27,7 @@ use crate::error::AdapterError;
 use crate::types::{AdapterHealth, AdapterOutput};
 
 // Pure data types now live in rexops-core; re-export so existing pub API is unchanged.
-pub use rexops_core::{status_to_health, Provenance, Section, WorkstateInfo};
+pub use rexops_core::{status_to_freshness, Freshness, Provenance, Section, WorkstateInfo};
 
 /// The major schema version this consumer understands. Workstate emits v3.
 const SUPPORTED_SCHEMA_VERSION: i64 = 3;
@@ -196,35 +196,14 @@ mod tests {
     }
 
     #[test]
-    fn section_status_maps_to_health() {
+    fn section_status_maps_to_freshness() {
         let info = WorkstateAdapter::parse_feed(SNAPSHOT_V3).unwrap().unwrap();
-        // The fixture's sections are all Stale → Degraded.
+        // The fixture's sections are all Stale — a *freshness* verdict, NOT a
+        // health fault. Each maps to Freshness::Stale, never AdapterHealth.
         assert_eq!(info.scripts.status, "Stale");
-        assert_eq!(
-            status_to_health(&info.scripts.status),
-            AdapterHealth::Degraded
-        );
-        assert_eq!(
-            status_to_health(&info.tools.status),
-            AdapterHealth::Degraded
-        );
-        assert_eq!(
-            status_to_health(&info.findings.status),
-            AdapterHealth::Degraded
-        );
-    }
-
-    #[test]
-    fn status_to_health_covers_known_and_unknown_values() {
-        assert_eq!(status_to_health("Fresh"), AdapterHealth::Healthy);
-        assert_eq!(status_to_health("Stale"), AdapterHealth::Degraded);
-        assert_eq!(
-            status_to_health("UnsupportedVersion"),
-            AdapterHealth::Degraded
-        );
-        assert_eq!(status_to_health("Missing"), AdapterHealth::Unavailable);
-        // An unanticipated status is Unknown, never silently treated as healthy.
-        assert_eq!(status_to_health("WeirdNewStatus"), AdapterHealth::Unknown);
+        assert_eq!(status_to_freshness(&info.scripts.status), Freshness::Stale);
+        assert_eq!(status_to_freshness(&info.tools.status), Freshness::Stale);
+        assert_eq!(status_to_freshness(&info.findings.status), Freshness::Stale);
     }
 
     #[test]
@@ -273,8 +252,8 @@ mod tests {
         assert_eq!(info.populated_section_count(), 0);
         assert!(info.scripts.data.is_none());
         assert_eq!(
-            status_to_health(&info.scripts.status),
-            AdapterHealth::Unavailable
+            status_to_freshness(&info.scripts.status),
+            Freshness::Missing
         );
     }
 

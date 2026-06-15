@@ -227,10 +227,14 @@ mod tests {
 
     #[test]
     fn detail_pane_marks_unresolved_tools_disabled() {
-        let app = app_with_selection(2);
+        // Proto (index 1) with no resolvable command is the "disabled" state.
+        // Force the cache false so the test doesn't depend on a `proto` binary
+        // being absent from the dev PATH.
+        let mut app = app_with_selection(1);
+        app.set_tool_launchable("proto", false);
         let text = render_to_text(&app);
         assert!(
-            text.contains("Scripts:"),
+            text.contains("Proto:"),
             "detail names the selected disabled tool:\n{text}"
         );
         assert!(
@@ -351,36 +355,39 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default(), None);
 
-        // scripts is Background → launchable renders "streams", else "disabled".
-        // Default config + no PATH binary → starts disabled.
-        let row = row_line(&render_to_text(&app), "Scripts");
+        // proto is Background → launchable renders "streams", else "disabled".
+        // Pin a fake off-PATH id so config is the ONLY thing that can make it
+        // launchable; force the starting cache to false so the test doesn't
+        // depend on a real `proto` binary on the dev PATH.
+        app.set_tool_launchable("proto", false);
+        let row = row_line(&render_to_text(&app), "Proto");
         assert!(
             row.contains("disabled"),
-            "scripts must start disabled under default config:\n{row}"
+            "proto must start disabled here:\n{row}"
         );
 
         // Pin a config binary through the mutation path. No manual refresh.
         app.modify_config(|cfg| {
             cfg.adapters.insert(
-                "scripts".to_owned(),
+                "proto".to_owned(),
                 AdapterConfig {
                     enabled: true,
-                    binary: Some("/tmp/scripts".to_owned()),
+                    binary: Some("/tmp/proto".to_owned()),
                     timeout_secs: None,
                 },
             );
         });
-        let row = row_line(&render_to_text(&app), "Scripts");
+        let row = row_line(&render_to_text(&app), "Proto");
         assert!(
             row.contains("streams"),
-            "modify_config must refresh the cache → scripts now launchable:\n{row}"
+            "modify_config must refresh the cache → proto now launchable:\n{row}"
         );
 
         // And disabling it again through the same path must flip it back.
         app.modify_config(|cfg| {
-            cfg.adapters.get_mut("scripts").unwrap().enabled = false;
+            cfg.adapters.get_mut("proto").unwrap().enabled = false;
         });
-        let row = row_line(&render_to_text(&app), "Scripts");
+        let row = row_line(&render_to_text(&app), "Proto");
         assert!(
             row.contains("disabled"),
             "modify_config must refresh the cache → disabled adapter unlaunchable:\n{row}"
@@ -447,13 +454,13 @@ mod tests {
             "Bulwark's detail must no longer show after moving off it:\n{text}"
         );
 
-        // Down again → Scripts (index 2). Confirms it keeps tracking, not just a
-        // one-step fluke.
+        // Down again wraps from the last entry (Proto) back to Bulwark (index 0).
+        // Confirms tracking keeps working across the wrap, not just one step.
         app.on_action(Action::Down, &mut runner);
         let text = render_to_text(&app);
         assert!(
-            text.contains("Scripts:"),
-            "detail must continue to follow the selection to Scripts:\n{text}"
+            text.contains("Bulwark:"),
+            "detail must follow the wrap back to Bulwark:\n{text}"
         );
         assert!(
             !text.contains("Proto:"),

@@ -1,11 +1,14 @@
 # RexOps sample configuration (examples/config.yaml)
 # This is the shape that AppConfig in rexops-core will deserialize.
 #
-# Current loader locations:
-#   1. ./examples/config.yaml
-#   2. ./rexops.yaml
-#   3. ./rexops.yml
-#   4. Built-in defaults
+# This file is a SAMPLE to copy — it is NOT loaded from examples/. Copy it to one
+# of the search locations (first match wins):
+#   1. $XDG_CONFIG_HOME/rexops/config.yaml  (or ~/.config/rexops/config.yaml)
+#   2. /etc/rexops/config.yaml              (system-wide)
+#   3. ./rexops.yaml or ./rexops.yml        (project-local override)
+#   4. Built-in defaults                    (all adapters enabled) if none found
+#
+# RexOps prints which config it loaded to stderr on startup.
 
 version: 1
 

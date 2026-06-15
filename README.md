@@ -30,6 +30,21 @@ RexOps is the **ops cockpit** for your AI tooling surface: it observes live adap
 
 RexOps **orchestrates and summarizes**; Workstate owns the compiled operational state.
 
+### Adapters vs Sections vs Tools (one model, three words)
+
+These three terms are deliberately distinct — every screen and command uses them
+the same way:
+
+- **Adapters** — the real data *sources* RexOps probes, each with **health**
+  (`Healthy`/`Degraded`/`Unavailable`/`Unknown`): exactly `bulwark`, `system`,
+  `workstate`. `rexops status` and `rexops adapters` always show the same three.
+- **Sections** — the data inside the one Workstate snapshot: `scripts`, `tools`,
+  `findings`. They carry **freshness** (`fresh`/`stale`/`missing`), *not* health —
+  stale data is neutral, not a fault. They are surfaced under Workstate, never as
+  adapters.
+- **Tools** — things the Launcher can actually *run* (`bulwark`, `proto`). Only
+  launchable programs appear in the Launcher; data sections are not listed there.
+
 ## Workspace Structure & Status
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full diagram and strict boundaries.
@@ -42,7 +57,7 @@ Crates:
 - **rexops-core** — Domain models, newtypes (`ToolId`, `AdapterId`), `RiskSummary`, `OpsSnapshot`, `AppConfig`, `AdapterRegistry`/`ToolRegistry`. Pure data + transforms. Single source of truth. No UI, no exec. See `crates/rexops-core/src/`.
 - **rexops-app** — Shared thin orchestration layer. `load_config()`, `build_snapshot()`, `build_adapter_registry()`. The single implementation (deduplicated from CLI+TUI). No UI. See `crates/rexops-app/`.
 - **rexops-cli** — `rexops` binary with `status` and `adapters` commands, `--json` support. Thin shell: clap + formatting only. Delegates to rexops-app. Try: `cargo run -p rexops-cli -- status --json`.
-- **rexops-tui** — Keyboard-first ratatui TUI. Screens: Dashboard, Adapters, System, Scripts, Tools, and Launcher. Scripts/tools/findings render from Workstate. Widgets/ extracted (HealthBadge, AdapterItem, LogLine). Logs/events pane, help popup. 'r' non-blocking (threads call rexops-app::build_snapshot). Run with: `cargo run -p rexops-tui`
+- **rexops-tui** — Keyboard-first ratatui TUI. Screens: Dashboard, Adapters, System, Scripts, Tools, Launcher, and Jobs. The Adapters screen shows the three real adapters with health; Scripts/Tools render the Workstate *sections* with freshness; the Launcher lists only runnable tools (Bulwark, Proto); Jobs streams a running background tool's output. Widgets/ extracted (HealthBadge, AdapterItem, LogLine). Logs/events pane, help popup, command palette (`:`/Ctrl-P). 'r' non-blocking (threads call rexops-app::build_snapshot). Run with: `cargo run -p rexops-tui`
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md) for boundaries and remaining work.
 
@@ -83,7 +98,7 @@ cargo run -p rexops-cli -- adapters
 
 # Launch the TUI (best in a real terminal)
 cargo run -p rexops-tui
-# Inside TUI: 1-5 to switch screens, r=refresh, ?=help, q=quit, j/k nav on adapters, type to filter
+# Inside TUI: 1-7 switch screens, r=refresh, ?=help, q=quit, j/k nav, / to filter, :=command palette
 ```
 
 ## Key Commands
@@ -92,7 +107,7 @@ cargo run -p rexops-tui
 - `cargo run -p rexops-cli -- status` — Human status (adapter health + snapshot).
 - `cargo run -p rexops-cli -- status --json` — Same snapshot as JSON for scripts and other automation.
 - `cargo run -p rexops-cli -- adapters` — List adapters from the registry.
-- `cargo run -p rexops-tui` — Launch the ratatui dashboard. Keys: r=refresh, q/Esc/Ctrl-C=quit, ?=help, 1=Dashboard, 2=Adapters, 3=System, 4=Scripts, 5=Tools, 6=Launcher.
+- `cargo run -p rexops-tui` — Launch the ratatui dashboard. Keys: r=refresh, q/Esc/Ctrl-C=quit, ?=help, 1=Dashboard, 2=Adapters, 3=System, 4=Scripts, 5=Tools, 6=Launcher, 7=Jobs; `:`/Ctrl-P command palette; `/` filter; `x` cancel a running job.
 - The four gate commands (`fmt --check`, `clippy -D warnings`, `test --all`, `build --all`) are mandatory for every change.
 
 ## Development Notes

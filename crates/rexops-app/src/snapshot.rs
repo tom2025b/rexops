@@ -13,9 +13,37 @@
 
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
 use rexops_core::{
-    status_to_health, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot, Provenance,
-    RiskSummary, WorkstateInfo,
+    status_to_freshness, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot,
+    Provenance, RiskSummary, WorkstateInfo,
 };
+
+/// The three real adapters RexOps probes — each a distinct data SOURCE with its
+/// own backing (a binary, the local host, or a compiled snapshot) and therefore
+/// its own [`AdapterHealth`](rexops_core::AdapterHealth).
+///
+/// This is the single source of truth for "what adapters exist," shared by the
+/// snapshot builder and the registry builder so the `status` and `adapters`
+/// views can never disagree about the roster again (they used to: `status`
+/// listed six because it folded Workstate's scripts/tools/findings *sections*
+/// into `adapter_health`, while `adapters` listed only these three).
+///
+/// scripts/tools/findings are deliberately ABSENT here: they are not adapters,
+/// they are sections of the one Workstate snapshot. They carry *freshness*, not
+/// health, and are surfaced under Workstate — never as adapters.
+const REAL_ADAPTERS: &[&str] = &["bulwark", "system", "workstate"];
+
+/// Whether a real adapter should be probed: it must be one of [`REAL_ADAPTERS`]
+/// AND enabled in config. Routing every probe site (in both the snapshot and the
+/// registry builder) through this one gate is what makes `REAL_ADAPTERS` the
+/// single authoritative roster — an id that isn't in it can't be probed or land
+/// in `adapter_health`, so `status` and `adapters` cannot drift apart again.
+fn real_adapter_enabled(config: &AppConfig, id: &str) -> bool {
+    debug_assert!(
+        REAL_ADAPTERS.contains(&id),
+        "{id} is not a real adapter; only {REAL_ADAPTERS:?} may be probed"
+    );
+    REAL_ADAPTERS.contains(&id) && config.adapter_enabled(id)
+}
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
@@ -52,7 +80,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     let mut snap = OpsSnapshot::new();
 
     // Bulwark: only probe if enabled in config (defaults to true if absent).
-    if config.adapter_enabled("bulwark") {
+    if real_adapter_enabled(config, "bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
         if let Ok(id) = AdapterId::new("bulwark") {
@@ -72,7 +100,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     }
 
     // System: respect enabled (default true). Lightweight, always works.
-    if config.adapter_enabled("system") {
+    if real_adapter_enabled(config, "system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -103,7 +131,7 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     // Match on `piped` alone and classify inside the Some arm, so the route is
     // only ever computed where it exists — there is no "(Some, None)" state to
     // explain away (it was previously an `unreachable!`).
-    if config.adapter_enabled("workstate") {
+    if real_adapter_enabled(config, "workstate") {
         match piped {
             Some(text) => match classify_snapshot(text) {
                 SnapshotKind::Workstate => populate_workstate(&mut snap, Some(text.to_owned())),
@@ -166,22 +194,27 @@ fn classify_snapshot(text: &str) -> SnapshotKind {
     }
 }
 
-/// Set a section's adapter health from its Workstate `status` and add a
-/// freshness/provenance note like `"tools: Stale (source observed 2026-06-02)"`.
-/// Shared by all three Workstate sections so the mapping stays consistent.
+/// Add a section freshness/provenance note like
+/// `"section scripts: stale (source observed 2026-06-02)"`.
+///
+/// A Workstate section's `status` describes how CURRENT its data is, not adapter
+/// health — so this records *freshness* and deliberately does NOT write into
+/// `adapter_health`. Only the three real adapters (`bulwark`/`system`/
+/// `workstate`) ever appear in `adapter_health`; the sections live under the
+/// Workstate adapter and surface their currency through these notes (and the
+/// typed `Section.status` the screens read).
 fn note_section_freshness(
     snap: &mut OpsSnapshot,
     label: &str,
-    adapter_id: &str,
     status: &str,
     provenance: &Provenance,
 ) {
-    if let Ok(id) = AdapterId::new(adapter_id) {
-        snap.set_adapter_health(&id, status_to_health(status));
-    }
+    let freshness = status_to_freshness(status).label();
     match provenance.source_observed_at.as_deref() {
-        Some(src) => snap.add_note(format!("{label}: {status} (source observed {src})")),
-        None => snap.add_note(format!("{label}: {status}")),
+        Some(src) => snap.add_note(format!(
+            "section {label}: {freshness} (source observed {src})"
+        )),
+        None => snap.add_note(format!("section {label}: {freshness}")),
     }
 }
 
@@ -239,13 +272,7 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     let Some(tools) = &info.tools.data else {
         return;
     };
-    note_section_freshness(
-        snap,
-        "tools",
-        "tools",
-        &info.tools.status,
-        &info.tools.provenance,
-    );
+    note_section_freshness(snap, "tools", &info.tools.status, &info.tools.provenance);
     snap.add_note(format!(
         "tools: {} total, {} need attention (as of {})",
         tools.tool_count, tools.attention_count, tools.as_of
@@ -275,7 +302,6 @@ fn fold_ws_scripts(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     note_section_freshness(
         snap,
         "scripts",
-        "scripts",
         &info.scripts.status,
         &info.scripts.provenance,
     );
@@ -296,7 +322,6 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
     };
     note_section_freshness(
         snap,
-        "findings",
         "findings",
         &info.findings.status,
         &info.findings.provenance,
@@ -344,7 +369,7 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
 pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
     let mut reg = AdapterRegistry::new();
 
-    if config.adapter_enabled("bulwark") {
+    if real_adapter_enabled(config, "bulwark") {
         let bul = BulwarkAdapter::new();
         let health = bul.health();
         if let Ok(id) = AdapterId::new("bulwark") {
@@ -356,7 +381,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    if config.adapter_enabled("system") {
+    if real_adapter_enabled(config, "system") {
         let sys = SystemAdapter::new();
         let sys_health = sys.health();
         if let Ok(id) = AdapterId::new("system") {
@@ -368,7 +393,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
         }
     }
 
-    if config.adapter_enabled("workstate") {
+    if real_adapter_enabled(config, "workstate") {
         let ws = WorkstateAdapter::new();
         let ws_health = ws.health();
         if let Ok(id) = AdapterId::new("workstate") {
@@ -444,16 +469,76 @@ mod tests {
     }
 
     #[test]
-    fn workstate_section_status_maps_to_adapter_health() {
+    fn sections_are_not_adapters_and_carry_freshness_not_health() {
+        // The model fix (UX-1/CR-1): scripts/tools/findings are Workstate
+        // SECTIONS, not adapters. They must NOT appear in adapter_health (which
+        // is reserved for the real probed sources), and their Stale status must
+        // surface as a neutral *freshness* note — never as a health fault.
         let snap = build_via_pipe(WORKSTATE_FEED);
-        let degraded = rexops_core::AdapterHealth::Degraded;
         for id in ["tools", "scripts", "findings"] {
-            assert_eq!(
-                snap.adapter_health.get(id).copied(),
-                Some(degraded),
-                "{id} health should be Degraded (section was Stale)"
+            assert!(
+                !snap.adapter_health.contains_key(id),
+                "{id} is a section, not an adapter — it must be absent from adapter_health"
             );
         }
+        // Freshness is reported as a neutral note, not a Degraded health entry.
+        assert!(
+            snap.notes
+                .iter()
+                .any(|n| n == "section tools: stale (source observed 2026-06-02T00:00:00Z)"),
+            "a section's staleness must surface as a neutral freshness note, notes were: {:?}",
+            snap.notes
+        );
+    }
+
+    #[test]
+    fn adapter_health_roster_only_ever_holds_real_adapters() {
+        // The roster guarantee behind UX-1: every key in adapter_health must be
+        // one of the three REAL adapters. If a future change re-introduces a
+        // synthetic adapter (e.g. folds a section back in), this fails.
+        let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
+        for id in snap.adapter_health.keys() {
+            assert!(
+                REAL_ADAPTERS.contains(&id.as_str()),
+                "adapter_health contains '{}', which is not a real adapter ({:?})",
+                id.as_str(),
+                REAL_ADAPTERS
+            );
+        }
+    }
+
+    #[test]
+    fn status_and_adapters_views_agree_on_the_roster() {
+        // The exact bug from the audit: `status` (adapter_health) and `adapters`
+        // (the registry) must list the SAME adapters. With everything enabled,
+        // both must equal REAL_ADAPTERS — no more "6 vs 3" disagreement.
+        let cfg = AppConfig::default();
+        let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
+        let reg = build_adapter_registry(&cfg);
+
+        let mut from_status: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_status.sort();
+        let mut from_registry: Vec<String> = reg
+            .list()
+            .iter()
+            .map(|e| e.id.as_str().to_owned())
+            .collect();
+        from_registry.sort();
+        let mut expected: Vec<String> = REAL_ADAPTERS.iter().map(|s| (*s).to_owned()).collect();
+        expected.sort();
+
+        assert_eq!(
+            from_status, expected,
+            "status roster must be exactly the real adapters"
+        );
+        assert_eq!(
+            from_registry, expected,
+            "adapters roster must be exactly the real adapters"
+        );
     }
 
     #[test]

@@ -56,6 +56,8 @@ pub use models::scripts::{Script, ScriptsInfo};
 pub use models::tools::{Tool, ToolsInfo};
 pub use system::{SystemAdapter, SystemInfo};
 pub use types::{AdapterHealth, AdapterOutput};
-pub use workstate::{status_to_health, Provenance, Section, WorkstateAdapter, WorkstateInfo};
+pub use workstate::{
+    status_to_freshness, Freshness, Provenance, Section, WorkstateAdapter, WorkstateInfo,
+};
 
 // lib.rs stays as a directory of contents. Behavior lives in the modules above.
