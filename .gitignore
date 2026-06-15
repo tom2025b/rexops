@@ -3,6 +3,15 @@
 **/*.rs.bk
 *.pdb
 
+# Build artifacts (release tarballs from packaging)
+/dist/
+
+# Guard against a stray directory accidentally created from a TUI prompt string
+# (a "Backup destination (e.g. ..." prompt once got fed to mkdir under sudo,
+# leaving a root-owned junk tree in the repo root). Never track such a thing.
+/› Backup destination*/
+/*Backup destination*/
+
 # OS / Editor
 .DS_Store
 Thumbs.db

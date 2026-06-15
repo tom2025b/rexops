@@ -23,7 +23,7 @@ use clap::{Parser, Subcommand};
 // building has moved to rexops-app (the shared layer). We only import the
 // types we need for clap dispatch and pretty-printing.
 use rexops_app::{build_adapter_registry, build_snapshot, load_config};
-use rexops_core::{AdapterHealth, AdapterRegistry, OpsSnapshot};
+use rexops_core::{format_unix_millis_utc, AdapterHealth, AdapterRegistry, OpsSnapshot};
 
 /// rexops — the RexOps ops cockpit.
 ///
@@ -98,14 +98,21 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_status_human(snap: &OpsSnapshot) {
-    println!("RexOps status — generated at {} ms", snap.generated_at_ms);
+    println!(
+        "RexOps status — generated {}",
+        format_unix_millis_utc(snap.generated_at_ms)
+    );
     println!();
 
     println!("Adapters:");
     if snap.adapter_health.is_empty() {
         println!("  (none probed)");
     } else {
-        for (name, h) in &snap.adapter_health {
+        // Sort by id so the list is stable run-to-run (adapter_health is a
+        // HashMap, whose iteration order is otherwise nondeterministic).
+        let mut adapters: Vec<_> = snap.adapter_health.iter().collect();
+        adapters.sort_by_key(|(name, _)| name.as_str());
+        for (name, h) in adapters {
             let mark = match h {
                 AdapterHealth::Healthy => "✓",
                 AdapterHealth::Degraded => "!",
@@ -215,15 +222,48 @@ fn print_status_human(snap: &OpsSnapshot) {
     );
     println!();
 
-    if !snap.notes.is_empty() {
+    // Notes used to re-print everything the structured panes above already
+    // show (system facts, every tool, every finding) — a duplicated wall of
+    // debug output. Show only notes that add something NOT already rendered:
+    // adapter provenance/version, section freshness, config, and anything
+    // unanticipated (e.g. a panic-recovery note). The duplicates are dropped by
+    // prefix so a genuinely new note still surfaces by default.
+    let extra: Vec<&String> = snap
+        .notes
+        .iter()
+        .filter(|n| !is_duplicate_note(n))
+        .collect();
+    if !extra.is_empty() {
         println!("Notes:");
-        for n in &snap.notes {
+        for n in extra {
             println!("  - {n}");
         }
+        println!();
     }
 
-    println!();
-    println!("(Tip: try --json for machine output.)");
+    println!("(Tip: try --json for the full machine-readable snapshot.)");
+}
+
+/// Whether a snapshot note merely repeats data the structured panes already
+/// render (system facts, per-tool/-finding detail). Such notes are hidden from
+/// the human `status` view to avoid printing everything twice; everything else
+/// (provenance, freshness, config, unanticipated notes) is kept. Conservative by
+/// design: only well-known duplicate prefixes are dropped, so a new kind of note
+/// is surfaced rather than silently swallowed.
+fn is_duplicate_note(note: &str) -> bool {
+    let n = note.trim_start();
+    const DUP_PREFIXES: &[&str] = &[
+        "system hostname:",
+        "system kernel:",
+        "system uptime:",
+        "system disk:",
+        "tools:",     // counts + per-tool attention (shown in the Tools pane)
+        "attention:", // indented per-tool attention lines
+        "scripts:",   // counts (shown in the Scripts pane)
+        "findings:",  // counts (shown in the Findings pane)
+        "high-risk:", // indented per-finding lines (shown in the Findings pane)
+    ];
+    DUP_PREFIXES.iter().any(|p| n.starts_with(p))
 }
 
 fn print_adapters_human(reg: &AdapterRegistry) {

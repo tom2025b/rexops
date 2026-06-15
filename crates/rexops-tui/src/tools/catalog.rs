@@ -17,6 +17,17 @@ pub struct ToolEntry {
     pub launch_args: &'static [&'static str],
 }
 
+/// The launcher catalog: tools the user can actually RUN.
+///
+/// Only launchable programs belong here. scripts/tools/findings/workstate are
+/// deliberately absent — they are read-only Workstate *data sections*, not
+/// runnable tools, and have no executable. Listing them here used to render
+/// permanently-disabled dead rows in a list titled "pick a tool … Enter
+/// launches" (UX-6). Their data is surfaced on the Scripts/Tools screens and
+/// under the Workstate adapter, where it belongs.
+///
+/// Two run modes are in use: Bulwark takes over the terminal (`Foreground`),
+/// Proto streams its output into the Jobs screen (`Background`).
 pub const CATALOG: &[ToolEntry] = &[
     ToolEntry {
         id: "bulwark",
@@ -28,30 +39,12 @@ pub const CATALOG: &[ToolEntry] = &[
     ToolEntry {
         id: "proto",
         name: "Proto",
-        description: "Guided protocol / checklist runner (interactive)",
-        run_mode: RunMode::Foreground,
-        launch_args: &[],
-    },
-    ToolEntry {
-        id: "scripts",
-        name: "Scripts",
-        description: "Script inventory from Workstate",
+        // Background: Proto's checklist run emits output and exits, so it streams
+        // into the Jobs screen rather than seizing the terminal. This is also the
+        // catalog's live example of a streamed (RunMode::Background) tool.
+        description: "Protocol / checklist runner (streams into Jobs)",
         run_mode: RunMode::Background,
-        launch_args: &[],
-    },
-    ToolEntry {
-        id: "tools",
-        name: "Tools",
-        description: "Tool ownership & lifecycle from Workstate",
-        run_mode: RunMode::Background,
-        launch_args: &[],
-    },
-    ToolEntry {
-        id: "workstate",
-        name: "Workstate",
-        description: "Snapshot source of truth",
-        run_mode: RunMode::Background,
-        launch_args: &[],
+        launch_args: &["run"],
     },
 ];
 

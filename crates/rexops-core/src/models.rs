@@ -260,6 +260,50 @@ fn current_unix_millis() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// Format epoch-millis as a human-readable UTC timestamp: `YYYY-MM-DD HH:MM:SS UTC`.
+///
+/// A raw epoch-millis integer (what the human `status` header used to print) is
+/// unreadable to a person. RexOps deliberately stores timestamps as zero-dep
+/// `u64` millis, so this does the civil-date conversion by hand (the standard
+/// days-from-epoch algorithm) rather than pulling in `chrono`/`time` just to
+/// render one line. The JSON output keeps the raw integer; only human views call
+/// this.
+#[must_use]
+#[allow(clippy::cast_possible_wrap)] // days-since-epoch fits i64 for any real timestamp
+pub fn format_unix_millis_utc(ms: u64) -> String {
+    let secs = ms / 1000;
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let (hour, min, sec) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{min:02}:{sec:02} UTC")
+}
+
+/// Convert days-since-Unix-epoch into a proleptic-Gregorian `(year, month, day)`.
+/// Howard Hinnant's well-known `civil_from_days` algorithm — exact, branch-light,
+/// and correct across all leap-year rules. Used only by [`format_unix_millis_utc`].
+///
+/// The casts are intrinsic to the algorithm and provably in range: `doe` ∈
+/// [0, 146096] and `doy`/`mp`/`d`/`m` are the small bounded intermediates noted
+/// inline, so none can wrap, truncate, or lose a sign.
+#[allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation
+)]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -283,6 +327,29 @@ mod tests {
         snap.set_adapter_health(&bul, AdapterHealth::Healthy);
         assert!(snap.any_adapter_available());
         assert_eq!(snap.adapter_health.len(), 1);
+    }
+
+    #[test]
+    fn format_unix_millis_utc_renders_known_instants() {
+        // The Unix epoch itself.
+        assert_eq!(format_unix_millis_utc(0), "1970-01-01 00:00:00 UTC");
+        // A known instant: 2026-06-15 05:16:01 UTC = 1_781_500_561_000 ms.
+        // (Cross-checked against `date -u -d @1781500561`.)
+        assert_eq!(
+            format_unix_millis_utc(1_781_500_561_000),
+            "2026-06-15 05:16:01 UTC"
+        );
+        // Sub-second millis are truncated to the second, not rounded.
+        assert_eq!(
+            format_unix_millis_utc(1_781_500_561_999),
+            "2026-06-15 05:16:01 UTC"
+        );
+        // A leap-day instant exercises civil_from_days' leap handling:
+        // 2024-02-29 12:00:00 UTC = 1_709_208_000_000 ms.
+        assert_eq!(
+            format_unix_millis_utc(1_709_208_000_000),
+            "2024-02-29 12:00:00 UTC"
+        );
     }
 
     #[test]

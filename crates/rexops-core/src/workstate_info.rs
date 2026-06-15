@@ -58,13 +58,53 @@ impl WorkstateInfo {
     }
 }
 
-/// Translate a Workstate section `status` string into RexOps' AdapterHealth.
-pub fn status_to_health(status: &str) -> crate::AdapterHealth {
+/// Freshness of a Workstate **section** — how current its data is.
+///
+/// This is deliberately NOT `AdapterHealth`. A stale section is not a *fault*:
+/// the data simply hasn't been recompiled recently. Conflating the two made a
+/// correctly-working install render all-yellow on first launch (every section
+/// is a few days old → Stale → was mapped to `Degraded`). Freshness gets its own
+/// neutral vocabulary so the UI can show it dim/informational instead of as a
+/// health alarm. Adapters have health; sections have freshness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Freshness {
+    /// Recompiled recently — current.
+    Fresh,
+    /// Data is older than Workstate's freshness window, or the snapshot's schema
+    /// version is newer than we fully support. Usable, just not current. Neutral,
+    /// not an error.
+    Stale,
+    /// The section is absent from the snapshot (no data compiled for it).
+    Missing,
+    /// An unrecognized status string — surfaced rather than silently assumed Fresh.
+    Unknown,
+}
+
+impl Freshness {
+    /// A short, lowercase tag for rendering next to a section ("fresh", "stale").
+    pub fn label(&self) -> &'static str {
+        match self {
+            Freshness::Fresh => "fresh",
+            Freshness::Stale => "stale",
+            Freshness::Missing => "missing",
+            Freshness::Unknown => "unknown",
+        }
+    }
+}
+
+/// Translate a Workstate section `status` string into a [`Freshness`].
+///
+/// Positive matches only; an unanticipated status is `Unknown`, never silently
+/// treated as Fresh. This replaces the old `status_to_health`: a section's
+/// status describes *currency*, not adapter health, so it must not be coerced
+/// into the health vocabulary.
+pub fn status_to_freshness(status: &str) -> Freshness {
     match status.trim() {
-        "Fresh" => crate::AdapterHealth::Healthy,
-        "Stale" | "UnsupportedVersion" => crate::AdapterHealth::Degraded,
-        "Missing" => crate::AdapterHealth::Unavailable,
-        _ => crate::AdapterHealth::Unknown,
+        "Fresh" => Freshness::Fresh,
+        "Stale" | "UnsupportedVersion" => Freshness::Stale,
+        "Missing" => Freshness::Missing,
+        _ => Freshness::Unknown,
     }
 }
 
@@ -72,25 +112,30 @@ pub fn status_to_health(status: &str) -> crate::AdapterHealth {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::AdapterHealth;
 
     #[test]
-    fn status_to_health_covers_known_and_unknown_values() {
-        assert_eq!(status_to_health("Fresh"), AdapterHealth::Healthy);
-        assert_eq!(status_to_health("Stale"), AdapterHealth::Degraded);
-        assert_eq!(
-            status_to_health("UnsupportedVersion"),
-            AdapterHealth::Degraded
-        );
-        assert_eq!(status_to_health("Missing"), AdapterHealth::Unavailable);
-        // An unanticipated status is Unknown, never silently treated as healthy.
-        assert_eq!(status_to_health("WeirdNewStatus"), AdapterHealth::Unknown);
+    fn status_to_freshness_covers_known_and_unknown_values() {
+        assert_eq!(status_to_freshness("Fresh"), Freshness::Fresh);
+        assert_eq!(status_to_freshness("Stale"), Freshness::Stale);
+        // A newer-than-supported snapshot is still usable, just not current.
+        assert_eq!(status_to_freshness("UnsupportedVersion"), Freshness::Stale);
+        assert_eq!(status_to_freshness("Missing"), Freshness::Missing);
+        // An unanticipated status is Unknown, never silently treated as Fresh.
+        assert_eq!(status_to_freshness("WeirdNewStatus"), Freshness::Unknown);
     }
 
     #[test]
-    fn status_to_health_trims_surrounding_whitespace() {
+    fn status_to_freshness_trims_surrounding_whitespace() {
         // The core impl trims, so a status with stray padding still maps correctly.
-        assert_eq!(status_to_health("  Fresh  "), AdapterHealth::Healthy);
+        assert_eq!(status_to_freshness("  Fresh  "), Freshness::Fresh);
+    }
+
+    #[test]
+    fn freshness_is_not_health_stale_is_neutral() {
+        // The whole point of the split: Stale must NOT read as a health fault.
+        // It carries its own neutral label, distinct from AdapterHealth::Degraded.
+        assert_eq!(Freshness::Stale.label(), "stale");
+        assert_eq!(Freshness::Fresh.label(), "fresh");
     }
 
     #[test]

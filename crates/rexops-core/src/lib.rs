@@ -45,10 +45,10 @@ pub use adapter_types::{AdapterHealth, AdapterOutput};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
-pub use models::{JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
+pub use models::{format_unix_millis_utc, JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
 pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 pub use system_info::SystemInfo;
-pub use workstate_info::{status_to_health, Provenance, Section, WorkstateInfo};
+pub use workstate_info::{status_to_freshness, Freshness, Provenance, Section, WorkstateInfo};
 
 // lib.rs stays as a directory of contents. Logic and data definitions live in
 // the modules listed above.
