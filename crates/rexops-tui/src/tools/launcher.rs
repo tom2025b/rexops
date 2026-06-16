@@ -112,6 +112,11 @@ pub fn launch_tool(
 /// (the same control surface as `enabled`), so a stray same-named binary on PATH
 /// must not silently shadow the build an operator chose.
 ///
+/// The PATH fallback looks up the catalog's `default_binary` (which is usually,
+/// but need not be, the same as `tool_id`) so a tool whose executable name differs
+/// from its catalog id is still found with no per-user config. For an id not in
+/// the catalog the id itself is the PATH name.
+///
 /// Private: this is the *program-only* half. Every caller outside this module —
 /// the confirm-gate preview, the foreground launch, and the background job — must
 /// go through [`resolve_launch_command`], which appends the catalog args. Routing
@@ -121,7 +126,8 @@ fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     if !config.adapter_enabled(tool_id) {
         return None;
     }
-    command_from_config(tool_id, config).or_else(|| command_from_path(tool_id))
+    let path_binary = catalog::by_id(tool_id).map_or(tool_id, |tool| tool.default_binary);
+    command_from_config(tool_id, config).or_else(|| command_from_path(path_binary))
 }
 
 /// Resolve the complete launch command for a catalog tool, including any
@@ -139,9 +145,11 @@ pub fn resolve_launch_command(tool_id: &str, config: &AppConfig) -> Option<Launc
     Some(LaunchCommand { program, args })
 }
 
-/// Prefer the user's PATH by asking the platform `which` command.
-fn command_from_path(tool_id: &str) -> Option<String> {
-    let output = Command::new("which").arg(tool_id).output().ok()?;
+/// Prefer the user's PATH by asking the platform `which` command. Takes the
+/// binary name to look up (the catalog `default_binary`, or the tool id when the
+/// tool is not in the catalog) — not necessarily the tool id.
+fn command_from_path(binary: &str) -> Option<String> {
+    let output = Command::new("which").arg(binary).output().ok()?;
 
     if !output.status.success() {
         return None;

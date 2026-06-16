@@ -12,9 +12,17 @@
 
 version: 1
 
-# Adapter configuration. Adapters are optional by design.
-# Missing binaries or disabled adapters produce AdapterHealth::Unavailable
-# and never cause hard failures in snapshots or the TUI.
+# Adapter / tool configuration. The `adapters:` map is the single control
+# surface for BOTH:
+#   - probed adapters (data sources that produce health: bulwark, system, workstate)
+#   - launchable tools in the Launcher catalog (bulwark, scriptvault, proto,
+#     workstate, toolfoundry)
+# Keys are tool/adapter ids. Everything here is OPTIONAL: each catalog tool has a
+# built-in default binary equal to its id and is found on PATH, so no entry is
+# required to launch it. Add an entry only to PIN a binary path or to DISABLE a
+# tool (`enabled: false` blocks launch even if the binary is on PATH).
+# Missing binaries or disabled adapters produce AdapterHealth::Unavailable and
+# never cause hard failures in snapshots or the TUI.
 adapters:
   bulwark:
     enabled: true
@@ -23,10 +31,22 @@ adapters:
     # Per-adapter timeout override (seconds). Default comes from adapter crate.
     # timeout_secs: 30
 
-  # system:
+  # Launcher-only tools (no probe) are pinned/disabled under the same map.
+  # Uncomment and set `binary:` only to override the PATH default.
+  # scriptvault:
   #   enabled: true
-  #
+  #   binary: "scriptvault"
+  # proto:
+  #   enabled: true
+  #   binary: "proto"
   # workstate:
+  #   enabled: true
+  #   binary: "workstate"
+  # toolfoundry:
+  #   enabled: true
+  #   binary: "toolfoundry"
+
+  # system:
   #   enabled: true
 
 # Global defaults
