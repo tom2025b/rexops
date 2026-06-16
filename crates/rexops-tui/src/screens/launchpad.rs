@@ -19,13 +19,13 @@ use ratatui::{
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::tools::{ToolEntry, CATALOG};
+use crate::tools::{Category, ToolEntry, CATALOG};
 use crate::ui::widgets;
 
 /// Width the tool name is padded to so the badges and tags line up into columns.
-/// The catalog names are short ("Workstate" is the longest at 9), so 10 leaves a
-/// single space of gutter before the badge.
-const NAME_COL: usize = 10;
+/// Sized to the longest catalog names ("ScriptVault"/"ToolFoundry" at 11), so 12
+/// leaves a single space of gutter before the badge and nothing renders cramped.
+const NAME_COL: usize = 12;
 
 /// Render the Launcher screen.
 pub fn render_launcher(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -104,12 +104,35 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
     ])
 }
 
+/// A dim, non-selectable section header introducing a category's rows.
+fn render_category_header(title: &str, theme: Theme) -> Line<'static> {
+    Line::from(Span::styled(title.to_owned(), theme.dim()))
+}
+
+/// Render the grouped tool list: walk `Category::ORDER`, and for each category
+/// that has at least one tool emit a header followed by that category's rows.
+///
+/// Rows keep their ORIGINAL catalog index, so `selected_tool` stays a flat index
+/// over `CATALOG` (headers are display-only and never selectable) — navigation
+/// and selection are unchanged by the grouping; only the rendered output gains
+/// headers. Empty categories are skipped (no orphan header).
 fn render_launcher_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let lines: Vec<Line> = CATALOG
-        .iter()
-        .enumerate()
-        .map(|(i, tool)| render_launcher_row(app, i, tool, theme))
-        .collect();
+    let mut lines: Vec<Line> = Vec::new();
+
+    for category in Category::ORDER {
+        let mut rows: Vec<Line> = CATALOG
+            .iter()
+            .enumerate()
+            .filter(|(_, tool)| tool.category == category)
+            .map(|(i, tool)| render_launcher_row(app, i, tool, theme))
+            .collect();
+
+        if rows.is_empty() {
+            continue;
+        }
+        lines.push(render_category_header(category.title(), theme));
+        lines.append(&mut rows);
+    }
 
     let list = Paragraph::new(lines).block(pane("Tools", theme));
     f.render_widget(list, area);
@@ -211,9 +234,9 @@ mod tests {
 
     #[test]
     fn detail_pane_echoes_the_selected_tools_description() {
-        // Select "Proto" (index 1) and confirm its full description shows in the
-        // detail pane, not just the row.
-        let app = app_with_selection(1);
+        // Select "Proto" (catalog index 2: Bulwark, ScriptVault, Proto) and
+        // confirm its full description shows in the detail pane, not just the row.
+        let app = app_with_selection(2);
         let text = render_to_text(&app);
         assert!(
             text.contains("Proto:"),
@@ -227,10 +250,10 @@ mod tests {
 
     #[test]
     fn detail_pane_marks_unresolved_tools_disabled() {
-        // Proto (index 1) with no resolvable command is the "disabled" state.
-        // Force the cache false so the test doesn't depend on a `proto` binary
-        // being absent from the dev PATH.
-        let mut app = app_with_selection(1);
+        // Proto (catalog index 2) with no resolvable command is the "disabled"
+        // state. Force the cache false so the test doesn't depend on a `proto`
+        // binary being absent from the dev PATH.
+        let mut app = app_with_selection(2);
         app.set_tool_launchable("proto", false);
         let text = render_to_text(&app);
         assert!(
@@ -437,26 +460,37 @@ mod tests {
         let text = render_to_text(&app);
         assert!(text.contains("Bulwark:"), "starts on Bulwark:\n{text}");
         assert!(
-            !text.contains("Proto:"),
-            "Proto's detail must not show while Bulwark is selected:\n{text}"
+            !text.contains("ScriptVault:"),
+            "ScriptVault's detail must not show while Bulwark is selected:\n{text}"
         );
 
-        // Down → Proto (index 1). The pane must now follow to Proto, dropping
+        // Down → ScriptVault (catalog index 1). The pane must follow, dropping
         // Bulwark's detail line.
         app.on_action(Action::Down, &mut runner);
         let text = render_to_text(&app);
         assert!(
-            text.contains("Proto:") && text.contains("checklist"),
-            "detail must follow the selection to Proto:\n{text}"
+            text.contains("ScriptVault:") && text.contains("search engine"),
+            "detail must follow the selection to ScriptVault:\n{text}"
         );
         assert!(
             !text.contains("Bulwark:"),
             "Bulwark's detail must no longer show after moving off it:\n{text}"
         );
 
-        // Down again wraps from the last entry (Proto) back to Bulwark (index 0).
-        // Confirms tracking keeps working across the wrap, not just one step.
+        // Down again → Proto (index 2), proving tracking continues past the first
+        // step within the Scripts category.
         app.on_action(Action::Down, &mut runner);
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Proto:") && text.contains("checklist"),
+            "detail must follow the selection to Proto:\n{text}"
+        );
+
+        // Three more Downs walk Workstate (3) → ToolFoundry (4) → wrap to Bulwark
+        // (0). Confirms the wrap still lands on the first entry with 5 tools.
+        for _ in 0..3 {
+            app.on_action(Action::Down, &mut runner);
+        }
         let text = render_to_text(&app);
         assert!(
             text.contains("Bulwark:"),
@@ -465,6 +499,53 @@ mod tests {
         assert!(
             !text.contains("Proto:"),
             "Proto's detail must clear once moved past:\n{text}"
+        );
+    }
+
+    #[test]
+    fn list_groups_rows_under_category_headers() {
+        // The grouped list emits a header per non-empty category in ORDER, with
+        // each tool's row beneath its category. Headers are display-only; this
+        // asserts they appear and that a tool lands under the right one.
+        let app = app_with_selection(0);
+        let text = render_to_text(&app);
+
+        for header in ["Scripts", "System", "Inventory"] {
+            assert!(
+                text.contains(header),
+                "expected a `{header}` category header:\n{text}"
+            );
+        }
+
+        let lines: Vec<&str> = text.lines().collect();
+        let pos = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("`{needle}` not rendered:\n{text}"))
+        };
+
+        // Scripts header precedes Bulwark/ScriptVault/Proto; System precedes
+        // Workstate; Inventory precedes ToolFoundry — and the section order holds.
+        assert!(
+            pos("Scripts") < pos("Bulwark"),
+            "Bulwark under Scripts:\n{text}"
+        );
+        assert!(
+            pos("Scripts") < pos("ScriptVault"),
+            "ScriptVault under Scripts:\n{text}"
+        );
+        assert!(
+            pos("System") < pos("Workstate"),
+            "Workstate under System:\n{text}"
+        );
+        assert!(
+            pos("Inventory") < pos("ToolFoundry"),
+            "ToolFoundry under Inventory:\n{text}"
+        );
+        assert!(
+            pos("Scripts") < pos("System") && pos("System") < pos("Inventory"),
+            "category order must be Scripts, System, Inventory:\n{text}"
         );
     }
 }
