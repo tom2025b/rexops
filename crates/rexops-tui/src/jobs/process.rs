@@ -15,7 +15,8 @@
 //!
 //! Concurrency: one job at a time. The app holds a single [`JobHandle`]; arming a
 //! new job while one is active is refused upstream. [`JobHandle::cancel`] kills
-//! the child so a hung tool can always be stopped from the TUI.
+//! the job's whole process group so a hung tool — and anything it forked — can
+//! always be stopped from the TUI.
 //!
 //! Completion is detected by the main loop, not a waiter thread: the `Child`
 //! stays in the handle (so `cancel` can kill it), and the loop polls
@@ -24,9 +25,26 @@
 //! synchronisation around the child.
 
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
+
+/// SIGKILL the process GROUP led by `pgid` (best-effort). A job is spawned into
+/// its own group (`process_group(0)`, so the child's pid IS the group id), which
+/// lets one `killpg` reach the direct child AND any grandchildren it forked —
+/// the whole tree dies, nothing is orphaned to init. `kill` on the `Child` alone
+/// would reach only the direct child and leak a forking tool's grandchildren.
+/// SIGKILL (not a graceful signal) is deliberate, matching the single-child
+/// `kill` it replaces: uncatchable, so a child blocked on a full pipe can't
+/// defer it. Errors (group already gone) are ignored.
+fn kill_process_group(pgid: u32) {
+    // SAFETY: a plain libc call with an integer pgid and signal; no memory is
+    // touched and any failure (ESRCH/EPERM) is reported via the ignored return.
+    unsafe {
+        libc::killpg(pgid as libc::pid_t, libc::SIGKILL);
+    }
+}
 
 /// Bound on the output channel between the reader threads and the UI. A
 /// `sync_channel` of this size applies **backpressure**: when the UI falls
@@ -67,6 +85,9 @@ pub enum JobExit {
 /// A handle to the one running background job. Holds the child (so we can kill
 /// it) and the receiving end of its output stream.
 pub struct JobHandle {
+    /// Catalog id of the tool being run, so completion can consult its metadata
+    /// (e.g. whether to refresh afterwards) without re-deriving it.
+    pub id: String,
     /// Display name of the tool being run (for the pane title / status).
     pub name: String,
     /// The resolved command that was spawned (shown in the pane header).
@@ -121,11 +142,15 @@ impl JobHandle {
         }
     }
 
-    /// Kill the running child (cancel). Best-effort: a child that already exited
-    /// returns an error from `kill`, which we ignore. The next `poll_done` then
-    /// reports `Signalled`, so the app finishes its bookkeeping uniformly.
+    /// Kill the running job (cancel). Signals the whole process GROUP, so a tool
+    /// that forked grandchildren is torn down completely — not just its direct
+    /// child. Best-effort: a group that already exited is a harmless no-op (the
+    /// `killpg` error is ignored). We still reap the direct child here so it
+    /// doesn't linger as a zombie; the next `poll_done` reports `Signalled`, so
+    /// the app finishes its bookkeeping uniformly.
     pub fn cancel(&mut self) {
-        let _ = self.child.kill();
+        kill_process_group(self.child.id());
+        let _ = self.child.wait();
     }
 }
 
@@ -137,23 +162,23 @@ impl JobHandle {
 /// — std refuses to kill an already-waited child, no pid-reuse risk) and
 /// `wait` just returns the cached status.
 ///
-/// Two deliberate limits: quitting with a job still running kills it
-/// immediately and WITHOUT a confirmation modal (instant quit is the chosen
-/// trade-off, unlike the confirm-gated mutations elsewhere in the TUI); and —
-/// like exec.rs — `kill` reaches the direct child only, never grandchildren,
-/// which is fine today because jobs spawn suite binaries directly.
+/// One deliberate limit: quitting with a job still running kills it immediately
+/// and WITHOUT a confirmation modal (instant quit is the chosen trade-off,
+/// unlike the confirm-gated mutations elsewhere in the TUI). Unlike before, the
+/// kill is GROUP-wide (`killpg` on the job's own process group), so a tool that
+/// forked grandchildren is torn down whole — `q` mid-job leaks nothing to init.
 ///
 /// Backpressure note: with the bounded channel a reader thread can be blocked in
 /// `send` on a full channel while the child is blocked writing to a full pipe.
-/// `kill` is SIGKILL — uncatchable and not deferred by the pending write — so
-/// `wait` still reaps promptly and never deadlocks. The `rx` field drops after
-/// this body returns, which releases any blocked `send` (it returns `Err`) and
-/// lets the reader threads exit. Do NOT replace `kill` with a graceful
-/// terminate here: a child ignoring the signal while blocked on a full pipe
-/// could then hang `wait`.
+/// The group kill is SIGKILL — uncatchable and not deferred by the pending write
+/// — so `wait` still reaps promptly and never deadlocks. The `rx` field drops
+/// after this body returns, which releases any blocked `send` (it returns `Err`)
+/// and lets the reader threads exit. Do NOT switch to a graceful terminate here:
+/// a child ignoring the signal while blocked on a full pipe could then hang
+/// `wait`.
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        kill_process_group(self.child.id());
         let _ = self.child.wait();
     }
 }
@@ -167,9 +192,13 @@ impl Drop for JobHandle {
 /// confirm-gate preview rendered via `resolve_launch_command`, so what the user
 /// approved is what runs. Stdin is nulled: background jobs are non-interactive by
 /// definition.
-pub fn spawn(name: &str, program: &str, args: &[String]) -> Option<JobHandle> {
+pub fn spawn(id: &str, name: &str, program: &str, args: &[String]) -> Option<JobHandle> {
     let mut child = Command::new(program)
         .args(args)
+        // Put the job in its own process group (the child becomes group leader,
+        // so its pid == the pgid). `cancel`/`Drop` then `killpg` that group,
+        // reaching any grandchildren the tool forks — not just the direct child.
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -215,6 +244,7 @@ pub fn spawn(name: &str, program: &str, args: &[String]) -> Option<JobHandle> {
     };
 
     Some(JobHandle {
+        id: id.to_owned(),
         name: name.to_owned(),
         command,
         child,
@@ -267,7 +297,7 @@ mod tests {
     fn spawn_script(name: &str, path: &str) -> JobHandle {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(job) = spawn(name, path, &[]) {
+            if let Some(job) = spawn(name, name, path, &[]) {
                 return job;
             }
             assert!(
@@ -411,7 +441,7 @@ mod tests {
         // `true` exits immediately with no output. `drain_into` must eventually
         // report disconnect (senders dropped) — that is what lets the production
         // loop know the output is complete.
-        let job = spawn("true", "true", &[]).expect("spawn true");
+        let job = spawn("true", "true", "true", &[]).expect("spawn true");
         let mut out = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -428,7 +458,7 @@ mod tests {
     fn spawn_streams_stdout_and_reports_zero_exit() {
         // `true` exits 0 with no output; use a tiny `sh -c` would need args, so we
         // run a guaranteed-present no-output success first.
-        let job = spawn("true", "true", &[]).expect("spawn true");
+        let job = spawn("true", "true", "true", &[]).expect("spawn true");
         let (out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(0));
         assert!(out.is_empty(), "`true` produces no output");
@@ -438,7 +468,7 @@ mod tests {
     fn spawn_captures_stdout_lines() {
         // `printf` is not guaranteed as a standalone binary, but `echo` is on
         // PATH on Linux and prints one line then exits 0.
-        let job = spawn("echo", "echo", &[]).expect("spawn echo");
+        let job = spawn("echo", "echo", "echo", &[]).expect("spawn echo");
         let (out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(0));
         // `echo` with no args prints a single empty line.
@@ -453,7 +483,7 @@ mod tests {
         // handed to the program (the output is the joined args), and the
         // `command` field must carry them too for the pane header.
         let args = vec!["hello".to_owned(), "world".to_owned()];
-        let job = spawn("echo", "echo", &args).expect("spawn echo with args");
+        let job = spawn("echo", "echo", "echo", &args).expect("spawn echo with args");
         assert_eq!(
             job.command, "echo hello world",
             "the displayed command must include the args"
@@ -470,7 +500,7 @@ mod tests {
     #[test]
     fn spawn_reports_nonzero_exit() {
         // `false` exits 1.
-        let job = spawn("false", "false", &[]).expect("spawn false");
+        let job = spawn("false", "false", "false", &[]).expect("spawn false");
         let (_out, exit) = run_via_drain_into(job);
         assert_eq!(exit, JobExit::Code(1));
     }
@@ -478,7 +508,7 @@ mod tests {
     #[test]
     fn spawn_missing_binary_returns_none() {
         assert!(
-            spawn("nope", "definitely-not-a-real-binary-xyz", &[]).is_none(),
+            spawn("nope", "nope", "definitely-not-a-real-binary-xyz", &[]).is_none(),
             "a missing binary must not yield a handle"
         );
     }
@@ -492,7 +522,7 @@ mod tests {
         // ETXTBSY race two concurrent write-script tests would hit), so the
         // child is provably still running at drop. A reaped pid has no /proc
         // entry (a zombie still would), so the assert proves both kill and reap.
-        let job = spawn("yes", "yes", &[]).expect("spawn yes");
+        let job = spawn("yes", "yes", "yes", &[]).expect("spawn yes");
         let pid = job.child.id();
         let proc_path = format!("/proc/{pid}");
         assert!(
@@ -508,13 +538,91 @@ mod tests {
         );
     }
 
+    /// Whether any process matches `pgrep -f <pattern>` right now.
+    fn pgrep_matches(pattern: &str) -> bool {
+        std::process::Command::new("pgrep")
+            .args(["-f", pattern])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn cancel_kills_the_whole_process_group_including_grandchildren() {
+        // THE P1 REGRESSION: `kill` on the direct child only would leave a
+        // grandchild (a tool that forks, or a shell that backgrounds work)
+        // orphaned to init when the job is cancelled. The job now runs in its
+        // own process group and cancel signals the GROUP, so the grandchild dies
+        // too. The marker embeds this process's pid so it is unique to THIS run —
+        // a crashed earlier run can't leave a same-marker orphan that poisons a
+        // later run, and parallel test binaries never collide.
+        let marker = format!("271828.{}", std::process::id());
+        let body = format!("#!/bin/sh\nsleep {marker} &\nsleep {marker}\n");
+        let script = write_script("group-cancel", &body);
+        let path = script.to_str().unwrap();
+        let mut job = spawn_script("group-cancel", path);
+
+        // Wait until the backgrounded grandchild is actually up.
+        let pat = format!("sleep {marker}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pgrep_matches(&pat) {
+            assert!(Instant::now() < deadline, "grandchild never started");
+            sleep(Duration::from_millis(10));
+        }
+
+        job.cancel(); // must reap the direct child AND signal the whole group
+
+        // The grandchild must be gone shortly after — it is not the direct child,
+        // so only a group-wide kill reaches it.
+        let gone_by = Instant::now() + Duration::from_secs(5);
+        while pgrep_matches(&pat) {
+            assert!(
+                Instant::now() < gone_by,
+                "grandchild survived cancel — process group was not killed"
+            );
+            sleep(Duration::from_millis(10));
+        }
+        drop(job);
+        let _ = std::fs::remove_file(&script);
+    }
+
+    #[test]
+    fn drop_kills_the_whole_process_group_including_grandchildren() {
+        // Same guarantee on the Drop path (what quitting the TUI does): dropping
+        // the handle must tear down the entire group, not just the direct child.
+        let marker = format!("161803.{}", std::process::id());
+        let body = format!("#!/bin/sh\nsleep {marker} &\nsleep {marker}\n");
+        let script = write_script("group-drop", &body);
+        let path = script.to_str().unwrap();
+        let job = spawn_script("group-drop", path);
+
+        let pat = format!("sleep {marker}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pgrep_matches(&pat) {
+            assert!(Instant::now() < deadline, "grandchild never started");
+            sleep(Duration::from_millis(10));
+        }
+
+        drop(job); // Drop = kill group + reap
+
+        let gone_by = Instant::now() + Duration::from_secs(5);
+        while pgrep_matches(&pat) {
+            assert!(
+                Instant::now() < gone_by,
+                "grandchild survived drop — process group was not killed"
+            );
+            sleep(Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(&script);
+    }
+
     #[test]
     fn cancel_is_idempotent_and_leaves_a_terminal_poll() {
         // `cancel` is best-effort: it kills a live child, and is a harmless no-op
         // on one that already exited. After cancelling, `poll_done` must always
         // reach a terminal result (the child is gone either way). We use a
         // short-lived process; calling cancel twice exercises the no-op path too.
-        let mut job = spawn("true", "true", &[]).expect("spawn true");
+        let mut job = spawn("true", "true", "true", &[]).expect("spawn true");
         job.cancel();
         job.cancel(); // idempotent — must not panic
         let deadline = Instant::now() + Duration::from_secs(5);

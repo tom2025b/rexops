@@ -143,10 +143,14 @@ impl App {
             Screen::Launcher => {
                 let len = tools::CATALOG.len();
                 if len > 0 {
+                    // Clamp first so a stale index (defensive: the field is a raw
+                    // usize independent of the catalog) can't make `% len` wrap
+                    // from a bogus base; then step with wraparound.
+                    let cur = self.selected_tool.min(len - 1);
                     self.selected_tool = if down {
-                        (self.selected_tool + 1) % len
+                        (cur + 1) % len
                     } else {
-                        (self.selected_tool + len - 1) % len
+                        (cur + len - 1) % len
                     };
                 }
             }

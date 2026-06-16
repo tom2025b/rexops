@@ -3,7 +3,7 @@
 pub mod catalog;
 pub mod launcher;
 
-pub use catalog::{is_streamable, ToolEntry, CATALOG};
+pub use catalog::{is_streamable, refreshes_after, ToolEntry, CATALOG};
 // `resolve_launch_command` is the single public entry point for "what runs when
 // this tool launches" — program plus catalog args. Both run surfaces (the
 // foreground launcher and the background job manager) and the confirm-gate

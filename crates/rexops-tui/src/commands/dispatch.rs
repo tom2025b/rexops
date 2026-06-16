@@ -69,7 +69,9 @@ impl App {
     }
 
     pub(crate) fn palette_move(&mut self, down: bool) {
-        let len = self.palette_commands().len();
+        // Count only — movement needs the length, not the annotated rows, so
+        // skip rebuilding/availability-tagging the whole Vec here.
+        let len = super::palette::filter(&self.palette_query).len();
         if len == 0 {
             self.palette_selected = 0;
             return;

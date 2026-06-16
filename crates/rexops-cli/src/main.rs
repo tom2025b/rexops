@@ -137,8 +137,12 @@ fn print_status_human(snap: &OpsSnapshot) {
         }
         if !sys.disk.is_empty() {
             println!("  disk:");
-            for d in sys.disk.iter().take(3) {
+            const DISK_SHOWN: usize = 3;
+            for d in sys.disk.iter().take(DISK_SHOWN) {
                 println!("    {d}");
+            }
+            if let Some(extra) = sys.disk.len().checked_sub(DISK_SHOWN).filter(|n| *n > 0) {
+                println!("    … (+{extra} more)");
             }
         }
         println!();
@@ -152,10 +156,19 @@ fn print_status_human(snap: &OpsSnapshot) {
             sv.favorites_count(),
             sv.recents_count()
         );
-        for s in sv.scripts.iter().take(3) {
+        const SCRIPTS_SHOWN: usize = 3;
+        for s in sv.scripts.iter().take(SCRIPTS_SHOWN) {
             let flag = if sv.is_favorite(s) { " ★" } else { "" };
             let desc = s.description.as_deref().unwrap_or("");
             println!("  - {}{} {}", s.label(), flag, desc);
+        }
+        if let Some(extra) = sv
+            .scripts
+            .len()
+            .checked_sub(SCRIPTS_SHOWN)
+            .filter(|n| *n > 0)
+        {
+            println!("  - … (+{extra} more)");
         }
         println!();
     }
@@ -166,7 +179,8 @@ fn print_status_human(snap: &OpsSnapshot) {
             "  tools: {} ({} need attention)",
             tf.tool_count, tf.attention_count
         );
-        for t in tf.tools.iter().take(5) {
+        const TOOLS_SHOWN: usize = 5;
+        for t in tf.tools.iter().take(TOOLS_SHOWN) {
             let mark = if t.needs_attention() { "!" } else { "✓" };
             let review = if t.review_due_flag {
                 match t.review_after.as_deref() {
@@ -180,6 +194,9 @@ fn print_status_human(snap: &OpsSnapshot) {
                 "  {} {} — {} ({}{})",
                 mark, t.display_name, t.status, t.lifecycle_state, review
             );
+        }
+        if let Some(extra) = tf.tools.len().checked_sub(TOOLS_SHOWN).filter(|n| *n > 0) {
+            println!("  … (+{extra} more)");
         }
         println!();
     }
@@ -197,9 +214,17 @@ fn print_status_human(snap: &OpsSnapshot) {
                 t.low,
                 t.info
             );
-            for item in bw.high_risk_items().take(5) {
+            const HIGH_RISK_SHOWN: usize = 5;
+            let high_risk_total = bw.high_risk_items().count();
+            for item in bw.high_risk_items().take(HIGH_RISK_SHOWN) {
                 let sev = item.severity.as_deref().unwrap_or("?");
                 println!("  ! {} ({})", item.label(), sev);
+            }
+            if let Some(extra) = high_risk_total
+                .checked_sub(HIGH_RISK_SHOWN)
+                .filter(|n| *n > 0)
+            {
+                println!("  ! … (+{extra} more)");
             }
         } else {
             println!("  {} items — risk breakdown unavailable", bw.items.len());

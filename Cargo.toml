@@ -28,3 +28,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }
+# Unix process-group signalling (killpg) so cancelling a job kills its whole
+# process tree, not just the direct child. Already in the lock transitively;
+# pinned here so the crates that need it share one version.
+libc = "0.2"

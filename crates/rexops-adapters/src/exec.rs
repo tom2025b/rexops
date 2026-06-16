@@ -5,6 +5,7 @@
 //! All calls are timeout-bounded. No shell. Pure argv. Returns AdapterError only.
 
 use std::io::{ErrorKind, Read};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -33,6 +34,10 @@ pub(crate) fn run_optional(
     cmd.args(args);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    // Own process group (child becomes leader, pid == pgid) so a timeout-kill
+    // can `killpg` the WHOLE tree — a grandchild a probe forks dies too, instead
+    // of lingering until it finishes on its own.
+    cmd.process_group(0);
     // Do not inherit env beyond what the caller has; explicit is better but
     // for adapter probes we usually want the user's PATH, so inherit is fine.
 
@@ -103,30 +108,50 @@ fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinH
     })
 }
 
-/// Kill the child and reap it, then DETACH the pipe readers (do not join).
+/// Kill the child's whole process GROUP and reap the child, then DETACH the pipe
+/// readers (do not join).
 ///
-/// Killing the direct child closes the pipe ends it owns, so in the common case
-/// the readers hit EOF and exit on their own. But `kill` reaches only the direct
-/// child — a grandchild that inherited the pipes (a shell wrapper's `sleep`, a
-/// daemonizing tool) keeps them open after the child dies, so joining the readers
-/// here would block for the grandchild's whole lifetime and defeat the very
-/// timeout that called us. We therefore drop the handles instead of joining:
-/// returning promptly is the point of a timeout. A detached reader blocked on a
-/// still-open pipe is harmless — it holds only its own buffer and exits when the
-/// pipe finally closes; nothing leaks that the OS won't reclaim. (Adapters spawn
-/// binaries directly, so this grandchild case is rare in practice, but the
-/// timeout must stay honest when it does happen.)
+/// The child is spawned as its own group leader, so `killpg` reaches the direct
+/// child AND any grandchildren it forked (a shell wrapper's `sleep`, a
+/// daemonizing tool) — the whole tree dies, not just the child. That closes the
+/// inherited-pipe ends, so the readers normally hit EOF promptly.
+///
+/// We still DETACH rather than join the readers: a grandchild can race to hold a
+/// pipe open in the instant between fork and our kill, and joining could then
+/// block past the deadline — defeating the very timeout that called us. Dropping
+/// the handles returns immediately (the point of a timeout); a detached reader
+/// on a still-open pipe is harmless, holding only its own buffer and exiting when
+/// the pipe finally closes. Group-killing makes that window vanishingly small;
+/// detaching keeps the timeout honest even if it occurs.
 fn kill_and_reap(
     child: &mut std::process::Child,
     stdout_reader: thread::JoinHandle<Vec<u8>>,
     stderr_reader: thread::JoinHandle<Vec<u8>>,
 ) {
-    let _ = child.kill();
+    kill_process_group(child.id());
     let _ = child.wait();
     // Detach, don't join: see the doc comment. Dropping the handles is what keeps
-    // a grandchild holding the pipe from hanging the timeout path.
+    // a late grandchild holding the pipe from hanging the timeout path.
     drop(stdout_reader);
     drop(stderr_reader);
+}
+
+/// SIGKILL the process GROUP led by `pgid` (best-effort). Probes are spawned into
+/// their own group (`process_group(0)`, child pid == group id), so one `killpg`
+/// tears down the direct child and any grandchildren together. Errors (the group
+/// already exited) are ignored.
+fn kill_process_group(pgid: u32) {
+    // A real pid/pgid always fits in i32, so this cast is exact in practice; the
+    // u32→pid_t(i32) conversion is the standard FFI shape. (MSRV-portable: avoids
+    // `u32::cast_signed`, stabilized only in 1.87.)
+    #[allow(clippy::cast_possible_wrap)]
+    let pgid = pgid as libc::pid_t;
+    // SAFETY: a plain libc call with an integer pgid and signal; touches no
+    // memory and any failure (ESRCH/EPERM) is surfaced only via the ignored
+    // return value.
+    unsafe {
+        libc::killpg(pgid, libc::SIGKILL);
+    }
 }
 
 /// run_optional + require present + serde_json::from_str. Missing -> BinaryNotFound.
@@ -282,12 +307,51 @@ mod tests {
     }
 
     #[test]
+    fn timeout_kills_the_grandchild_too_via_the_process_group() {
+        // The job/exec child runs in its own process group, so a timeout-kill
+        // `killpg`s the WHOLE tree — a backgrounded grandchild that inherited the
+        // pipe is killed too, not left to finish on its own. A unique marker
+        // (this pid) makes pgrep find exactly this test's grandchild.
+        let marker = format!("314159.{}", std::process::id());
+        let begin = Instant::now();
+        let res = run_optional(
+            "sh",
+            &["-c", &format!("sleep {marker} & sleep {marker}")],
+            Duration::from_millis(200),
+        );
+        assert!(matches!(res, Err(AdapterError::Timeout(_))));
+        // After the timeout-kill, no sleep with our marker may remain — the group
+        // kill reached the grandchild. (Poll briefly: reap is asynchronous.)
+        let pat = format!("sleep {marker}");
+        let gone_by = Instant::now() + Duration::from_secs(3);
+        loop {
+            let alive = Command::new("pgrep")
+                .args(["-f", &pat])
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !alive {
+                break;
+            }
+            assert!(
+                Instant::now() < gone_by,
+                "grandchild survived the timeout-kill — process group was not killed"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            begin.elapsed() < Duration::from_secs(3),
+            "timeout path must stay prompt"
+        );
+    }
+
+    #[test]
     fn timeout_with_grandchild_holding_the_pipe_still_returns_promptly() {
         // Regression: on a TIMEOUT-kill, a grandchild that inherited the stdout
-        // pipe (here `sh -c 'sleep 5 & ...'` backgrounds a sleep that outlives the
-        // killed `sh`) used to hang kill_and_reap's reader join for the
-        // grandchild's whole lifetime — defeating the timeout. The call must now
-        // return at the deadline by DETACHING the readers, not waiting them out.
+        // pipe (here `sh -c 'sleep 5 & ...'` backgrounds a sleep) used to hang
+        // kill_and_reap's reader join for the grandchild's whole lifetime —
+        // defeating the timeout. The call must return at the deadline by
+        // DETACHING the readers, not waiting them out. (The group-kill now also
+        // reaps the grandchild; this test still guards the no-hang property.)
         let begin = Instant::now();
         let res = run_optional(
             "sh",

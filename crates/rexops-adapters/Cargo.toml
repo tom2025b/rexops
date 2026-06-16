@@ -13,5 +13,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 rexops-core = { path = "../rexops-core" }
 
+# Unix-only: kill a timed-out probe's whole process group (killpg), so a
+# grandchild that outlived the direct child does not linger.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 # Keep deps minimal. No tokio, no async, no anyhow.
 # Execution is synchronous via std::process. Timeout implemented with std threads + channels.

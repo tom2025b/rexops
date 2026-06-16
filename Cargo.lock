@@ -455,6 +455,7 @@ dependencies = [
 name = "rexops-adapters"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rexops-core",
  "serde",
  "serde_json",
@@ -497,6 +498,7 @@ name = "rexops-tui"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "libc",
  "ratatui",
  "rexops-app",
  "rexops-core",

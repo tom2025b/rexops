@@ -155,8 +155,12 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
                 if let Some(u) = &i.uptime {
                     snap.add_note(format!("system uptime: {u}"));
                 }
-                for d in i.disk.iter().take(2) {
+                let disk_shown: usize = 2;
+                for d in i.disk.iter().take(disk_shown) {
                     snap.add_note(format!("system disk: {d}"));
+                }
+                if let Some(extra) = i.disk.len().checked_sub(disk_shown).filter(|n| *n > 0) {
+                    snap.add_note(format!("system disk: … (+{extra} more)"));
                 }
             }
             // info() is effectively infallible, but if it ever errors we still
@@ -336,7 +340,14 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
         "tools: {} total, {} need attention (as of {})",
         tools.tool_count, tools.attention_count, tools.as_of
     ));
-    for t in tools.tools.iter().filter(|t| t.needs_attention()).take(3) {
+    let attention_shown: usize = 3;
+    let attention_total = tools.tools.iter().filter(|t| t.needs_attention()).count();
+    for t in tools
+        .tools
+        .iter()
+        .filter(|t| t.needs_attention())
+        .take(attention_shown)
+    {
         let review_note = if t.review_due_flag {
             match t.review_after.as_deref() {
                 Some(date) => format!(", review due since {date}"),
@@ -349,6 +360,12 @@ fn fold_ws_tools(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
             "  attention: {} ({}, {}{})",
             t.display_name, t.status, t.lifecycle_state, review_note
         ));
+    }
+    if let Some(extra) = attention_total
+        .checked_sub(attention_shown)
+        .filter(|n| *n > 0)
+    {
+        snap.add_note(format!("  attention: … (+{extra} more)"));
     }
     snap.tools = Some(tools.clone());
 }
@@ -406,9 +423,17 @@ fn fold_ws_findings(snap: &mut OpsSnapshot, info: &WorkstateInfo) {
             t.low,
             t.info
         ));
-        for item in findings.high_risk_items().take(5) {
+        let high_risk_shown: usize = 5;
+        let high_risk_total = findings.high_risk_items().count();
+        for item in findings.high_risk_items().take(high_risk_shown) {
             let sev = item.severity.as_deref().unwrap_or("?");
             snap.add_note(format!("  high-risk: {} ({})", item.label(), sev));
+        }
+        if let Some(extra) = high_risk_total
+            .checked_sub(high_risk_shown)
+            .filter(|n| *n > 0)
+        {
+            snap.add_note(format!("  high-risk: … (+{extra} more)"));
         }
     } else {
         snap.add_note(format!(
@@ -516,8 +541,7 @@ mod tests {
         let snap = build_snapshot_with_piped(&cfg, None);
         assert!(
             snap.adapter_health_of(&bul)
-                .map(|h| h.is_available())
-                .unwrap_or(false),
+                .is_some_and(|h| h.is_available()),
             "a configured bulwark binary that exists (echo) must probe available"
         );
     }

@@ -78,9 +78,17 @@ impl SystemAdapter {
             }
         }
 
-        // disk (take a few lines)
+        // disk (take a few lines). Skip df's header row ("Filesystem Size Used
+        // Avail Use% Mounted on") — it's a column legend, not a mount, and
+        // rendering it as a disk "fact" looked unfinished. We detect it by its
+        // leading "Filesystem" token rather than blindly dropping line 0, so a
+        // df build without a header still yields all its mounts.
         if let Ok(Some(d)) = run_optional("df", &["-h"], self.timeout) {
-            for line in d.lines().take(6) {
+            for line in d
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("Filesystem"))
+                .take(6)
+            {
                 let t = line.trim();
                 if !t.is_empty() {
                     info.disk.push(t.to_owned());

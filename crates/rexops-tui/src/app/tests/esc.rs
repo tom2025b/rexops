@@ -36,7 +36,7 @@ fn esc_on_the_jobs_screen_with_a_running_job_neither_quits_nor_kills_it() {
     let mut app = bare_app();
     app.current_screen = Screen::Jobs;
     // `sleep` won't exit during the test, so the handle is provably still live.
-    app.job = Some(spawn("live-tool", "sleep", &[]).expect("spawn sleep"));
+    app.job = Some(spawn("live-tool", "live-tool", "sleep", &[]).expect("spawn sleep"));
     let mut runner = FakeRunner { calls: 0 };
 
     let quit = app.on_action(Action::Cancel, &mut runner);

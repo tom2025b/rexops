@@ -68,7 +68,7 @@ impl App {
             return;
         };
         let display = command.display();
-        match super::spawn(name, &command.program, &command.args) {
+        match super::spawn(id, name, &command.program, &command.args) {
             Some(handle) => {
                 self.job_output.clear();
                 self.jobs_scroll = 0; // fresh output → follow the bottom
@@ -164,6 +164,7 @@ impl App {
             #[allow(clippy::expect_used)]
             let job = self.job.as_ref().expect("job present while finishing");
             let name = job.name.clone();
+            let id = job.id.clone();
             let (summary, outcome) = match exit {
                 JobExit::Code(0) => (
                     format!("{name}: finished (exit 0)"),
@@ -209,7 +210,13 @@ impl App {
             // leaving the offset pinned would strand the pane on a now-static
             // buffer showing "— scrolled" against a job that's already done.
             self.jobs_scroll = 0;
-            self.request_refresh();
+            // Only re-probe when THIS tool's run could change what an adapter
+            // observes (catalog `refresh_after`). A self-contained job (e.g. a
+            // checklist runner) finishing must not silently re-probe every
+            // adapter — its output is already on screen.
+            if tools::refreshes_after(&id) {
+                self.request_refresh();
+            }
             return true; // job finished — header/history/toast all changed
         }
 

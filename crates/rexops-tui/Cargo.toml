@@ -29,3 +29,8 @@ rexops-app = { path = "../rexops-app" }
 # works without the sibling umbrella checkout and the version is reproducible.
 # Bump `rev` to adopt newer suite-ui.
 suite-ui = { git = "https://github.com/tom2025b/linux-ops-suite", rev = "2f5fa8231ea85f0827d11aef1cb13d3ddb347249" }
+
+# Unix-only: cancelling / quitting a job kills the child's whole process GROUP
+# (killpg), so a tool that forks grandchildren leaks nothing to init.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
