@@ -46,10 +46,7 @@ mod workstate;
 // Re-export the public API in a flat, convenient way.
 // Callers should be able to `use rexops_adapters::{BulwarkAdapter, AdapterError};`
 pub use adapter::Adapter;
-pub use bulwark::{
-    BulwarkAction, BulwarkAdapter, BulwarkCategory, BulwarkFinding, BulwarkLocation,
-    BulwarkScanResult, BulwarkSeverity,
-};
+pub use bulwark::BulwarkAdapter;
 pub use error::AdapterError;
 pub use models::findings::{FindingsInfo, RiskTally, ScanItem, Severity};
 pub use models::scripts::{Script, ScriptsInfo};

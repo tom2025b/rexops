@@ -1,7 +1,7 @@
 //! exec.rs — Sole module that spawns external processes (private).
 //!
 //! run_optional: graceful missing-binary -> Ok(None) for probes.
-//! run_json:     missing binary -> BinaryNotFound Err for data calls.
+//! probe_version: run_optional("--version") + parse the first semver token.
 //! All calls are timeout-bounded. No shell. Pure argv. Returns AdapterError only.
 
 use std::io::{ErrorKind, Read};
@@ -154,20 +154,6 @@ fn kill_process_group(pgid: u32) {
     }
 }
 
-/// run_optional + require present + serde_json::from_str. Missing -> BinaryNotFound.
-pub(crate) fn run_json<T>(binary: &str, args: &[&str], timeout: Duration) -> Result<T, AdapterError>
-where
-    T: serde::de::DeserializeOwned,
-{
-    let stdout =
-        run_optional(binary, args, timeout)?.ok_or_else(|| AdapterError::BinaryNotFound {
-            binary: binary.to_owned(),
-        })?;
-
-    let value: T = serde_json::from_str(&stdout)?;
-    Ok(value)
-}
-
 /// Run <binary> --version, extract first semver-ish token (strips leading v).
 /// `timeout` bounds the spawn (callers thread their configured value through).
 pub(crate) fn probe_version(
@@ -244,35 +230,6 @@ mod tests {
             }
             other => panic!("expected CommandFailed, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn run_json_parses_valid() {
-        // Use a command that prints JSON on stdout.
-        let res: Result<serde_json::Value, _> = run_json(
-            "sh",
-            &["-c", r#"echo '{"ok": true, "n": 42}'"#],
-            Duration::from_secs(2),
-        );
-        assert!(res.is_ok());
-        let v = res.unwrap();
-        assert_eq!(v["n"], 42);
-    }
-
-    #[test]
-    fn run_json_missing_is_binary_not_found() {
-        let res: Result<serde_json::Value, _> = run_json(
-            "rexops-test-absent-zzz",
-            &["--json"],
-            Duration::from_secs(1),
-        );
-        assert!(matches!(res, Err(AdapterError::BinaryNotFound { .. })));
-    }
-
-    #[test]
-    fn run_json_bad_json_is_parse_err() {
-        let res: Result<serde_json::Value, _> = run_json("echo", &["{bad"], Duration::from_secs(2));
-        assert!(matches!(res, Err(AdapterError::JsonParse(_))));
     }
 
     #[test]

@@ -460,7 +460,7 @@ pub fn build_adapter_registry(config: &AppConfig) -> AdapterRegistry {
             reg.insert(AdapterEntry {
                 id,
                 health,
-                label: Some("Bulwark content inspection (via inspect scan)".to_owned()),
+                label: Some("Bulwark content inspection (presence/version probe)".to_owned()),
             });
         }
     }

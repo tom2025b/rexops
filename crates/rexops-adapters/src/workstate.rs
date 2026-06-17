@@ -254,6 +254,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_and_unsupported_section_status_objects_parse_not_error() {
+        // THE P1: Workstate emits the data-bearing `Failed` and
+        // `UnsupportedVersion` statuses as externally-tagged JSON OBJECTS, not
+        // strings. A plain-String `Section.status` made `parse_feed` fail the
+        // WHOLE envelope ("invalid type: map, expected a string"), so a single
+        // failed upstream feed silently dropped scripts + tools + findings all
+        // at once — defeating Workstate's per-section degradation. The snapshot
+        // must now parse, keeping the healthy section and degrading only the
+        // affected ones.
+        let feed = r#"{"schema_version":3,"built_at":"x",
+            "scripts":{"status":"Fresh","provenance":{"feed_id":"scripts"},"data":null},
+            "tools":{"status":{"Failed":{"reason":"feed unreadable"}},"provenance":{"feed_id":"tools"},"data":null},
+            "findings":{"status":{"UnsupportedVersion":{"found":2,"supported":3}},"provenance":{"feed_id":"findings"},"data":null}}"#;
+        let info = WorkstateAdapter::parse_feed(feed)
+            .expect("a Failed/UnsupportedVersion section must not break parsing")
+            .expect("v3 snapshot must still produce an info");
+        assert_eq!(info.scripts.status, "Fresh");
+        assert_eq!(info.tools.status, "Failed");
+        assert_eq!(info.findings.status, "UnsupportedVersion");
+        // A Failed section is unusable (Missing); UnsupportedVersion is Stale.
+        assert_eq!(status_to_freshness(&info.tools.status), Freshness::Missing);
+        assert_eq!(
+            status_to_freshness(&info.findings.status),
+            Freshness::Stale
+        );
+    }
+
+    #[test]
+    fn read_keeps_a_snapshot_with_a_failed_section_healthy() {
+        // End-to-end via the same path build_snapshot uses: a snapshot carrying
+        // a Failed section must read as Healthy with data present, NOT collapse
+        // to (Unknown, None) the way the parse-error path did.
+        let feed = r#"{"schema_version":3,"built_at":"x",
+            "scripts":{"status":"Fresh","provenance":{"feed_id":"scripts"},"data":null},
+            "tools":{"status":{"Failed":{"reason":"x"}},"provenance":{"feed_id":"tools"},"data":null},
+            "findings":{"status":"Fresh","provenance":{"feed_id":"findings"},"data":null}}"#;
+        let (health, out) = WorkstateAdapter::with_text(feed).read().expect("read ok");
+        assert_eq!(health, AdapterHealth::Healthy);
+        assert!(out.is_some(), "the snapshot must survive a Failed section");
+    }
+
+    #[test]
     fn missing_section_data_is_none_not_error() {
         // A section reported Missing carries no `data` — must parse to None.
         let feed = r#"{"schema_version": 3, "built_at": "x",
