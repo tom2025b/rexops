@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "rexops-adapters"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "rexops-core",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "rexops-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rexops-adapters",
  "rexops-core",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "rexops-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "rexops-app",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "rexops-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "rexops-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "crossterm",
  "libc",
