@@ -6,6 +6,7 @@ pub enum RunMode {
     /// Hands over the real terminal (interactive tools).
     Foreground,
     /// Streams output into the Jobs screen.
+    #[allow(dead_code)]
     Background,
 }
 
@@ -33,8 +34,8 @@ pub struct ToolEntry {
 /// launches" (UX-6). Their data is surfaced on the Scripts/Tools screens and
 /// under the Workstate adapter, where it belongs.
 ///
-/// Two run modes are in use: Bulwark takes over the terminal (`Foreground`),
-/// Proto streams its output into the Jobs screen (`Background`).
+/// Both current launchable tools take over the terminal (`Foreground`): Bulwark
+/// opens its TUI, and Proto opens its own interactive protocol picker.
 pub const CATALOG: &[ToolEntry] = &[
     ToolEntry {
         id: "bulwark",
@@ -49,16 +50,14 @@ pub const CATALOG: &[ToolEntry] = &[
     ToolEntry {
         id: "proto",
         name: "Proto",
-        // Background: Proto's checklist run emits output and exits, so it streams
-        // into the Jobs screen rather than seizing the terminal. This is also the
-        // catalog's live example of a streamed (RunMode::Background) tool.
-        description: "Protocol / checklist runner (streams into Jobs)",
-        run_mode: RunMode::Background,
-        launch_args: &["run"],
-        // A checklist run is self-contained: it reports and exits without
-        // changing anything a bulwark/system/workstate probe would observe, so
-        // finishing it must NOT auto-re-probe every adapter. Set true only for a
-        // background tool whose run actually mutates observable state.
+        // Foreground: bare `proto` owns the protocol picker and requires a real
+        // TTY. `proto run` requires an id that RexOps does not choose here, and a
+        // background job would null stdin, so launching bare is the valid contract.
+        description: "Protocol / checklist runner (interactive picker)",
+        run_mode: RunMode::Foreground,
+        launch_args: &[],
+        // Foreground tool: it returns through the launcher path, which decides
+        // refresh via LaunchReport::should_refresh — this flag is unused for it.
         refresh_after: false,
     },
 ];

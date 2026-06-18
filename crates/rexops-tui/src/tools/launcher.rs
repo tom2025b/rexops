@@ -339,6 +339,19 @@ mod tests {
     }
 
     #[test]
+    fn proto_launch_uses_bare_interactive_picker() {
+        let config = config_with_binary("proto", "/tmp/proto");
+
+        let command = resolve_launch_command("proto", &config).expect("proto resolves");
+
+        assert!(
+            command.args.is_empty(),
+            "Proto must launch bare so its own interactive picker can select a protocol"
+        );
+        assert_eq!(command.display(), command.program);
+    }
+
+    #[test]
     fn launch_tool_without_command_reports_gracefully_and_skips_runner() {
         // A feed-only tool (no PATH binary, no config binary) must not error and
         // must not invoke the runner.

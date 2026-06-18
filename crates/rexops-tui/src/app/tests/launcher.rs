@@ -9,10 +9,8 @@ fn select_tool(app: &mut App, id: &str) {
 }
 
 /// A Launcher app with `bulwark` selected and pinned to an explicit binary.
-/// `bulwark` is the FOREGROUND tool, so arming it yields a `LaunchTool` that
-/// drives the (fake) `ForegroundRunner` on confirm — the path these
-/// runner-based tests exercise. (Proto now runs as a background job, so it no
-/// longer drives the foreground runner.)
+/// `bulwark` is a foreground tool, so arming it yields a `LaunchTool` that
+/// drives the fake `ForegroundRunner` on confirm.
 pub(super) fn launcher_app_with_proto() -> App {
     let mut app = launcher_app();
     // modify_config refreshes the launch-availability cache for us — the cache
@@ -52,10 +50,10 @@ fn activate_on_launcher_arms_foreground_tool_without_spawning() {
 }
 
 #[test]
-fn activate_on_launcher_arms_streamable_tool_as_a_job() {
-    // A non-interactive tool (proto) must arm a RunJob — the background,
-    // streamed path — rather than a foreground LaunchTool. The command is
-    // pinned so this tests the enabled streamable path, not disabled UX.
+fn activate_on_launcher_arms_proto_as_a_foreground_tool() {
+    // Proto's bare command owns the protocol picker and needs the real terminal,
+    // so RexOps must arm it as a foreground LaunchTool, not a background RunJob.
+    // The command is pinned so this tests the enabled launch path, not disabled UX.
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
@@ -74,11 +72,11 @@ fn activate_on_launcher_arms_streamable_tool_as_a_job() {
 
     assert_eq!(
         app.pending_action,
-        Some(PendingAction::RunJob {
+        Some(PendingAction::LaunchTool {
             id: "proto".to_owned(),
             name: "Proto".to_owned(),
         }),
-        "a streamable tool must arm a background job"
+        "Proto must run in the foreground so its picker has a TTY"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn a process");
 }
@@ -139,18 +137,16 @@ fn confirm_runs_foreground_tool_and_clears_it() {
 }
 
 #[test]
-fn confirm_streamable_tool_does_not_use_foreground_runner() {
-    // Confirming a RunJob goes through the background job path, NOT the
-    // foreground runner. The pinned binary isn't a real executable, so the
-    // spawn fails and is reported — but the runner must never be touched, and
-    // no job handle is left dangling.
+fn confirm_proto_uses_the_foreground_runner() {
+    // Confirming Proto must hand the terminal to bare `proto`, not stream a
+    // non-interactive `proto run` job with stdin nulled.
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
             "proto".to_owned(),
             rexops_core::AdapterConfig {
                 enabled: true,
-                binary: Some("/tmp/definitely-not-executable".to_owned()),
+                binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
             },
         );
@@ -158,17 +154,16 @@ fn confirm_streamable_tool_does_not_use_foreground_runner() {
     select_tool(&mut app, "proto");
     let mut runner = FakeRunner { calls: 0 };
 
-    app.on_action(Action::Activate, &mut runner); // arm RunJob
+    app.on_action(Action::Activate, &mut runner); // arm LaunchTool
     let quit = app.on_action(Action::Activate, &mut runner); // confirm
 
     assert!(!quit);
-    assert_eq!(runner.calls, 0, "a job must not use the foreground runner");
+    assert_eq!(runner.calls, 1, "Proto must use the foreground runner");
     assert!(app.pending_action.is_none(), "pending must be cleared");
-    assert!(app.job.is_none(), "a failed spawn leaves no job handle");
     assert!(app
         .recent_events
         .iter()
-        .any(|e| e.contains("failed to start")));
+        .any(|e| e == "Proto exited successfully"));
 }
 
 #[test]
@@ -310,7 +305,7 @@ fn launcher_esc_goes_back_to_dashboard_not_quit() {
 fn launcher_enter_arms_the_selected_tool() {
     // Activate on the Launcher must arm a PendingAction for the *selected*
     // catalog tool, carrying that tool's id and name, and must not spawn.
-    // `proto` is non-interactive → it arms a RunJob once a command exists.
+    // Proto is interactive and must arm a foreground LaunchTool.
     let mut app = launcher_app();
     app.modify_config(|cfg| {
         cfg.adapters.insert(
@@ -330,7 +325,7 @@ fn launcher_enter_arms_the_selected_tool() {
 
     assert_eq!(
         app.pending_action,
-        Some(PendingAction::RunJob {
+        Some(PendingAction::LaunchTool {
             id: entry.id.to_owned(),
             name: entry.name.to_owned(),
         }),

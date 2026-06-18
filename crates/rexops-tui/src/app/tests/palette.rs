@@ -67,11 +67,11 @@ fn palette_run_tool_arms_confirm_without_spawning() {
     assert!(!app.palette_open, "dispatch closes the palette");
     assert_eq!(
         app.pending_action,
-        Some(PendingAction::RunJob {
+        Some(PendingAction::LaunchTool {
             id: "proto".to_owned(),
             name: "Proto".to_owned(),
         }),
-        "run command must arm a job behind the confirm gate"
+        "run command must arm Proto behind the foreground confirm gate"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn");
     assert!(app.job.is_none(), "must not start a job before confirm");
@@ -184,7 +184,7 @@ fn palette_run_rows_carry_the_availability_tag() {
 #[test]
 fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
     // Configure proto with a resolvable binary; its palette row must flip from
-    // "disabled" to its run-mode tag ("streams", since proto is Background) —
+    // "disabled" to its run-mode tag ("interactive", since proto is Foreground) —
     // proving the tag is live, not fixed. We point at a real binary on PATH so
     // resolution succeeds.
     let mut app = launcher_app();
@@ -204,8 +204,8 @@ fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
         .find(|c| c.label == "run proto")
         .expect("run proto present");
     assert!(
-        proto.desc.ends_with("· streams"),
-        "a configured Background tool must read streams, got: {:?}",
+        proto.desc.ends_with("· interactive"),
+        "a configured Foreground tool must read interactive, got: {:?}",
         proto.desc
     );
 }

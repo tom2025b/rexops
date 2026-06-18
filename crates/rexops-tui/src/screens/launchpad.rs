@@ -355,7 +355,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx, AppConfig::default(), None);
 
-        // proto is Background → launchable renders "streams", else "disabled".
+        // proto is Foreground → launchable renders "interactive", else "disabled".
         // Pin a fake off-PATH id so config is the ONLY thing that can make it
         // launchable; force the starting cache to false so the test doesn't
         // depend on a real `proto` binary on the dev PATH.
@@ -379,7 +379,7 @@ mod tests {
         });
         let row = row_line(&render_to_text(&app), "Proto");
         assert!(
-            row.contains("streams"),
+            row.contains("interactive"),
             "modify_config must refresh the cache → proto now launchable:\n{row}"
         );
 
