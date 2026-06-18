@@ -1,7 +1,7 @@
 //! scripts.rs — Scripts screen (4th screen).
 //!
 //! Shows the structured scripts section from the Workstate snapshot.
-//! Lists scripts with favorite markers. Uses the adapter_item widget for rows.
+//! Lists scripts with neutral inventory metadata.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -14,6 +14,7 @@ use suite_ui::{pane, pane_blank, Theme};
 
 use crate::app::App;
 use crate::ui::widgets;
+use rexops_core::Script;
 
 /// Render the Scripts screen.
 pub fn render_scripts(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
@@ -56,25 +57,15 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             lines.push(Line::from("No scripts found."));
         } else {
             for s in &sv.scripts {
-                // Use the adapter_item widget for consistent rendering.
-                // info field: description or empty.
                 let info = s.description.as_deref().unwrap_or("");
-                let item = widgets::render_adapter_item(
+                let item = widgets::render_script_item(
                     s.label(),
-                    rexops_core::AdapterHealth::Healthy,
                     info,
-                    false,
+                    sv.is_favorite(s),
+                    is_recent(&sv.recents, s),
                     theme,
                 );
                 lines.push(item);
-                // Opportunistic favorite star: only if this script's id/name is in
-                // the feed's favorites list. Never a correctness dependency.
-                if sv.is_favorite(s) {
-                    lines.push(Line::from(Span::styled(
-                        "   ★ favorite",
-                        theme.live_marker(),
-                    )));
-                }
             }
         }
         lines.push(Line::from(""));
@@ -103,12 +94,19 @@ fn render_scripts_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     f.render_widget(list, area);
 }
 
+fn is_recent(recents: &[String], script: &Script) -> bool {
+    recents.iter().any(|recent| {
+        Some(recent.as_str()) == script.id.as_deref()
+            || Some(recent.as_str()) == script.name.as_deref()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
-    use rexops_core::{AppConfig, OpsSnapshot, ScriptsInfo, WorkstateInfo};
+    use rexops_core::{AppConfig, OpsSnapshot, Script, ScriptsInfo, WorkstateInfo};
     use std::sync::mpsc;
 
     fn render_to_text(app: &App) -> String {
@@ -141,6 +139,30 @@ mod tests {
         let mut snap = OpsSnapshot::new();
         snap.workstate = Some(ws);
         snap.scripts = Some(ScriptsInfo::default());
+        app.apply_snapshot(snap);
+        app
+    }
+
+    fn app_with_script_inventory() -> App {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        let scripts = ScriptsInfo {
+            scripts: vec![Script {
+                id: Some("deploy-prod".to_owned()),
+                name: Some("deploy-prod.sh".to_owned()),
+                description: Some("Deploy to production with safety checks".to_owned()),
+                ..Script::default()
+            }],
+            favorites: vec!["deploy-prod".to_owned()],
+            recents: vec!["deploy-prod".to_owned()],
+            ..ScriptsInfo::default()
+        };
+        let mut ws = WorkstateInfo::default();
+        ws.scripts.status = "Fresh".to_owned();
+        ws.scripts.data = Some(scripts.clone());
+        let mut snap = OpsSnapshot::new();
+        snap.workstate = Some(ws);
+        snap.scripts = Some(scripts);
         app.apply_snapshot(snap);
         app
     }
@@ -180,6 +202,28 @@ mod tests {
         assert!(
             text.contains("? Unknown"),
             "with no snapshot read, Unknown is the correct badge:\n{text}"
+        );
+    }
+
+    #[test]
+    fn script_rows_do_not_invent_adapter_health() {
+        let text = render_to_text(&app_with_script_inventory());
+        assert!(
+            text.contains("deploy-prod") && text.contains("Deploy to production"),
+            "script row should render the inventory item:\n{text}"
+        );
+        assert!(
+            !text.contains("Healthy"),
+            "script inventory rows must not render fake adapter health:\n{text}"
+        );
+    }
+
+    #[test]
+    fn script_rows_show_inventory_metadata_as_neutral_tags() {
+        let text = render_to_text(&app_with_script_inventory());
+        assert!(
+            text.contains("favorite") && text.contains("recent"),
+            "favorite/recent should be shown as script metadata, not health:\n{text}"
         );
     }
 }

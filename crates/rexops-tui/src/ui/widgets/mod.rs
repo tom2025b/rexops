@@ -83,6 +83,38 @@ pub fn render_adapter_item(
     ])
 }
 
+/// Render a Workstate script inventory item as a neutral row.
+///
+/// Scripts are section data, not adapters, so rows must not claim adapter health.
+/// Section freshness belongs in the screen header; per-row flags here are only
+/// inventory metadata from ScriptVault/Workstate.
+pub fn render_script_item(
+    name: &str,
+    info: &str,
+    is_favorite: bool,
+    is_recent: bool,
+    theme: Theme,
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(format!("  {name} ")),
+        Span::styled("script", theme.dim()),
+    ];
+
+    if !info.is_empty() {
+        spans.push(Span::raw(format!(" — {info}")));
+    }
+    if is_favorite {
+        spans.push(Span::raw(" · "));
+        spans.push(Span::styled("favorite", theme.live_marker()));
+    }
+    if is_recent {
+        spans.push(Span::raw(" · "));
+        spans.push(Span::styled("recent", theme.dim()));
+    }
+
+    Line::from(spans)
+}
+
 /// Render a log/event line for the Dashboard's Events pane.
 pub fn render_log_line(msg: &str) -> Line<'static> {
     Line::from(format!("• {msg}"))
@@ -126,6 +158,26 @@ mod tests {
         assert_ne!(
             badge, "? Unknown",
             "a fresh section must not badge as Unknown"
+        );
+    }
+
+    #[test]
+    fn script_item_renders_inventory_metadata_without_health() {
+        let theme = Theme::with_color(false);
+        let line = render_script_item("deploy-prod", "Deploy safely", true, true, theme);
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(text.contains("deploy-prod"));
+        assert!(text.contains("script"));
+        assert!(text.contains("favorite"));
+        assert!(text.contains("recent"));
+        assert!(
+            !text.contains("Healthy"),
+            "script rows are inventory rows, not adapter health rows"
         );
     }
 }
