@@ -106,7 +106,7 @@ impl JobManager {
             return StartOutcome::NoCommand;
         };
         let display = command.display();
-        match spawn(name, &command.program, &command.args) {
+        match spawn(id, name, &command.program, &command.args) {
             Some(handle) => {
                 self.output.clear();
                 self.scroll = 0; // fresh output → follow the bottom

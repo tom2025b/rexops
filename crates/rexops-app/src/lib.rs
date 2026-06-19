@@ -48,7 +48,7 @@ pub use snapshot::{
 // keeps the submodule path reachable too; these flat re-exports cover the
 // common names.
 pub use tools::{
-    by_id, is_streamable, launch_tool, resolve_command, resolve_launch_command, Availability,
+    by_id, is_streamable, launch_tool, refreshes_after, resolve_launch_command, Availability,
     AvailabilityTag, ChildExit, ForegroundRunner, LaunchCommand, LaunchReport, RunMode, ToolEntry,
     CATALOG,
 };

@@ -5,7 +5,7 @@
 //! (`crate::tools::…`) are unchanged. The terminal-touching
 //! `ForegroundRunner` impl stays in the TUI.
 
-pub(crate) use rexops_app::{is_streamable, refreshes_after, AvailabilityTag, ToolEntry, CATALOG};
+pub(crate) use rexops_app::{is_streamable, AvailabilityTag, ToolEntry, CATALOG};
 // `resolve_launch_command` is the single public entry point for "what runs when
 // this tool launches" — program plus catalog args. Both run surfaces (the
 // foreground launcher and the background job manager) and the confirm-gate

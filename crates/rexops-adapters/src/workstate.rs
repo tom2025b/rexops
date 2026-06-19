@@ -275,10 +275,7 @@ mod tests {
         assert_eq!(info.findings.status, "UnsupportedVersion");
         // A Failed section is unusable (Missing); UnsupportedVersion is Stale.
         assert_eq!(status_to_freshness(&info.tools.status), Freshness::Missing);
-        assert_eq!(
-            status_to_freshness(&info.findings.status),
-            Freshness::Stale
-        );
+        assert_eq!(status_to_freshness(&info.findings.status), Freshness::Stale);
     }
 
     #[test]

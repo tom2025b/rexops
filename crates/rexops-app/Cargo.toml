@@ -20,3 +20,9 @@ rexops-adapters = { path = "../rexops-adapters" }
 serde_yaml = { workspace = true }
 # JSON for classifying piped stdin as a Workstate snapshot.
 serde_json = { workspace = true }
+
+# Killing a job's whole process group (not just the immediate child) on cancel
+# uses libc::killpg. Unix-only, so target-gated — moved here with the job
+# process model from rexops-tui.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

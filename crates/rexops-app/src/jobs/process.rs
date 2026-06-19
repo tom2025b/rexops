@@ -41,8 +41,12 @@ use std::thread;
 fn kill_process_group(pgid: u32) {
     // SAFETY: a plain libc call with an integer pgid and signal; no memory is
     // touched and any failure (ESRCH/EPERM) is reported via the ignored return.
+    // The cast is safe: a real OS process-group id (from Child::id) is always
+    // well within i32 range, so the u32→pid_t conversion never wraps.
+    #[allow(clippy::cast_possible_wrap)]
+    let pgid = pgid as libc::pid_t;
     unsafe {
-        libc::killpg(pgid as libc::pid_t, libc::SIGKILL);
+        libc::killpg(pgid, libc::SIGKILL);
     }
 }
 
@@ -544,8 +548,7 @@ mod tests {
         std::process::Command::new("pgrep")
             .args(["-f", pattern])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     }
 
     #[test]

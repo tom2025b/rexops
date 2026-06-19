@@ -8,8 +8,7 @@ pub mod catalog;
 pub mod launcher;
 
 pub use availability::{Availability, AvailabilityTag};
-pub use catalog::{by_id, is_streamable, RunMode, ToolEntry, CATALOG};
+pub use catalog::{by_id, is_streamable, refreshes_after, RunMode, ToolEntry, CATALOG};
 pub use launcher::{
-    launch_tool, resolve_command, resolve_launch_command, ChildExit, ForegroundRunner,
-    LaunchCommand, LaunchReport,
+    launch_tool, resolve_launch_command, ChildExit, ForegroundRunner, LaunchCommand, LaunchReport,
 };
