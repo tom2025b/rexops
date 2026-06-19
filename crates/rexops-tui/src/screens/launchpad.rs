@@ -254,6 +254,19 @@ mod tests {
         assert!(!proto.description.is_empty());
     }
 
+    #[test]
+    fn catalog_includes_pulse_as_launchable() {
+        // Pulse is RexOps' default screen, but it is also offered in the cockpit
+        // catalog so it can be re-opened from the launcher / palette like any
+        // other tool. It must take no launch args (bare `pulse` is the screen).
+        let pulse = CATALOG
+            .iter()
+            .find(|t| t.id == "pulse")
+            .expect("Pulse must be registered in the launcher catalog");
+        assert_eq!(pulse.name, "Pulse");
+        assert!(pulse.launch_args.is_empty(), "bare `pulse` is the screen");
+    }
+
     /// Extract the single rendered row line that names the given tool, so a test
     /// can assert on that row's tag without other rows' tags leaking in.
     fn row_line(text: &str, tool_name: &str) -> String {
@@ -454,7 +467,20 @@ mod tests {
             "Bulwark's detail must no longer show after moving off it:\n{text}"
         );
 
-        // Down again wraps from the last entry (Proto) back to Bulwark (index 0).
+        // Down → Pulse (index 2, the last entry). Tracking continues onto the
+        // newest catalog tool.
+        app.on_action(Action::Down, &mut runner);
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Pulse:") && text.contains("status"),
+            "detail must follow the selection to Pulse:\n{text}"
+        );
+        assert!(
+            !text.contains("Proto:"),
+            "Proto's detail must no longer show after moving off it:\n{text}"
+        );
+
+        // Down again wraps from the last entry (Pulse) back to Bulwark (index 0).
         // Confirms tracking keeps working across the wrap, not just one step.
         app.on_action(Action::Down, &mut runner);
         let text = render_to_text(&app);
@@ -463,8 +489,8 @@ mod tests {
             "detail must follow the wrap back to Bulwark:\n{text}"
         );
         assert!(
-            !text.contains("Proto:"),
-            "Proto's detail must clear once moved past:\n{text}"
+            !text.contains("Pulse:"),
+            "Pulse's detail must clear once moved past:\n{text}"
         );
     }
 }

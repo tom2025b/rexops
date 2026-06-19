@@ -48,7 +48,50 @@ mod tools;
 mod ui;
 
 use app::App;
-use tools::{ChildExit, ForegroundRunner, LaunchCommand};
+use tools::{resolve_launch_command, ChildExit, ForegroundRunner, LaunchCommand};
+
+/// Outcome of trying to open Pulse as RexOps' default screen.
+///
+/// Pulse is the default surface, but it is a separate suite binary that may not
+/// be installed (a dev checkout, a partial install). The CLI uses this to decide
+/// whether Pulse handled the session or RexOps should fall back to its own
+/// cockpit — so a missing Pulse never makes `rexops` unusable.
+pub enum PulseOutcome {
+    /// Pulse was found and ran to completion. The bool is its success status; we
+    /// don't translate Pulse's exit code into ours (it's a read-only viewer), we
+    /// only note it so a caller could log a non-clean exit.
+    Ran { success: bool },
+    /// Pulse could not be resolved (not configured, not on PATH). The caller
+    /// should fall back to the RexOps cockpit.
+    NotFound,
+}
+
+/// Open Pulse as RexOps' default screen.
+///
+/// Resolves the `pulse` binary through the *same* launcher resolution every
+/// other tool uses — an explicit `binary` pin in config wins, else the tool on
+/// PATH — so an operator can pin a specific Pulse build, and a missing Pulse is
+/// reported (not an error) via [`PulseOutcome::NotFound`].
+///
+/// Unlike the in-TUI launcher, this runs while the terminal is still in its
+/// normal (cooked) mode: the CLI has not entered any alternate screen yet, so we
+/// simply spawn Pulse on the inherited terminal and wait. There is no
+/// suspend/restore dance to do, and therefore no TUI guard to hold.
+pub fn run_pulse_default() -> io::Result<PulseOutcome> {
+    // Pulse needs no config beyond resolution, but `resolve_launch_command`
+    // takes an AppConfig to honour a `[adapters.pulse] binary = …` pin.
+    let config = load_config();
+    let Some(command) = resolve_launch_command("pulse", &config) else {
+        return Ok(PulseOutcome::NotFound);
+    };
+
+    let status = Command::new(&command.program)
+        .args(&command.args)
+        .status()?;
+    Ok(PulseOutcome::Ran {
+        success: status.success(),
+    })
+}
 
 /// Launch the RexOps TUI and run it until the user quits.
 ///

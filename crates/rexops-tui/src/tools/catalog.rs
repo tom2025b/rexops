@@ -60,6 +60,22 @@ pub const CATALOG: &[ToolEntry] = &[
         // refresh via LaunchReport::should_refresh — this flag is unused for it.
         refresh_after: false,
     },
+    ToolEntry {
+        // Pulse is the suite's calm read-only status screen and, as of this
+        // change, RexOps' default surface — a bare `rexops` opens Pulse, not the
+        // cockpit. It is listed here too so it can be launched from the cockpit
+        // like any other tool and so its binary honours the same config-pin >
+        // PATH resolution. Kept LAST so the cockpit still leads with the
+        // interactive scan/checklist tools; Pulse is the screen you already
+        // arrived through. Foreground: it owns the terminal and runs its own
+        // event loop. Bare `pulse` (no args) is the interactive screen.
+        id: "pulse",
+        name: "Pulse",
+        description: "Calm read-only suite status (the default screen)",
+        run_mode: RunMode::Foreground,
+        launch_args: &[],
+        refresh_after: false,
+    },
 ];
 
 pub fn by_id(id: &str) -> Option<&'static ToolEntry> {

@@ -45,6 +45,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Open the RexOps cockpit TUI directly (the launcher/jobs interface).
+    ///
+    /// A bare `rexops` now opens Pulse — the calm suite status screen — by
+    /// default. Use this subcommand to jump straight to the full cockpit
+    /// instead; it is also where `rexops` falls back when Pulse isn't installed.
+    Tui,
+
     /// Show overall status: adapter health, risk summary, snapshot timestamp.
     Status,
 
@@ -67,16 +74,36 @@ fn main() -> ExitCode {
 
 /// The actual logic, separated so main() can do the exit-code dance cleanly.
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    // No subcommand → the interactive TUI is the default experience. It loads
-    // its own config and owns the terminal lifecycle, so we hand off directly
-    // and return its Result (the `--json` flag has no meaning here and is
-    // ignored). Everything below is the one-shot inspection path.
+    // No subcommand → Pulse is the default experience: the calm, read-only suite
+    // status screen. RexOps is no longer "just a launcher" — it greets the user
+    // with the all-clear / needs-attention verdict first, and the full cockpit is
+    // a step away (`rexops tui`, or from inside Pulse). The `--json` flag has no
+    // meaning here and is ignored. Everything below is the one-shot inspection
+    // path.
+    //
+    // Pulse is a separate suite binary that may not be installed; if it can't be
+    // resolved we fall back to the cockpit so `rexops` is never unusable.
     let Some(command) = cli.command else {
-        return rexops_tui::run();
+        return match rexops_tui::run_pulse_default()? {
+            rexops_tui::PulseOutcome::Ran { .. } => Ok(()),
+            rexops_tui::PulseOutcome::NotFound => {
+                eprintln!(
+                    "rexops: pulse (the default status screen) was not found on PATH — opening the cockpit instead. Install pulse, or run `rexops tui` to skip this notice."
+                );
+                rexops_tui::run()
+            }
+        };
     };
+
+    // The cockpit, reachable explicitly. Same entry point the default used to
+    // call; it owns its own terminal lifecycle and config loading.
+    if let Commands::Tui = command {
+        return rexops_tui::run();
+    }
 
     let config = load_config();
     match command {
+        Commands::Tui => unreachable!("handled above before config load"),
         Commands::Status => {
             let snapshot = build_snapshot(&config);
             if cli.json {
