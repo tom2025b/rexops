@@ -160,7 +160,10 @@ fn confirm_proto_uses_the_foreground_runner() {
     assert!(!quit);
     assert_eq!(runner.calls, 1, "Proto must use the foreground runner");
     assert!(app.pending_action.is_none(), "pending must be cleared");
-    assert!(app.jobs.job.is_none(), "a failed spawn leaves no job handle");
+    assert!(
+        app.jobs.job.is_none(),
+        "a failed spawn leaves no job handle"
+    );
     assert!(app
         .recent_events
         .iter()

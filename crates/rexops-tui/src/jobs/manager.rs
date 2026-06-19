@@ -54,7 +54,9 @@ impl App {
                 self.log_event(format!("{name}: job started ({display})"));
             }
             StartOutcome::AlreadyRunning => {
-                self.log_event(format!("{name}: a job is already running (cancel it first)"));
+                self.log_event(format!(
+                    "{name}: a job is already running (cancel it first)"
+                ));
             }
             StartOutcome::NoCommand => {
                 self.log_event(format!("{name} has no launch command yet"));

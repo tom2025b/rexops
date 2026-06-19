@@ -99,7 +99,10 @@ mod tests {
     fn controller_starts_idle() {
         let (tx, _rx) = mpsc::channel();
         let ctrl = RefreshController::new(tx, None);
-        assert!(!ctrl.is_refreshing(), "a fresh controller is not refreshing");
+        assert!(
+            !ctrl.is_refreshing(),
+            "a fresh controller is not refreshing"
+        );
     }
 
     #[test]

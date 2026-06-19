@@ -85,7 +85,8 @@ fn render_jobs_output(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
         // Truncate each line to the pane's inner width (minus borders) so a long
         // line never wraps or overflows; truncate_desc adds a single `…`.
         let inner_w = area.width.saturating_sub(2) as usize;
-        app.jobs.output
+        app.jobs
+            .output
             .iter()
             .take(end)
             .skip(start)
@@ -144,7 +145,8 @@ fn render_jobs_history(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     } else {
         // Newest first; show only what fits the pane (minus border).
         let visible = area.height.saturating_sub(2) as usize;
-        app.jobs.history
+        app.jobs
+            .history
             .iter()
             .rev()
             .take(visible)

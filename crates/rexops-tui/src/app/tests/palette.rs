@@ -74,7 +74,10 @@ fn palette_run_tool_arms_confirm_without_spawning() {
         "run command must arm Proto behind the foreground confirm gate"
     );
     assert_eq!(runner.calls, 0, "arming must not spawn");
-    assert!(app.jobs.job.is_none(), "must not start a job before confirm");
+    assert!(
+        app.jobs.job.is_none(),
+        "must not start a job before confirm"
+    );
 }
 
 #[test]

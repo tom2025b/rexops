@@ -64,7 +64,10 @@ fn apply_snapshot_always_clears_the_refreshing_flag() {
     // path back to a refreshable state — `r` can never wedge. Guard it.
     let mut app = dashboard_app_with_adapters(&["bulwark"]);
     app.request_refresh(); // enter the in-flight state through the real path
-    assert!(app.is_refreshing(), "request_refresh sets the in-flight guard");
+    assert!(
+        app.is_refreshing(),
+        "request_refresh sets the in-flight guard"
+    );
 
     app.apply_snapshot(OpsSnapshot::new());
 
@@ -94,7 +97,10 @@ fn a_panicking_snapshot_build_still_yields_a_snapshot() {
     let mut app = bare_app();
     app.request_refresh(); // enter the in-flight state through the real path
     app.apply_snapshot(snapshot);
-    assert!(!app.is_refreshing(), "a fallback snapshot must un-wedge refresh");
+    assert!(
+        !app.is_refreshing(),
+        "a fallback snapshot must un-wedge refresh"
+    );
 }
 
 #[test]
