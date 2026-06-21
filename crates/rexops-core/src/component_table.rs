@@ -140,10 +140,23 @@ pub const COMPONENTS: &[Component] = &[
         role: "alarm",
         blurb: "Change/intrusion alarm",
         group: ComponentGroup::BlackBox,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the rex-check/bulwark pattern): tripwire's `--json` is a
+        // Workstate-style envelope (source_tool/clean/added…), not the one-line
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
+        // (`--help` exits 0) and it launches its current watch view in the
+        // foreground. Live and launchable without a live-status feed; a
+        // StatusCommand flip can follow if tripwire grows the one-line contract.
+        health: HealthSource::Probe {
+            binary: "tripwire",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "rewind",
@@ -274,8 +287,8 @@ mod tests {
     #[test]
     fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
         let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
-        // After Phase E, five rows carry a LaunchSpec; rex-check (Probe+launch)
-        // joins as the sixth, in table order (it sits after pulse/tripwire/rewind).
+        // In table order: the five Phase-E launchables, then tripwire (Probe+launch,
+        // table position 8, between pulse and rex-check), then rex-check.
         assert_eq!(
             ids,
             vec![
@@ -284,6 +297,7 @@ mod tests {
                 "scriptvault",
                 "toolfoundry",
                 "pulse",
+                "tripwire",
                 "rex-check"
             ]
         );

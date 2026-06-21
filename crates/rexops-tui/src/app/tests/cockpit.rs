@@ -167,7 +167,7 @@ fn drill_key_opens_detail_for_a_launchable_card_too() {
 }
 
 #[test]
-fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
+fn live_launchables_include_pulse_rex_check_tripwire_and_rewind_rex_forge_stay_planned() {
     let launchable: Vec<&str> = rexops_core::launchable_components()
         .iter()
         .map(|c| c.id)
@@ -177,14 +177,16 @@ fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
         "pulse must be launchable: {launchable:?}"
     );
 
-    // rex-check is now launchable too (Probe + launch, the bulwark/proto pattern).
-    assert!(
-        launchable.contains(&"rex-check"),
-        "rex-check must be launchable: {launchable:?}"
-    );
+    // rex-check and tripwire are launchable via Probe + launch (the bulwark pattern).
+    for id in ["rex-check", "tripwire"] {
+        assert!(
+            launchable.contains(&id),
+            "{id} must be launchable: {launchable:?}"
+        );
+    }
 
     // The still-Planned tools stay non-launchable.
-    for id in ["tripwire", "rewind", "rex-forge"] {
+    for id in ["rewind", "rex-forge"] {
         assert!(
             !launchable.contains(&id),
             "{id} must stay Planned/non-launchable"
@@ -199,13 +201,15 @@ fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
     ));
     assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
 
-    // rex-check is Live via the Probe pattern (binary presence), not StatusCommand.
-    let rex_check = rexops_core::component_by_id("rex-check").unwrap();
-    assert!(matches!(
-        rex_check.health,
-        rexops_core::HealthSource::Probe { .. }
-    ));
-    assert_eq!(rex_check.maturity, rexops_core::Maturity::Live);
+    // rex-check and tripwire are Live via Probe (binary presence), not StatusCommand.
+    for id in ["rex-check", "tripwire"] {
+        let c = rexops_core::component_by_id(id).unwrap();
+        assert!(
+            matches!(c.health, rexops_core::HealthSource::Probe { .. }),
+            "{id} health must be Probe"
+        );
+        assert_eq!(c.maturity, rexops_core::Maturity::Live);
+    }
 }
 
 // Learning Notes

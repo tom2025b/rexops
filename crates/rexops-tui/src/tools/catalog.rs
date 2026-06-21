@@ -54,8 +54,9 @@ mod tests {
     #[test]
     fn launchable_lists_the_registry_launch_rows_in_order() {
         let ids: Vec<&str> = launchable().iter().map(|c| c.id).collect();
-        // rex-check (Probe+launch) joins as the sixth launchable, in registry
-        // display order (after bulwark/proto/scriptvault/toolfoundry/pulse).
+        // tripwire and rex-check (both Probe+launch) join in registry display order:
+        // after bulwark/proto/scriptvault/toolfoundry/pulse, tripwire (table row 8)
+        // then rex-check.
         assert_eq!(
             ids,
             vec![
@@ -64,6 +65,7 @@ mod tests {
                 "scriptvault",
                 "toolfoundry",
                 "pulse",
+                "tripwire",
                 "rex-check"
             ]
         );
@@ -71,13 +73,14 @@ mod tests {
 
     #[test]
     fn run_mode_helpers_read_the_registry() {
-        // All six current launchables are Foreground → not streamable.
+        // All current launchables are Foreground → not streamable.
         for id in [
             "bulwark",
             "proto",
             "scriptvault",
             "toolfoundry",
             "pulse",
+            "tripwire",
             "rex-check",
         ] {
             assert!(!is_streamable(id), "{id} is Foreground, not streamable");
