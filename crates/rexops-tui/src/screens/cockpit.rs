@@ -13,7 +13,7 @@ use ratatui::Frame;
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::screens::cockpit_nav::GROUP_ORDER;
+use crate::screens::cockpit_nav::{cockpit_visit_order, marker_for, GROUP_ORDER};
 use crate::ui::cockpit_widgets::card_grid::{render_card_grid, CardSection};
 use crate::ui::cockpit_widgets::identity_banner::{render_identity_banner, BannerInput};
 use crate::ui::cockpit_widgets::{light_state_from_health, CardInput};
@@ -72,20 +72,26 @@ fn render_grid(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let comps = &app.snapshot.components;
     let group_rects = pre_split_groups(area, comps);
 
+    // The global visit order — markers are assigned by a card's position HERE, so
+    // letters run a,s,d,… continuously down the whole cockpit, not per group.
+    let visit = cockpit_visit_order(comps);
+    let focused = app.selected_component.as_deref();
+
     for ((label, ids), grect) in GROUP_ORDER.iter().zip(group_rects.iter()) {
         let inputs: Vec<CardInput> = comps
             .iter()
             .filter(|c| ids.contains(&c.group.as_str()))
-            .map(|c| CardInput {
-                name: &c.name,
-                role: &c.group,
-                light: light_state_from_health(c.health),
-                vital: c.vital.as_deref(),
-                dim: c.maturity == "planned",
-                // Real marker + focus values are wired in Task 3; placeholders
-                // here keep the crate building (no behaviour change from Phase B).
-                marker: None,
-                focused: false,
+            .map(|c| {
+                let marker = visit.iter().position(|v| v.id == c.id).and_then(marker_for);
+                CardInput {
+                    name: &c.name,
+                    role: &c.group,
+                    light: light_state_from_health(c.health),
+                    vital: c.vital.as_deref(),
+                    dim: c.maturity == "planned",
+                    marker,
+                    focused: focused == Some(c.id.as_str()),
+                }
             })
             .collect();
         if inputs.is_empty() {
@@ -233,6 +239,32 @@ mod tests {
                 || text.to_lowercase().contains("press 'r'"),
             "empty cockpit guides the user instead of rendering blank:\n{text}"
         );
+    }
+
+    #[test]
+    fn cards_show_their_marker_letters() {
+        let app = app_with_components();
+        let text = render(&app);
+        // First visited card (Workstate, BRAIN) → 'a'.
+        assert!(text.contains("[a]"), "first card labelled [a]:\n{text}");
+    }
+
+    #[test]
+    fn focused_component_renders_with_the_rail() {
+        let mut app = app_with_components();
+        app.selected_component = Some("workstate".to_owned());
+        let text = render(&app);
+        assert!(
+            text.contains('▌'),
+            "focused workstate shows the rail:\n{text}"
+        );
+    }
+
+    #[test]
+    fn no_focus_renders_no_rail() {
+        let app = app_with_components(); // selected_component defaults to None
+        let text = render(&app);
+        assert!(!text.contains('▌'), "nothing focused → no rail:\n{text}");
     }
 }
 
