@@ -224,3 +224,38 @@ launchable `Live` components (feed health + freshness + a launch). Note this
 widened what `live` means: live cards = the adapter roster *plus* feed-backed
 launchables; the two cross-source rosters (`status`/`adapters`) are unchanged
 because feeds are not adapters.
+
+## Heartbeat Monitor — Pulse (Phase E)
+
+Phase E lights up **Pulse**, the suite's heartbeat/liveness monitor, as the first
+of the five `Planned` components — a `Live`, launchable card whose vital is a
+**heartbeat sparkline** (`♥ ▁▂▅▇▅▂ 7ms`). It does this by implementing the
+registry's `HealthSource::StatusCommand { binary, args }` health path (designed in
+Phase A, unused until now):
+
+- **The contract.** Pulse gained a read-only `pulse status` subcommand (in the
+  `linux-ops-suite` repo) that prints one JSON line `{healthy, detail,
+  latency_ms}` and exits `0`/`1` — a *view* of Pulse's existing verdict, no new
+  health logic.
+- **The probe.** `build_snapshot_with_piped` spawns `<binary> status` bounded by
+  the existing `adapter_timeout`, parses the line (`status_probe::parse_status`),
+  and records health + a latency sample (`OpsSnapshot.status_latency`). Every
+  failure mode (missing binary, non-zero, garbled, timeout) maps to `Unavailable`
+  with a short reason — it never panics or hangs past the timeout. The `Planned`
+  path is untouched (zero I/O).
+- **The heartbeat.** A shared `suite_ui::Heartbeat` widget renders the sparkline
+  from a slice of recent latency samples. RexOps keeps those samples in a bounded,
+  transient in-memory ring buffer (`app::heartbeat::HeartbeatLog`, ~16 per
+  component id), pushed on each refresh — no persistence. Before any sample
+  exists, the card shows a plain `Live` vital (graceful first paint); the
+  drill-down (the Phase C `CockpitDetail` screen) shows recent heartbeat history.
+- **Launch.** Pulse's card letter / `Enter` arms a launch of the Pulse TUI through
+  the *existing* confirm gate — Phase D made the registry the single launch source,
+  so Pulse just gained a `LaunchSpec` row (bare `pulse`, no wrapper/alias).
+
+The banner rollup goes `5/11 → 6/11 live`. The other four `Planned` tools
+(Tripwire, Rewind, rex-check, rex-forge) are unchanged — each a future one-row flip
+once it grows a stable `status`/launch contract. Because a `StatusCommand`
+component legitimately reports health, it now appears in `adapter_health` alongside
+the real adapters; the cross-view roster invariant (`status`/`adapters` agree) is
+preserved and anchored to an explicit literal in tests.
