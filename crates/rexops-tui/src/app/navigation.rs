@@ -15,9 +15,6 @@ pub enum Screen {
     Launcher,
     Jobs,
     /// The per-component drill-down reached from a focused cockpit card.
-    /// Assigned by `drill_into_selected_component` (its real body lands with the
-    /// detail screen); already routed/handled. `allow` until that body exists.
-    #[allow(dead_code)]
     CockpitDetail,
 }
 
@@ -164,8 +161,20 @@ impl App {
         }
     }
 
-    /// Drill into the focused cockpit card's detail. Stubbed for the Task-4
-    /// commit so Enter on a non-launchable card compiles; Task 6 implements the
-    /// screen switch. Arm tests don't exercise this.
-    pub(crate) fn drill_into_selected_component(&mut self) {}
+    /// Drill into the focused cockpit card's detail. No-op (logged) if nothing
+    /// is focused.
+    pub(crate) fn drill_into_selected_component(&mut self) {
+        if self.selected_component.is_some() {
+            self.current_screen = Screen::CockpitDetail;
+            self.log_event("Cockpit: opened component detail (Esc to go back)");
+        } else {
+            self.log_event("Cockpit: no card focused to open");
+        }
+    }
+
+    /// Back out of the detail screen to the cockpit, keeping the focus.
+    pub(crate) fn cockpit_back(&mut self) {
+        self.current_screen = Screen::Dashboard;
+        self.log_event("Detail: back to cockpit");
+    }
 }

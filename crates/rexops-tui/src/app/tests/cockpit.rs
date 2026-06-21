@@ -141,3 +141,26 @@ fn focus_falls_back_when_the_focused_card_disappears() {
         "falls back to the first card"
     );
 }
+
+#[test]
+fn drill_and_back_round_trip() {
+    let mut app = cockpit_app();
+    let mut r = runner();
+    // Focus Workstate (not launchable) → Enter drills into detail.
+    app.on_action(Action::Activate, &mut r);
+    assert_eq!(app.current_screen, Screen::CockpitDetail);
+    // Esc backs out to the cockpit, focus preserved.
+    app.on_action(Action::Cancel, &mut r);
+    assert_eq!(app.current_screen, Screen::Dashboard);
+    assert_eq!(app.selected_component.as_deref(), Some("workstate"));
+}
+
+#[test]
+fn drill_key_opens_detail_for_a_launchable_card_too() {
+    let mut app = cockpit_app();
+    let mut r = runner();
+    app.on_action(Action::Down, &mut r); // focus Bulwark (launchable)
+    app.on_action(Action::Drill, &mut r); // `g` drills even though it's launchable
+    assert_eq!(app.current_screen, Screen::CockpitDetail);
+    assert_eq!(app.selected_component.as_deref(), Some("bulwark"));
+}
