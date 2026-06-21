@@ -122,10 +122,17 @@ pub const COMPONENTS: &[Component] = &[
         role: "heartbeat",
         blurb: "Heartbeat / liveness monitor",
         group: ComponentGroup::Monitor,
-        health: HealthSource::Planned,
-        launch: None,
+        health: HealthSource::StatusCommand {
+            binary: "pulse",
+            args: &["status"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "tripwire",
@@ -255,8 +262,12 @@ mod tests {
     #[test]
     fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
         let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
-        // After Phase D, four rows carry a LaunchSpec, in table order.
-        assert_eq!(ids, vec!["bulwark", "proto", "scriptvault", "toolfoundry"]);
+        // After Phase E, five rows carry a LaunchSpec, in table order.
+        // Pulse joins bulwark/proto/scriptvault/toolfoundry as the fifth launchable.
+        assert_eq!(
+            ids,
+            vec!["bulwark", "proto", "scriptvault", "toolfoundry", "pulse"]
+        );
         // And the view must agree with the predicate it claims to implement.
         for c in launchable_components() {
             assert!(

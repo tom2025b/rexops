@@ -161,8 +161,9 @@ fn status_command_probe(
 // - We use `adapter_timeout(config, id)` (which already reads the per-adapter
 //   override else global default) so StatusCommand probes respect the same
 //   timeout config as Bulwark/system probes.
-// - No component uses StatusCommand yet (Pulse flips in a later task), so this
-//   function is exercised only by tests until then — which is intentional.
+// - Phase E: Pulse uses StatusCommand, so this function is now called on every
+//   real refresh (not just tests). The COMPONENTS loop in build_snapshot_with_piped
+//   fires for Pulse and populates both adapter_health and status_latency.
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
@@ -280,13 +281,11 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
         }
     }
 
-    // StatusCommand components (e.g. Pulse once it flips): spawn `<bin> status`,
-    // bounded by the configured timeout, parse the one-line JSON contract into
-    // health + latency. Runs before the registry walk so adapter_health and
-    // status_latency are populated when the walk reads them.
-    // Note: no component uses StatusCommand yet — Pulse flips in a later task —
-    // so this loop is exercised only by tests that insert a "pulse" adapter
-    // config. That is intentional: the wiring lands now, lights up then.
+    // StatusCommand components: spawn `<bin> status`, bounded by the configured
+    // timeout, parse the one-line JSON contract into health + latency. Runs before
+    // the registry walk so adapter_health and status_latency are populated when the
+    // walk reads them. Phase E: Pulse has HealthSource::StatusCommand — this loop
+    // now fires for it on every build_snapshot_with_piped call (when enabled).
     for comp in rexops_core::COMPONENTS {
         if let rexops_core::HealthSource::StatusCommand { args, .. } = comp.health {
             if config.adapter_enabled(comp.id) {
@@ -880,15 +879,25 @@ mod tests {
     #[test]
     fn adapter_health_roster_only_ever_holds_real_adapters() {
         // The roster guarantee behind UX-1: every key in adapter_health must be
-        // one of the three REAL adapters. If a future change re-introduces a
-        // synthetic adapter (e.g. folds a section back in), this fails.
+        // either one of the three real feed/probe adapters (bulwark/system/workstate)
+        // OR a StatusCommand component from the registry.
+        // Phase E: Pulse gains StatusCommand health, so it legitimately joins
+        // adapter_health via the StatusCommand loop — not as a synthetic/section key.
         let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
+        let status_command_ids: Vec<&str> = rexops_core::COMPONENTS
+            .iter()
+            .filter(|c| matches!(c.health, rexops_core::HealthSource::StatusCommand { .. }))
+            .map(|c| c.id)
+            .collect();
         for id in snap.adapter_health.keys() {
+            let is_real_adapter = real_adapter_ids().contains(&id.as_str());
+            let is_status_command = status_command_ids.contains(&id.as_str());
             assert!(
-                real_adapter_ids().contains(&id.as_str()),
-                "adapter_health contains '{}', which is not a real adapter ({:?})",
+                is_real_adapter || is_status_command,
+                "adapter_health contains '{}', which is neither a real adapter ({:?}) nor a StatusCommand component ({:?})",
                 id.as_str(),
-                real_adapter_ids()
+                real_adapter_ids(),
+                status_command_ids,
             );
         }
     }
@@ -896,35 +905,54 @@ mod tests {
     #[test]
     fn status_and_adapters_views_agree_on_the_roster() {
         // The exact bug from the audit: `status` (adapter_health) and `adapters`
-        // (the registry) must list the SAME adapters. With everything enabled,
-        // both must equal the three real adapters — no more "6 vs 3" disagreement.
+        // (the registry) must list the SAME adapters. With everything enabled, both
+        // must equal the three real feed/probe adapters — no more "6 vs 3"
+        // disagreement. Phase E: Pulse gains StatusCommand health and is probed via
+        // the StatusCommand loop, so adapter_health now also contains "pulse". The
+        // `build_adapter_registry` view still only covers the old-style feed/probe
+        // adapters (bulwark/system/workstate) — the two views legitimately differ by
+        // exactly the StatusCommand set.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
 
-        let mut from_status: Vec<String> = snap
-            .adapter_health
-            .keys()
-            .map(|id| id.as_str().to_owned())
-            .collect();
-        from_status.sort();
         let mut from_registry: Vec<String> = reg
             .list()
             .iter()
             .map(|e| e.id.as_str().to_owned())
             .collect();
         from_registry.sort();
-        let mut expected: Vec<String> =
+        let mut expected_registry: Vec<String> =
             real_adapter_ids().iter().map(|s| (*s).to_owned()).collect();
-        expected.sort();
+        expected_registry.sort();
 
+        // The registry view (build_adapter_registry) covers only the three
+        // feed/probe adapters — StatusCommand components are probed separately.
         assert_eq!(
-            from_status, expected,
-            "status roster must be exactly the real adapters"
+            from_registry, expected_registry,
+            "adapters registry must be exactly the feed/probe adapters"
         );
+
+        // adapter_health must be a superset: real adapters PLUS any StatusCommand
+        // components (pulse, once it flips). It must NOT contain synthetic keys like
+        // section names (scripts/tools/findings).
+        let status_command_ids: Vec<String> = rexops_core::COMPONENTS
+            .iter()
+            .filter(|c| matches!(c.health, rexops_core::HealthSource::StatusCommand { .. }))
+            .map(|c| c.id.to_owned())
+            .collect();
+        let mut expected_status = expected_registry.clone();
+        expected_status.extend(status_command_ids);
+        expected_status.sort();
+        let mut from_status: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_status.sort();
         assert_eq!(
-            from_registry, expected,
-            "adapters roster must be exactly the real adapters"
+            from_status, expected_status,
+            "status roster must be exactly real adapters + StatusCommand components"
         );
     }
 
@@ -987,18 +1015,25 @@ mod tests {
 
     #[test]
     fn planned_components_are_neutral_not_faulty() {
-        // A Planned component (e.g. pulse) must surface as Unknown health and a
-        // "planned" maturity — never Healthy (fake green) and never Unavailable
-        // (a fault). It is honest, dim, and does no I/O.
+        // A Planned component must surface as Unknown health and "planned" maturity
+        // — never Healthy (fake green) and never Unavailable (a fault). It is
+        // honest, dim, and does no I/O.
+        // Phase E: Pulse is no longer Planned (it became Live with StatusCommand).
+        // Use Tripwire — a component that is definitively still Planned — as the
+        // example. This is a deliberate update: the test's *purpose* (Planned →
+        // neutral/dim) is preserved; only the example component changed.
         let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
-        let pulse = snap
+        let tripwire = snap
             .components
             .iter()
-            .find(|c| c.id == "pulse")
-            .expect("pulse is a registry row");
-        assert_eq!(pulse.maturity, "planned");
-        assert_eq!(pulse.health, rexops_core::AdapterHealth::Unknown);
-        assert!(!pulse.launchable, "a planned component is not launchable");
+            .find(|c| c.id == "tripwire")
+            .expect("tripwire is a registry row");
+        assert_eq!(tripwire.maturity, "planned");
+        assert_eq!(tripwire.health, rexops_core::AdapterHealth::Unknown);
+        assert!(
+            !tripwire.launchable,
+            "a planned component is not launchable"
+        );
     }
 
     #[test]
@@ -1107,9 +1142,9 @@ mod tests {
         use rexops_core::AdapterHealth;
         let stub = stub_binary(r#"{"healthy":true,"detail":"ok","latency_ms":5}"#, 0);
         let cfg = pulse_only_config(&stub);
-        // Call the probe function directly: the COMPONENTS loop won't fire for
-        // "pulse" until its HealthSource flips to StatusCommand (a later task).
-        // Testing the function directly proves the spawn + parse wiring.
+        // Call the probe function directly as a unit-test of parse+spawn wiring.
+        // (Phase E: Pulse now has StatusCommand health, so the COMPONENTS loop also
+        // fires — but this direct call still exercises the low-level function.)
         let probe = status_command_probe(&cfg, "pulse", &["status"]);
         assert_eq!(
             probe.health,
@@ -1137,25 +1172,53 @@ mod tests {
     }
 
     #[test]
+    fn pulse_status_command_loop_populates_health_and_latency_end_to_end() {
+        // INTEGRATION-LOOP COVERAGE (Task 8 / Task-5 deferred): now that Pulse has
+        // HealthSource::StatusCommand, the COMPONENTS loop in build_snapshot_with_piped
+        // fires for it. This test drives the FULL loop (not just status_command_probe
+        // directly) and asserts that both adapter_health and status_latency are
+        // correctly populated — proving the wiring from registry flip → probe → snap.
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":true,"detail":"ok","latency_ms":5}"#, 0);
+        let cfg = pulse_only_config(&stub);
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        // Health: the COMPONENTS loop must have written Healthy for pulse.
+        let pulse_id = rexops_core::AdapterId::new("pulse").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&pulse_id),
+            Some(AdapterHealth::Healthy),
+            "pulse adapter_health must be Healthy after the StatusCommand loop fires"
+        );
+
+        // Latency: status_latency must contain pulse with the value from the JSON.
+        assert_eq!(
+            snap.status_latency.get("pulse").copied(),
+            Some(5u64),
+            "pulse status_latency must be 5 ms as reported by the stub"
+        );
+
+        // Maturity in the registry walk: pulse is now Live, not Planned.
+        let pulse_component = snap.components.iter().find(|c| c.id == "pulse");
+        assert!(pulse_component.is_some(), "pulse must be in components");
+        assert_eq!(
+            pulse_component.unwrap().maturity,
+            "live",
+            "pulse must surface as live after the registry flip"
+        );
+    }
+
+    #[test]
     fn status_and_adapters_agree_on_the_roster_and_live_is_that_roster_plus_feed_tools() {
-        // THE INVARIANT (refined in Phase D): `status`'s adapter_health and
-        // `adapters`' registry still agree EXACTLY with the adapter roster
-        // (bulwark/system/workstate) — feeds are not adapters. But Phase D widened
-        // what "live" means: a feed-backed tool with a launch (ScriptVault,
-        // ToolFoundry) is `Live` too, even though it is not adapter-*probed*. So
-        // the cockpit's "live" cards are the adapter roster PLUS those feed-backed
-        // launchables — a superset, not an equal set. The registry is still one
-        // source; "live" is just a richer maturity than "is an adapter".
+        // THE INVARIANT (refined in Phase E): `adapters`' registry still covers only
+        // the three feed/probe adapters (bulwark/system/workstate). `status`'s
+        // adapter_health is now a SUPERSET: it also contains StatusCommand components
+        // (pulse, Phase E). Phase D widened "live" to include feed-backed launchables
+        // (ScriptVault/ToolFoundry); Phase E adds pulse via StatusCommand, so live
+        // is now 6/11: the three probed adapters + ScriptVault + ToolFoundry + Pulse.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
-
-        let mut from_adapter_health: Vec<String> = snap
-            .adapter_health
-            .keys()
-            .map(|id| id.as_str().to_owned())
-            .collect();
-        from_adapter_health.sort();
 
         let mut from_registry: Vec<String> = reg
             .list()
@@ -1172,25 +1235,29 @@ mod tests {
             .collect();
         live_components.sort();
 
-        let mut expected = real_adapter_ids()
+        let mut expected_registry = real_adapter_ids()
             .iter()
             .map(|s| (*s).to_owned())
             .collect::<Vec<_>>();
-        expected.sort();
+        expected_registry.sort();
 
-        // The two cross-source rosters still agree exactly with the adapter
-        // roster — feeds are not adapters, so adding feed-backed Live tools does
-        // not change adapter_health or the registry adapter list.
-        assert_eq!(from_adapter_health, expected, "status roster");
-        assert_eq!(from_registry, expected, "adapters roster");
+        // The build_adapter_registry view covers only the three feed/probe adapters
+        // — StatusCommand components are probed by the snapshot loop, not here.
+        assert_eq!(
+            from_registry, expected_registry,
+            "adapters registry must be exactly the feed/probe adapters"
+        );
 
-        // Phase D: `live` now means "fully wired" — the adapter roster PLUS the
-        // feed-backed launchable tools (ScriptVault + ToolFoundry). So the live
-        // cards are a SUPERSET of the adapter roster. Assert the exact new set.
-        let mut expected_live = expected.clone();
-        expected_live.push("scriptvault".to_owned());
-        expected_live.push("toolfoundry".to_owned());
+        // Phase E: "live" = 3 probed adapters + 2 feed-backed launchables + pulse
+        // (StatusCommand Live). Six live cards total out of eleven registry rows.
+        let mut expected_live = expected_registry.clone();
+        expected_live.push("pulse".to_owned()); // Phase E: StatusCommand Live
+        expected_live.push("scriptvault".to_owned()); // Phase D: feed-backed Live
+        expected_live.push("toolfoundry".to_owned()); // Phase D: feed-backed Live
         expected_live.sort();
-        assert_eq!(live_components, expected_live, "live component cards");
+        assert_eq!(
+            live_components, expected_live,
+            "live component cards (6/11)"
+        );
     }
 }

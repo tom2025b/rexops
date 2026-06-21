@@ -11,7 +11,6 @@ pub struct HeartbeatLog {
     by_id: HashMap<String, VecDeque<u64>>,
 }
 
-#[allow(dead_code)]
 impl HeartbeatLog {
     /// A log holding up to `cap` samples per component.
     pub fn with_capacity(cap: usize) -> Self {
@@ -47,8 +46,9 @@ impl HeartbeatLog {
 // Learning Notes
 // - Per-id `VecDeque` with a hard cap: O(1) push, bounded memory, no persistence.
 // - Default capacity (16) is chosen in `App`; this type stays policy-free.
-// - `samples` and `latest` are marked `#[allow(dead_code)]` because they're consumed
-//   by the cockpit card vital in the next Phase E task (only `record` is called here).
+// - Phase E: `samples` and `latest` are consumed by the cockpit card vital (cockpit.rs)
+//   and the drill-down heartbeat section (cockpit_detail.rs). The previous
+//   `#[allow(dead_code)]` guard was removed when those call sites landed.
 
 #[cfg(test)]
 mod tests {

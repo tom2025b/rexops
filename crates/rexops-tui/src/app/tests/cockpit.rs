@@ -164,3 +164,37 @@ fn drill_key_opens_detail_for_a_launchable_card_too() {
     assert_eq!(app.current_screen, Screen::CockpitDetail);
     assert_eq!(app.selected_component.as_deref(), Some("bulwark"));
 }
+
+#[test]
+fn pulse_is_a_live_launchable_component_and_the_other_planned_four_are_not() {
+    let launchable: Vec<&str> = rexops_core::launchable_components()
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    assert!(
+        launchable.contains(&"pulse"),
+        "pulse must be launchable: {launchable:?}"
+    );
+
+    // The remaining Planned tools stay non-launchable.
+    for id in ["tripwire", "rewind", "rex-check", "rex-forge"] {
+        assert!(
+            !launchable.contains(&id),
+            "{id} must stay Planned/non-launchable"
+        );
+    }
+
+    // Pulse's health source is StatusCommand and its maturity is Live.
+    let pulse = rexops_core::component_by_id("pulse").unwrap();
+    assert!(matches!(
+        pulse.health,
+        rexops_core::HealthSource::StatusCommand { .. }
+    ));
+    assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
+}
+
+// Learning Notes
+// - The guard test locks the three-field flip (health, launch, maturity) as a
+//   permanent invariant: CI will catch any accidental rollback to Planned.
+// - The "others stay Planned" assertion prevents a copy-paste error from silently
+//   lighting up a not-yet-built tool.
