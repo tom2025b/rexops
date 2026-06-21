@@ -115,11 +115,6 @@ pub fn render_script_item(
     Line::from(spans)
 }
 
-/// Render a log/event line for the Dashboard's Events pane.
-pub fn render_log_line(msg: &str) -> Line<'static> {
-    Line::from(format!("• {msg}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
