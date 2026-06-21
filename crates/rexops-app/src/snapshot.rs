@@ -933,17 +933,13 @@ mod tests {
             "adapters registry must be exactly the feed/probe adapters"
         );
 
-        // adapter_health must be a superset: real adapters PLUS any StatusCommand
-        // components (pulse, once it flips). It must NOT contain synthetic keys like
-        // section names (scripts/tools/findings).
-        let status_command_ids: Vec<String> = rexops_core::COMPONENTS
-            .iter()
-            .filter(|c| matches!(c.health, rexops_core::HealthSource::StatusCommand { .. }))
-            .map(|c| c.id.to_owned())
-            .collect();
-        let mut expected_status = expected_registry.clone();
-        expected_status.extend(status_command_ids);
-        expected_status.sort();
+        // adapter_health must be exactly: the three feed/probe adapters PLUS pulse
+        // (StatusCommand Live). This is a HARDCODED LITERAL anchor — intentionally
+        // NOT derived from the registry. If someone adds a second StatusCommand
+        // component to COMPONENTS that shouldn't be in adapter_health, this literal
+        // will catch the discrepancy (both sides would expand together if derived).
+        let mut expected_status: Vec<&str> = vec!["bulwark", "pulse", "system", "workstate"];
+        expected_status.sort_unstable();
         let mut from_status: Vec<String> = snap
             .adapter_health
             .keys()
@@ -951,8 +947,9 @@ mod tests {
             .collect();
         from_status.sort();
         assert_eq!(
-            from_status, expected_status,
-            "status roster must be exactly real adapters + StatusCommand components"
+            from_status.as_slice(),
+            expected_status,
+            "status roster must be exactly [bulwark, pulse, system, workstate] — update this literal consciously if the set changes"
         );
     }
 
@@ -1216,6 +1213,10 @@ mod tests {
         // (pulse, Phase E). Phase D widened "live" to include feed-backed launchables
         // (ScriptVault/ToolFoundry); Phase E adds pulse via StatusCommand, so live
         // is now 6/11: the three probed adapters + ScriptVault + ToolFoundry + Pulse.
+        //
+        // I-2 RESTORE: the adapter_health cross-check (from_adapter_health vs the
+        // literal) was dropped in Phase E — restored here so both the registry-view
+        // AND the adapter_health-view of the roster are asserted against the literal.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
@@ -1246,6 +1247,25 @@ mod tests {
         assert_eq!(
             from_registry, expected_registry,
             "adapters registry must be exactly the feed/probe adapters"
+        );
+
+        // I-2: RESTORED adapter_health cross-check — hardcoded literal anchor.
+        // adapter_health must be exactly [bulwark, pulse, system, workstate].
+        // This is a second vantage point (in addition to the I-1 test) asserting the
+        // same literal, from within this larger invariant test.
+        let mut from_adapter_health: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_adapter_health.sort();
+        let mut expected_adapter_health: Vec<&str> =
+            vec!["bulwark", "pulse", "system", "workstate"];
+        expected_adapter_health.sort_unstable();
+        assert_eq!(
+            from_adapter_health.as_slice(),
+            expected_adapter_health,
+            "adapter_health roster must be exactly [bulwark, pulse, system, workstate]"
         );
 
         // Phase E: "live" = 3 probed adapters + 2 feed-backed launchables + pulse
