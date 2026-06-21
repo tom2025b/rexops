@@ -167,7 +167,7 @@ fn drill_key_opens_detail_for_a_launchable_card_too() {
 }
 
 #[test]
-fn pulse_is_a_live_launchable_component_and_the_other_planned_four_are_not() {
+fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
     let launchable: Vec<&str> = rexops_core::launchable_components()
         .iter()
         .map(|c| c.id)
@@ -177,8 +177,14 @@ fn pulse_is_a_live_launchable_component_and_the_other_planned_four_are_not() {
         "pulse must be launchable: {launchable:?}"
     );
 
-    // The remaining Planned tools stay non-launchable.
-    for id in ["tripwire", "rewind", "rex-check", "rex-forge"] {
+    // rex-check is now launchable too (Probe + launch, the bulwark/proto pattern).
+    assert!(
+        launchable.contains(&"rex-check"),
+        "rex-check must be launchable: {launchable:?}"
+    );
+
+    // The still-Planned tools stay non-launchable.
+    for id in ["tripwire", "rewind", "rex-forge"] {
         assert!(
             !launchable.contains(&id),
             "{id} must stay Planned/non-launchable"
@@ -192,6 +198,14 @@ fn pulse_is_a_live_launchable_component_and_the_other_planned_four_are_not() {
         rexops_core::HealthSource::StatusCommand { .. }
     ));
     assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
+
+    // rex-check is Live via the Probe pattern (binary presence), not StatusCommand.
+    let rex_check = rexops_core::component_by_id("rex-check").unwrap();
+    assert!(matches!(
+        rex_check.health,
+        rexops_core::HealthSource::Probe { .. }
+    ));
+    assert_eq!(rex_check.maturity, rexops_core::Maturity::Live);
 }
 
 // Learning Notes
