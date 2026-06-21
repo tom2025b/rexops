@@ -157,7 +157,7 @@ impl App {
             // moving a list selection. Up = toward older output.
             Screen::Jobs => self.scroll_jobs_output(!down),
             Screen::Launcher => {
-                let len = tools::CATALOG.len();
+                let len = tools::launchable().len();
                 if len > 0 {
                     // Clamp first so a stale index (defensive: the field is a raw
                     // usize independent of the catalog) can't make `% len` wrap
@@ -184,7 +184,7 @@ impl App {
                 }
             }
             Screen::Launcher => {
-                if let Some(tool) = tools::CATALOG.get(self.selected_tool) {
+                if let Some(tool) = tools::launchable().get(self.selected_tool) {
                     self.arm_tool(tool.id.to_owned(), tool.name.to_owned());
                 }
             }

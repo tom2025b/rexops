@@ -124,17 +124,15 @@ fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
     command_from_config(tool_id, config).or_else(|| command_from_path(tool_id))
 }
 
-/// Resolve the complete launch command for a catalog tool, including any
-/// catalog-owned arguments needed to open the interactive surface.
+/// Resolve the complete launch command for a tool, including any registry-owned
+/// arguments needed to open its interactive surface. Args come from the
+/// component's `LaunchSpec`; the program is resolved (`which` then config binary)
+/// as before — the registry is the single source of launch data.
 pub fn resolve_launch_command(tool_id: &str, config: &AppConfig) -> Option<LaunchCommand> {
     let program = resolve_command(tool_id, config)?;
     let args = catalog::by_id(tool_id)
-        .map(|tool| {
-            tool.launch_args
-                .iter()
-                .map(|arg| (*arg).to_owned())
-                .collect()
-        })
+        .and_then(|c| c.launch)
+        .map(|l| l.args.iter().map(|arg| (*arg).to_owned()).collect())
         .unwrap_or_default();
     Some(LaunchCommand { program, args })
 }

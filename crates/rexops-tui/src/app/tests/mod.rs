@@ -8,7 +8,7 @@ use crate::input::Action;
 use crate::jobs::{
     spawn, toast_for, JobOutput, JobRecord, LastOutcome, JOB_HISTORY_CAP, JOB_OUTPUT_CAP,
 };
-use crate::tools::{ChildExit, ForegroundRunner, LaunchCommand, CATALOG};
+use crate::tools::{ChildExit, ForegroundRunner, LaunchCommand};
 
 struct FakeRunner {
     calls: usize,

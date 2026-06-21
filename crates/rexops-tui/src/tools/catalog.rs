@@ -1,82 +1,80 @@
-//! Static launcher catalog and per-tool execution-mode metadata.
+//! Registry-backed launch view: the launchable tools and their run-mode facts,
+//! read from the `rexops-core` COMPONENTS registry — the single source of truth.
+//!
+//! This module used to own a hand-maintained `CATALOG`/`ToolEntry`. Phase D made
+//! the registry the one place launch data lives, so this is now a thin view over
+//! it: `launchable()` is the ordered list the Launcher screen + palette iterate,
+//! and `is_streamable`/`refreshes_after` read each component's `LaunchSpec`.
 
-/// How a tool runs when launched from the TUI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunMode {
-    /// Hands over the real terminal (interactive tools).
-    Foreground,
-    /// Streams output into the Jobs screen.
-    #[allow(dead_code)]
-    Background,
+use rexops_core::{component_by_id, launchable_components, Component, RunMode};
+
+/// The launchable components, in registry (display) order. The Launcher screen
+/// indexes this by position and the palette iterates it.
+pub fn launchable() -> Vec<&'static Component> {
+    launchable_components()
 }
 
-pub struct ToolEntry {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub run_mode: RunMode,
-    pub launch_args: &'static [&'static str],
-    /// Whether finishing this tool should trigger a background snapshot refresh.
-    /// Only meaningful for `Background` (Jobs) tools. Set true when running the
-    /// tool can change what a probe would observe (so the cockpit should re-read
-    /// state); false for a tool whose run is self-contained and changes nothing a
-    /// refresh would pick up — re-probing every adapter just because a checklist
-    /// finished is needless work and a surprising side effect.
-    pub refresh_after: bool,
+/// Look up a component by id (the registry lookup, re-exposed under the name the
+/// tui launch code reads naturally).
+pub fn by_id(id: &str) -> Option<&'static Component> {
+    component_by_id(id)
 }
 
-/// The launcher catalog: tools the user can actually RUN.
-///
-/// Only launchable programs belong here. scripts/tools/findings/workstate are
-/// deliberately absent — they are read-only Workstate *data sections*, not
-/// runnable tools, and have no executable. Listing them here used to render
-/// permanently-disabled dead rows in a list titled "pick a tool … Enter
-/// launches" (UX-6). Their data is surfaced on the Scripts/Tools screens and
-/// under the Workstate adapter, where it belongs.
-///
-/// Both current launchable tools take over the terminal (`Foreground`): Bulwark
-/// opens its TUI, and Proto opens its own interactive protocol picker.
-pub const CATALOG: &[ToolEntry] = &[
-    ToolEntry {
-        id: "bulwark",
-        name: "Bulwark",
-        description: "Content/security inspection (live scan)",
-        run_mode: RunMode::Foreground,
-        launch_args: &["tui"],
-        // Foreground tool: it returns through the launcher path, which decides
-        // refresh via LaunchReport::should_refresh — this flag is unused for it.
-        refresh_after: false,
-    },
-    ToolEntry {
-        id: "proto",
-        name: "Proto",
-        // Foreground: bare `proto` owns the protocol picker and requires a real
-        // TTY. `proto run` requires an id that RexOps does not choose here, and a
-        // background job would null stdin, so launching bare is the valid contract.
-        description: "Protocol / checklist runner (interactive picker)",
-        run_mode: RunMode::Foreground,
-        launch_args: &[],
-        // Foreground tool: it returns through the launcher path, which decides
-        // refresh via LaunchReport::should_refresh — this flag is unused for it.
-        refresh_after: false,
-    },
-];
-
-pub fn by_id(id: &str) -> Option<&'static ToolEntry> {
-    CATALOG.iter().find(|tool| tool.id == id)
-}
-
-/// True when the tool runs as a background job whose output can stream into
-/// the Jobs screen (as opposed to taking over the terminal).
+/// True when the tool runs as a background job whose output streams into the Jobs
+/// screen (vs. taking over the terminal). Reads the registry `LaunchSpec`.
 pub fn is_streamable(tool_id: &str) -> bool {
     matches!(
-        by_id(tool_id).map(|tool| tool.run_mode),
+        by_id(tool_id).and_then(|c| c.launch).map(|l| l.run_mode),
         Some(RunMode::Background)
     )
 }
 
 /// Whether finishing this tool should kick off a background snapshot refresh.
-/// Unknown ids (not in the catalog) default to `false` — no surprise re-probe.
+/// Unknown ids (or non-launchable components) default to `false` — no surprise
+/// re-probe. Reads the registry `LaunchSpec.refresh_after`.
 pub fn refreshes_after(tool_id: &str) -> bool {
-    by_id(tool_id).is_some_and(|tool| tool.refresh_after)
+    by_id(tool_id)
+        .and_then(|c| c.launch)
+        .is_some_and(|l| l.refresh_after)
+}
+
+// Learning Notes
+// - The launchable set is now a *view* over COMPONENTS (one source of truth), not
+//   a second hand-maintained list. Adding a launchable tool is exactly: give its
+//   registry row a `launch`. The old CATALOG/ToolEntry could drift from the
+//   registry's `launchable` flag; this view cannot.
+// - is_streamable/refreshes_after read the component's LaunchSpec, so a tool's run
+//   mode + refresh behaviour live in one place (the registry row) instead of being
+//   duplicated between the registry and a catalog entry.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launchable_lists_the_registry_launch_rows_in_order() {
+        let ids: Vec<&str> = launchable().iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec!["bulwark", "proto", "scriptvault", "toolfoundry"]);
+    }
+
+    #[test]
+    fn run_mode_helpers_read_the_registry() {
+        // All four current launchables are Foreground → not streamable.
+        for id in ["bulwark", "proto", "scriptvault", "toolfoundry"] {
+            assert!(!is_streamable(id), "{id} is Foreground, not streamable");
+        }
+        // Unknown ids are inert, never panic.
+        assert!(!is_streamable("nope"));
+        assert!(!refreshes_after("nope"));
+        assert!(
+            !refreshes_after("bulwark"),
+            "bulwark does not refresh-after"
+        );
+    }
+
+    #[test]
+    fn by_id_finds_a_registry_component() {
+        assert_eq!(by_id("scriptvault").map(|c| c.name), Some("ScriptVault"));
+        assert!(by_id("not-a-tool").is_none());
+    }
 }

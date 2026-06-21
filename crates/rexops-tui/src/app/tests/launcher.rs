@@ -1,7 +1,7 @@
 use super::*;
 
 fn select_tool(app: &mut App, id: &str) {
-    let idx = CATALOG
+    let idx = crate::tools::launchable()
         .iter()
         .position(|t| t.id == id)
         .unwrap_or_else(|| panic!("{id} in catalog"));
@@ -275,12 +275,12 @@ fn preview_shows_resolved_command_or_no_command() {
 fn launcher_down_and_up_wrap_around_catalog() {
     let mut app = launcher_app();
     let mut runner = FakeRunner { calls: 0 };
-    let last = CATALOG.len() - 1;
+    let last = crate::tools::launchable().len() - 1;
 
     // Down advances, then wraps from the last entry back to 0.
     app.on_action(Action::Down, &mut runner);
     assert_eq!(app.selected_tool, 1);
-    for _ in 1..CATALOG.len() {
+    for _ in 1..crate::tools::launchable().len() {
         app.on_action(Action::Down, &mut runner);
     }
     assert_eq!(app.selected_tool, 0, "Down must wrap past the end");
@@ -318,7 +318,8 @@ fn launcher_enter_arms_the_selected_tool() {
         );
     });
     select_tool(&mut app, "proto");
-    let entry = &CATALOG[app.selected_tool];
+    let launchable = crate::tools::launchable();
+    let entry = launchable[app.selected_tool];
     let mut runner = FakeRunner { calls: 0 };
 
     app.on_action(Action::Activate, &mut runner);

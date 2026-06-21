@@ -11,7 +11,7 @@
 //! palette never spawns anything directly.
 
 use crate::input::Action;
-use crate::tools::CATALOG;
+use crate::tools;
 
 /// One command the palette can dispatch. Kept a small enum (not boxed closures):
 /// the set is fixed and each variant maps to an existing `Action` or to arming a
@@ -62,10 +62,10 @@ pub fn commands() -> Vec<PaletteCommand> {
     // A `run <tool>` per catalog entry. Dispatch arms the confirm gate; whether
     // the tool streams in a Job or hands over the terminal is decided there, so
     // the palette stays uniform.
-    for tool in CATALOG {
+    for tool in tools::launchable() {
         cmds.push(PaletteCommand {
             label: format!("run {}", tool.id),
-            desc: format!("run {} — {}", tool.name, tool.description),
+            desc: format!("run {} — {}", tool.name, tool.blurb),
             command: Command::RunTool {
                 id: tool.id.to_owned(),
                 name: tool.name.to_owned(),
@@ -112,7 +112,7 @@ mod tests {
     fn catalog_includes_nav_actions_and_one_run_per_tool() {
         let cmds = commands();
         // Every catalog tool yields exactly one `run <id>` command.
-        for tool in CATALOG {
+        for tool in tools::launchable() {
             let label = format!("run {}", tool.id);
             assert_eq!(
                 cmds.iter().filter(|c| c.label == label).count(),

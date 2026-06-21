@@ -19,8 +19,9 @@ use ratatui::{
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
-use crate::tools::{ToolEntry, CATALOG};
+use crate::tools;
 use crate::ui::widgets;
+use rexops_core::Component;
 
 /// Width the tool name is padded to so the badges and tags line up into columns.
 /// The catalog names are short ("Workstate" is the longest at 9), so 10 leaves a
@@ -55,7 +56,7 @@ fn render_launcher_header(f: &mut Frame, area: Rect, theme: Theme) {
 /// Render a single launcher row: an accent selection rail + row tint on the
 /// selected row, the name padded into a column, the health badge, and a dim
 /// run-mode / availability tag so the user can see at a glance what Enter does.
-fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) -> Line<'static> {
+fn render_launcher_row(app: &App, index: usize, tool: &Component, theme: Theme) -> Line<'static> {
     let selected = index == app.selected_tool;
 
     // The suite's selection look: an accent rail glyph on the selected row, a
@@ -105,8 +106,8 @@ fn render_launcher_row(app: &App, index: usize, tool: &ToolEntry, theme: Theme) 
 }
 
 fn render_launcher_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
-    let lines: Vec<Line> = CATALOG
-        .iter()
+    let lines: Vec<Line> = tools::launchable()
+        .into_iter()
         .enumerate()
         .map(|(i, tool)| render_launcher_row(app, i, tool, theme))
         .collect();
@@ -120,10 +121,10 @@ fn render_launcher_list(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
 fn render_launcher_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
-    if let Some(tool) = CATALOG.get(app.selected_tool) {
+    if let Some(tool) = tools::launchable().get(app.selected_tool) {
         lines.push(Line::from(vec![
             Span::styled(format!("{}: ", tool.name), theme.title()),
-            Span::raw(tool.description.to_string()),
+            Span::raw(tool.blurb.to_string()),
         ]));
         let availability = if app.is_tool_available(tool.id) {
             "Enabled: Enter opens a confirmation before launch."
@@ -248,10 +249,11 @@ mod tests {
         // Proto is a real PATH binary (installed via `cargo install --path .`),
         // so RexOps's `which proto` resolves it. It must be in the catalog to be
         // offered on the Launcher screen.
-        let proto = CATALOG.iter().find(|t| t.id == "proto");
+        let launchable = tools::launchable();
+        let proto = launchable.iter().find(|t| t.id == "proto");
         let proto = proto.expect("Proto must be registered in the launcher catalog");
         assert_eq!(proto.name, "Proto");
-        assert!(!proto.description.is_empty());
+        assert!(!proto.blurb.is_empty());
     }
 
     /// Extract the single rendered row line that names the given tool, so a test
@@ -398,7 +400,7 @@ mod tests {
     fn catalog_ids_are_unique() {
         // Ids key both the `which` lookup and the config-binary fallback, so a
         // duplicate id would make two rows resolve to the same command.
-        let mut ids: Vec<&str> = CATALOG.iter().map(|t| t.id).collect();
+        let mut ids: Vec<&str> = tools::launchable().iter().map(|t| t.id).collect();
         let total = ids.len();
         ids.sort_unstable();
         ids.dedup();
@@ -454,17 +456,30 @@ mod tests {
             "Bulwark's detail must no longer show after moving off it:\n{text}"
         );
 
-        // Down again wraps from the last entry (Proto) back to Bulwark (index 0).
-        // Confirms tracking keeps working across the wrap, not just one step.
+        // Down → ScriptVault (index 2). The pane follows again (the launchable set
+        // is now bulwark/proto/scriptvault/toolfoundry, not just two tools).
         app.on_action(Action::Down, &mut runner);
         let text = render_to_text(&app);
         assert!(
-            text.contains("Bulwark:"),
-            "detail must follow the wrap back to Bulwark:\n{text}"
+            text.contains("ScriptVault:"),
+            "detail must follow the selection to ScriptVault:\n{text}"
         );
         assert!(
             !text.contains("Proto:"),
             "Proto's detail must clear once moved past:\n{text}"
+        );
+
+        // From ScriptVault (index 2), `count - 2` more Downs wrap back to Bulwark
+        // (index 0) via wraparound — confirming tracking survives the wrap whatever
+        // the launchable count is (derive it, don't hard-code two tools).
+        let count = crate::tools::launchable().len();
+        for _ in 2..count {
+            app.on_action(Action::Down, &mut runner);
+        }
+        let text = render_to_text(&app);
+        assert!(
+            text.contains("Bulwark:"),
+            "detail must follow the wrap back to Bulwark:\n{text}"
         );
     }
 }

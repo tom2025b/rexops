@@ -10,7 +10,7 @@ use rexops_core::{AppConfig, OpsSnapshot};
 use super::Screen;
 use crate::commands::PendingAction;
 use crate::jobs::{JobHandle, JobOutput, JobRecord, LastOutcome};
-use crate::tools::{self, CATALOG};
+use crate::tools;
 
 pub struct App {
     pub snapshot: OpsSnapshot,
@@ -147,7 +147,7 @@ impl App {
     /// `modify_config`, which calls this — so availability can never drift from
     /// config. The render path reads it via `is_tool_launchable`.
     fn refresh_launch_availability(&mut self) {
-        self.launch_availability = CATALOG
+        self.launch_availability = tools::launchable()
             .iter()
             .map(|tool| {
                 (
