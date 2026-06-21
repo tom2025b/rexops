@@ -176,8 +176,7 @@ mod tests {
     #[test]
     fn section_status_accepts_a_bare_string() {
         // The common case: a simple freshness verdict is a plain JSON string.
-        let s: Section<ScriptsInfo> =
-            serde_json::from_str(r#"{"status":"Stale"}"#).unwrap();
+        let s: Section<ScriptsInfo> = serde_json::from_str(r#"{"status":"Stale"}"#).unwrap();
         assert_eq!(s.status, "Stale");
         assert_eq!(status_to_freshness(&s.status), Freshness::Stale);
     }
@@ -189,8 +188,7 @@ mod tests {
         // field rejected it and failed the whole envelope. We must accept it and
         // collapse it to its variant key so the section degrades on its own.
         let s: Section<ScriptsInfo> =
-            serde_json::from_str(r#"{"status":{"Failed":{"reason":"feed unreadable"}}}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"status":{"Failed":{"reason":"feed unreadable"}}}"#).unwrap();
         assert_eq!(s.status, "Failed", "tagged object collapses to its tag");
         assert_eq!(status_to_freshness(&s.status), Freshness::Missing);
         assert!(s.data.is_none(), "a Failed section carries no data");
@@ -199,10 +197,9 @@ mod tests {
     #[test]
     fn section_status_accepts_the_unsupported_version_tagged_object() {
         // The other data-bearing variant Workstate emits, also as an object.
-        let s: Section<ScriptsInfo> = serde_json::from_str(
-            r#"{"status":{"UnsupportedVersion":{"found":2,"supported":3}}}"#,
-        )
-        .unwrap();
+        let s: Section<ScriptsInfo> =
+            serde_json::from_str(r#"{"status":{"UnsupportedVersion":{"found":2,"supported":3}}}"#)
+                .unwrap();
         assert_eq!(s.status, "UnsupportedVersion");
         // Newer-than-supported is still a healthy section — Stale, not Missing.
         assert_eq!(status_to_freshness(&s.status), Freshness::Stale);
@@ -213,8 +210,7 @@ mod tests {
         // A status that is neither a string nor a tagged object (here null) must
         // NOT fail the parse — it degrades to "" → Unknown so one weird section
         // never poisons the whole snapshot.
-        let s: Section<ScriptsInfo> =
-            serde_json::from_str(r#"{"status":null}"#).unwrap();
+        let s: Section<ScriptsInfo> = serde_json::from_str(r#"{"status":null}"#).unwrap();
         assert_eq!(s.status, "");
         assert_eq!(status_to_freshness(&s.status), Freshness::Unknown);
     }
@@ -234,10 +230,7 @@ mod tests {
         assert_eq!(info.tools.status, "Failed");
         assert_eq!(info.findings.status, "UnsupportedVersion");
         assert_eq!(status_to_freshness(&info.tools.status), Freshness::Missing);
-        assert_eq!(
-            status_to_freshness(&info.findings.status),
-            Freshness::Stale
-        );
+        assert_eq!(status_to_freshness(&info.findings.status), Freshness::Stale);
     }
 
     #[test]

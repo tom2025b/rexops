@@ -14,6 +14,11 @@ pub enum Screen {
     Tools,
     Launcher,
     Jobs,
+    /// The per-component drill-down reached from a focused cockpit card.
+    /// Assigned by `drill_into_selected_component` (its real body lands with the
+    /// detail screen); already routed/handled. `allow` until that body exists.
+    #[allow(dead_code)]
+    CockpitDetail,
 }
 
 impl App {
@@ -89,4 +94,78 @@ impl App {
             self.selected_adapter = Some(name);
         }
     }
+
+    // --- cockpit card focus (keyed by component id) ---
+
+    /// After a snapshot change, keep the focused id if it is still visible; else
+    /// fall back to the first visited card (or `None`).
+    pub(crate) fn keep_cockpit_selection_visible(&mut self) {
+        let visible: Vec<String> = crate::screens::cockpit_visit_order(&self.snapshot.components)
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        match &self.selected_component {
+            Some(id) if visible.iter().any(|v| v == id) => {}
+            _ => self.selected_component = visible.into_iter().next(),
+        }
+    }
+
+    /// Step cockpit focus along the visit order with wraparound.
+    pub(crate) fn move_cockpit_selection(&mut self, down: bool) {
+        let order: Vec<String> = crate::screens::cockpit_visit_order(&self.snapshot.components)
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        if order.is_empty() {
+            return;
+        }
+        let next = match &self.selected_component {
+            Some(cur) => order.iter().position(|id| id == cur).map(|pos| {
+                let n = if down {
+                    (pos + 1) % order.len()
+                } else if pos > 0 {
+                    pos - 1
+                } else {
+                    order.len() - 1
+                };
+                order[n].clone()
+            }),
+            None => order.first().cloned(),
+        };
+        if let Some(id) = next {
+            self.selected_component = Some(id);
+        }
+    }
+
+    /// Arm the focused cockpit card through the shared confirm gate. A `None`
+    /// selection is a no-op. Gating (launchable / available) is `arm_tool`'s job.
+    pub(crate) fn arm_selected_component(&mut self) {
+        let Some(id) = self.selected_component.clone() else {
+            return;
+        };
+        let name = self
+            .snapshot
+            .components
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.clone());
+        if let Some(name) = name {
+            self.arm_tool(id, name);
+        }
+    }
+
+    /// Resolve a pressed marker letter to a card, focus it, and arm it.
+    pub(crate) fn arm_component_by_marker(&mut self, key: char) {
+        let id = crate::screens::component_for_marker(&self.snapshot.components, key)
+            .map(|s| s.to_owned());
+        if let Some(id) = id {
+            self.selected_component = Some(id);
+            self.arm_selected_component();
+        }
+    }
+
+    /// Drill into the focused cockpit card's detail. Stubbed for the Task-4
+    /// commit so Enter on a non-launchable card compiles; Task 6 implements the
+    /// screen switch. Arm tests don't exercise this.
+    pub(crate) fn drill_into_selected_component(&mut self) {}
 }

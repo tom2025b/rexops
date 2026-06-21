@@ -64,6 +64,12 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
             ("esc", "back"),
             ("1", "dashboard"),
         ],
+        Screen::CockpitDetail => &[
+            ("Enter", "launch"),
+            ("Esc", "back"),
+            ("r", "refresh"),
+            ("1", "cockpit"),
+        ],
         Screen::Jobs => &[
             ("q", "quit"),
             ("^P", "palette"),

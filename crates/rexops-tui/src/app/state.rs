@@ -283,6 +283,7 @@ impl App {
         names.sort();
         self.adapter_names = names;
         self.keep_selected_adapter_visible();
+        self.keep_cockpit_selection_visible();
         if self.snapshot.panicked {
             self.log_event("Refresh failed: an adapter probe panicked (results may be empty)");
         } else {

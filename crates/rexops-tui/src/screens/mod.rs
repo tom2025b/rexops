@@ -14,10 +14,7 @@ pub mod tools;
 
 pub use adapters::render_adapters;
 pub use cockpit::render_cockpit;
-// The cockpit nav helpers are re-exported for the App layer (Task 4) and the
-// renderer (Task 3); until those consumers land they have no caller, so the
-// re-export is added when the first consumer is wired. `GROUP_ORDER` already has
-// one consumer (`cockpit.rs` imports it directly from `cockpit_nav`).
+pub use cockpit_nav::{cockpit_visit_order, component_for_marker};
 pub use jobs::render_jobs;
 pub use launchpad::render_launcher;
 pub use scripts::render_scripts;

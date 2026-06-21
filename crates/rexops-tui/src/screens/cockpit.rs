@@ -262,7 +262,11 @@ mod tests {
 
     #[test]
     fn no_focus_renders_no_rail() {
-        let app = app_with_components(); // selected_component defaults to None
+        // applying a snapshot auto-focuses the first card (so the cockpit is
+        // immediately keyboard-navigable), so clear it explicitly to prove the
+        // RENDERER draws no rail when nothing is focused.
+        let mut app = app_with_components();
+        app.selected_component = None;
         let text = render(&app);
         assert!(!text.contains('▌'), "nothing focused → no rail:\n{text}");
     }
