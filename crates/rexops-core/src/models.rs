@@ -219,6 +219,14 @@ pub struct OpsSnapshot {
     /// a `latency_ms` field. Empty when no StatusCommand probes have run.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub status_latency: std::collections::HashMap<String, u64>,
+
+    /// One-line detail string reported by each StatusCommand probe (keyed by
+    /// component id). Always populated when the probe runs. Used as the card
+    /// vital fallback when the heartbeat sparkline has no samples — notably for
+    /// a Degraded/Unavailable probe where `latency_ms` is None and the heartbeat
+    /// ring-buffer stays empty. Empty when no StatusCommand probes have run.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub status_detail: std::collections::HashMap<String, String>,
 }
 
 impl OpsSnapshot {
@@ -239,6 +247,7 @@ impl OpsSnapshot {
             panicked: false,
             components: Vec::new(),
             status_latency: std::collections::HashMap::new(),
+            status_detail: std::collections::HashMap::new(),
         }
     }
 

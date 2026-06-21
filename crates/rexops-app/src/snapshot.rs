@@ -296,6 +296,8 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
                 if let Some(ms) = probe.latency_ms {
                     snap.status_latency.insert(comp.id.to_owned(), ms);
                 }
+                snap.status_detail
+                    .insert(comp.id.to_owned(), probe.detail.clone());
                 snap.add_note(format!("{} status: {}", comp.id, probe.detail));
             }
         }
@@ -390,7 +392,19 @@ fn component_vital(snap: &OpsSnapshot, id: &str) -> Option<String> {
             .as_ref()
             .map(|t| format!("{} need review", t.attention_count)),
         "system" => snap.system.as_ref().and_then(|s| s.hostname.clone()),
-        _ => None,
+        _ => {
+            // StatusCommand components (e.g. Pulse): the probe's one-line detail is
+            // the card vital fallback (the TUI overlays a heartbeat sparkline when it
+            // has samples; this is what shows otherwise, incl. a Degraded reason).
+            if matches!(
+                rexops_core::component_by_id(id).map(|c| &c.health),
+                Some(rexops_core::HealthSource::StatusCommand { .. })
+            ) {
+                snap.status_detail.get(id).cloned()
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1202,6 +1216,72 @@ mod tests {
             pulse_component.unwrap().maturity,
             "live",
             "pulse must surface as live after the registry flip"
+        );
+    }
+
+    #[test]
+    fn degraded_status_command_detail_surfaces_as_component_vital() {
+        // Spec §5 gap: a healthy:false (Degraded) probe must surface its detail
+        // string as the card vital, because the heartbeat ring-buffer has no
+        // samples (latency_ms is None on a Degraded probe). Verify end-to-end:
+        // stub → build_snapshot_with_piped → component_vital == probe.detail.
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":false,"detail":"1 crit","latency_ms":3}"#, 1);
+        let cfg = pulse_only_config(&stub);
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        // Probe was Degraded (healthy:false).
+        let pulse_id = rexops_core::AdapterId::new("pulse").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&pulse_id),
+            Some(AdapterHealth::Degraded),
+            "healthy:false must probe Degraded"
+        );
+
+        // status_detail must carry the probe's detail string.
+        assert_eq!(
+            snap.status_detail.get("pulse").map(String::as_str),
+            Some("1 crit"),
+            "status_detail[pulse] must be the probe's detail"
+        );
+
+        // component_vital must return the detail as the card vital.
+        let pulse_component = snap.components.iter().find(|c| c.id == "pulse");
+        assert!(pulse_component.is_some(), "pulse must be in components");
+        assert_eq!(
+            pulse_component.unwrap().vital.as_deref(),
+            Some("1 crit"),
+            "a Degraded Pulse card vital must show the probe detail"
+        );
+    }
+
+    #[test]
+    fn non_status_command_component_vital_is_unaffected_by_catch_all() {
+        // Guard: the new catch-all arm must NOT bleed into non-StatusCommand
+        // components. The catch-all is guarded by a HealthSource::StatusCommand
+        // check, so non-StatusCommand ids must never appear in status_detail.
+        // Use a workstate-only build so we have a real snapshot to work with.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+
+        // workstate is NOT a StatusCommand component — its vital comes from its
+        // named arm, not status_detail. It must not appear in status_detail.
+        assert!(
+            !snap.status_detail.contains_key("workstate"),
+            "workstate is not a StatusCommand component and must not appear in status_detail"
+        );
+
+        // system is also not a StatusCommand component — same guarantee.
+        assert!(
+            !snap.status_detail.contains_key("system"),
+            "system is not a StatusCommand component and must not appear in status_detail"
+        );
+
+        // A completely unknown id (not in the registry at all) returns None from
+        // component_vital — proving the catch-all's else branch still returns None.
+        let dummy_snap = OpsSnapshot::new();
+        assert!(
+            component_vital(&dummy_snap, "__no_such_id__").is_none(),
+            "an id not in the registry must return None from component_vital"
         );
     }
 
