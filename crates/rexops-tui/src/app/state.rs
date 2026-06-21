@@ -25,6 +25,11 @@ pub struct App {
     /// through `filtered_adapter_names()`.
     pub(crate) filtered_names: Vec<String>,
     pub selected_adapter: Option<String>,
+    /// The cockpit card currently focused, keyed by component `id` (NOT an index,
+    /// so focus survives a refresh that reorders/adds components). `None` before
+    /// the first snapshot or when no card is visible. Moved by the cockpit nav
+    /// helpers; read on the cockpit render path.
+    pub selected_component: Option<String>,
     pub filter: String,
     /// Whether the inline filter on a filter screen is actively capturing
     /// keystrokes. Entered with `/`, exited with Enter/Esc. While set, the
@@ -88,6 +93,7 @@ impl App {
             adapter_names: Vec::new(),
             filtered_names: Vec::new(),
             selected_adapter: None,
+            selected_component: None,
             filter: String::new(),
             filtering: false,
             selected_tool: 0,
