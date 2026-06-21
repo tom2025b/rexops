@@ -13,20 +13,10 @@ use ratatui::Frame;
 use suite_ui::{pane, Theme};
 
 use crate::app::App;
+use crate::screens::cockpit_nav::GROUP_ORDER;
 use crate::ui::cockpit_widgets::card_grid::{render_card_grid, CardSection};
 use crate::ui::cockpit_widgets::identity_banner::{render_identity_banner, BannerInput};
 use crate::ui::cockpit_widgets::{light_state_from_health, CardInput};
-
-/// The metaphor groups, in display order, with the `ComponentStatus.group`
-/// strings they match (group strings come from `ComponentGroup::label()`).
-const GROUP_ORDER: &[(&str, &[&str])] = &[
-    ("BRAIN", &["brain"]),
-    ("MONITORS", &["monitor"]),
-    ("BLACK BOX", &["black box"]),
-    ("FIELD TOOLS", &["field tool"]),
-    ("MECHANICS", &["mechanic"]),
-    ("FACTORY", &["factory"]),
-];
 
 /// Render the cockpit into `area`.
 pub fn render_cockpit(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
