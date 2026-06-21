@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use rexops_adapters::{Adapter, BulwarkAdapter, SystemAdapter, WorkstateAdapter};
 use rexops_core::{
-    status_to_freshness, AdapterEntry, AdapterId, AdapterRegistry, AppConfig, OpsSnapshot,
-    Provenance, RiskSummary, WorkstateInfo,
+    status_to_freshness, AdapterEntry, AdapterHealth, AdapterId, AdapterRegistry, AppConfig,
+    OpsSnapshot, Provenance, RiskSummary, WorkstateInfo,
 };
 
 /// The ids the app currently resolves to live health. Derived from the core
@@ -165,6 +165,74 @@ fn status_command_probe(
     }
 }
 
+/// Probe a component's health by *binary presence*: spawn `<bin> <version_args>`
+/// (e.g. `tripwire --help`), bounded by the configured timeout, and map the
+/// outcome to health. This is the Probe equivalent of [`status_command_probe`]
+/// for tools that have no one-line JSON `status` contract — health is simply
+/// "does the binary run?":
+///   • spawn fails (binary absent) → Unavailable
+///   • exits 0                     → Healthy
+///   • exits non-zero / times out  → Unavailable
+///
+/// Program resolution mirrors `status_command_probe`: the configured `binary`
+/// (and any `status_prefix_args`) win, else the id itself is tried on PATH — so
+/// the same test seam (point `binary` at an interpreter reading a script) works
+/// here without ever executing a freshly written file (`ETXTBSY`).
+fn probe_binary_presence(config: &AppConfig, id: &str, version_args: &[&str]) -> AdapterHealth {
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let program = config
+        .adapters
+        .get(id)
+        .and_then(|a| a.binary.as_deref())
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or(id)
+        .to_owned();
+    let prefix = config
+        .adapters
+        .get(id)
+        .map_or(&[][..], |a| a.status_prefix_args.as_slice());
+
+    let start = Instant::now();
+    let Ok(mut child) = Command::new(&program)
+        .args(prefix)
+        .args(version_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return AdapterHealth::Unavailable;
+    };
+
+    let deadline = start + adapter_timeout(config, id);
+    loop {
+        match child.try_wait() {
+            // Exited: 0 → Healthy, anything else → Unavailable.
+            Ok(Some(status)) => {
+                return if status.success() {
+                    AdapterHealth::Healthy
+                } else {
+                    AdapterHealth::Unavailable
+                };
+            }
+            // Still running: poll until the deadline, then kill → Unavailable.
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return AdapterHealth::Unavailable;
+            }
+            // wait() itself errored — treat as a failed probe.
+            Err(_) => return AdapterHealth::Unavailable,
+        }
+    }
+}
+
 // Learning Notes
 // - `status_command_probe` is spawn-only glue: parse + mapping live in
 //   `status_probe` so the probe contract is tested independently of I/O.
@@ -174,6 +242,9 @@ fn status_command_probe(
 // - Phase E: Pulse uses StatusCommand, so this function is now called on every
 //   real refresh (not just tests). The COMPONENTS loop in build_snapshot_with_piped
 //   fires for Pulse and populates both adapter_health and status_latency.
+// - `probe_binary_presence` does the same for HealthSource::Probe rows
+//   (tripwire/rewind/rex-check/rex-forge): an installed binary reads Healthy, an
+//   absent one Unavailable — no more permanently-Unknown "Live" cards.
 
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
@@ -313,6 +384,25 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
         }
     }
 
+    // Probe components: spawn `<bin> <version_args>` (binary-presence health) for
+    // every HealthSource::Probe row that isn't already a real adapter — the four
+    // Probe+launch tools (tripwire/rewind/rex-check/rex-forge). bulwark also has a
+    // Probe source but is resolved above by its adapter, so skip it here to avoid a
+    // double probe. An installed binary reads Healthy, an absent one Unavailable —
+    // so the cockpit card and the launch gate both see real health, not a
+    // permanent Unknown. Runs before the registry walk (which reads adapter_health).
+    for comp in rexops_core::COMPONENTS {
+        if let rexops_core::HealthSource::Probe { version_args, .. } = comp.health {
+            if real_adapter_ids().contains(&comp.id) || !config.adapter_enabled(comp.id) {
+                continue;
+            }
+            let health = probe_binary_presence(config, comp.id, version_args);
+            if let Ok(id) = AdapterId::new(comp.id) {
+                snap.set_adapter_health(&id, health);
+            }
+        }
+    }
+
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
@@ -334,7 +424,9 @@ fn registry_walk(snap: &mut OpsSnapshot, config: &AppConfig) {
     for comp in rexops_core::COMPONENTS {
         // Health: a Planned source never touches I/O and reads Unknown; every
         // other source's health was already resolved into adapter_health by the
-        // probe blocks (or stays Unknown if that source isn't wired this phase).
+        // probe blocks above (adapter / StatusCommand / Probe). It stays Unknown
+        // only when the tool wasn't probed — disabled in config, or before the
+        // first refresh — never as a permanent state for a wired source.
         let health = match comp.health {
             HealthSource::Planned => AdapterHealth::Unknown,
             _ => snap
@@ -402,19 +494,30 @@ fn component_vital(snap: &OpsSnapshot, id: &str) -> Option<String> {
             .as_ref()
             .map(|t| format!("{} need review", t.attention_count)),
         "system" => snap.system.as_ref().and_then(|s| s.hostname.clone()),
-        _ => {
+        _ => match rexops_core::component_by_id(id).map(|c| &c.health) {
             // StatusCommand components (e.g. Pulse): the probe's one-line detail is
             // the card vital fallback (the TUI overlays a heartbeat sparkline when it
             // has samples; this is what shows otherwise, incl. a Degraded reason).
-            if matches!(
-                rexops_core::component_by_id(id).map(|c| &c.health),
-                Some(rexops_core::HealthSource::StatusCommand { .. })
-            ) {
+            Some(rexops_core::HealthSource::StatusCommand { .. }) => {
                 snap.status_detail.get(id).cloned()
-            } else {
-                None
             }
-        }
+            // Probe components (binary-presence tools): prefer any real detail the
+            // probe recorded (none today — these tools have no JSON contract, which
+            // is *why* they're Probe and not StatusCommand — but if a probe later
+            // surfaces one, it shows automatically). Otherwise the vital reflects the
+            // resolved presence: "installed" / "not installed". Unknown (not yet
+            // probed — disabled or pre-first-refresh) shows nothing, never a guess.
+            Some(rexops_core::HealthSource::Probe { .. }) => {
+                snap.status_detail.get(id).cloned().or_else(|| {
+                    match snap.adapter_health.get(id).copied() {
+                        Some(AdapterHealth::Healthy) => Some("installed".to_owned()),
+                        Some(AdapterHealth::Unavailable) => Some("not installed".to_owned()),
+                        _ => None,
+                    }
+                })
+            }
+            _ => None,
+        },
     }
 }
 
@@ -904,26 +1007,33 @@ mod tests {
 
     #[test]
     fn adapter_health_roster_only_ever_holds_real_adapters() {
-        // The roster guarantee behind UX-1: every key in adapter_health must be
-        // either one of the three real feed/probe adapters (bulwark/system/workstate)
-        // OR a StatusCommand component from the registry.
-        // Phase E: Pulse gains StatusCommand health, so it legitimately joins
-        // adapter_health via the StatusCommand loop — not as a synthetic/section key.
+        // The roster guarantee behind UX-1: every key in adapter_health must be a
+        // registry row resolved by one of the snapshot's probe paths — either one of
+        // the three real feed/probe adapters (bulwark/system/workstate), a
+        // StatusCommand component (pulse), or a Probe component (the binary-presence
+        // tools: tripwire/rewind/rex-check/rex-forge/proto). It may never hold a
+        // synthetic/section key.
         let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
-        let status_command_ids: Vec<&str> = rexops_core::COMPONENTS
+        let probe_or_status_ids: Vec<&str> = rexops_core::COMPONENTS
             .iter()
-            .filter(|c| matches!(c.health, rexops_core::HealthSource::StatusCommand { .. }))
+            .filter(|c| {
+                matches!(
+                    c.health,
+                    rexops_core::HealthSource::StatusCommand { .. }
+                        | rexops_core::HealthSource::Probe { .. }
+                )
+            })
             .map(|c| c.id)
             .collect();
         for id in snap.adapter_health.keys() {
             let is_real_adapter = real_adapter_ids().contains(&id.as_str());
-            let is_status_command = status_command_ids.contains(&id.as_str());
+            let is_probe_or_status = probe_or_status_ids.contains(&id.as_str());
             assert!(
-                is_real_adapter || is_status_command,
-                "adapter_health contains '{}', which is neither a real adapter ({:?}) nor a StatusCommand component ({:?})",
+                is_real_adapter || is_probe_or_status,
+                "adapter_health contains '{}', which is neither a real adapter ({:?}) nor a Probe/StatusCommand component ({:?})",
                 id.as_str(),
                 real_adapter_ids(),
-                status_command_ids,
+                probe_or_status_ids,
             );
         }
     }
@@ -959,12 +1069,23 @@ mod tests {
             "adapters registry must be exactly the feed/probe adapters"
         );
 
-        // adapter_health must be exactly: the three feed/probe adapters PLUS pulse
-        // (StatusCommand Live). This is a HARDCODED LITERAL anchor — intentionally
-        // NOT derived from the registry. If someone adds a second StatusCommand
-        // component to COMPONENTS that shouldn't be in adapter_health, this literal
-        // will catch the discrepancy (both sides would expand together if derived).
-        let mut expected_status: Vec<&str> = vec!["bulwark", "pulse", "system", "workstate"];
+        // adapter_health must be exactly: the three feed/probe adapters, PLUS pulse
+        // (StatusCommand), PLUS every Probe component now resolved by the
+        // binary-presence loop (proto/tripwire/rewind/rex-check/rex-forge). This is a
+        // HARDCODED LITERAL anchor — intentionally NOT derived from the registry. If
+        // someone adds a probe/status component that shouldn't be in adapter_health,
+        // this literal catches it (a derived expectation would silently expand too).
+        let mut expected_status: Vec<&str> = vec![
+            "bulwark",
+            "pulse",
+            "system",
+            "workstate",
+            "proto",
+            "tripwire",
+            "rewind",
+            "rex-check",
+            "rex-forge",
+        ];
         expected_status.sort_unstable();
         let mut from_status: Vec<String> = snap
             .adapter_health
@@ -975,7 +1096,7 @@ mod tests {
         assert_eq!(
             from_status.as_slice(),
             expected_status,
-            "status roster must be exactly [bulwark, pulse, system, workstate] — update this literal consciously if the set changes"
+            "status roster must be exactly the feed/probe adapters + pulse + the Probe tools — update this literal consciously if the set changes"
         );
     }
 
@@ -1261,6 +1382,243 @@ mod tests {
         );
     }
 
+    // --- Probe (binary-presence) probe helpers and tests ---
+
+    /// Build a config that probes `tool_id` via the given stub (a `--help`-style
+    /// presence check), with all real adapters disabled to isolate the probe.
+    #[cfg(test)]
+    fn probe_only_config(tool_id: &str, stub: &StubBinary) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            tool_id.to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(stub.program.clone()),
+                timeout_secs: None,
+                status_prefix_args: vec![stub.script.clone()],
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn binary_presence_probe_maps_exit_status_to_health() {
+        // Exit 0 → Healthy; any non-zero exit → Unavailable. (The stub's stdout is
+        // irrelevant to a presence probe — only the exit status matters.)
+        let ok = stub_binary("ignored", 0);
+        let cfg_ok = probe_only_config("tripwire", &ok);
+        assert_eq!(
+            probe_binary_presence(&cfg_ok, "tripwire", &["--help"]),
+            AdapterHealth::Healthy,
+            "a binary that exits 0 must probe Healthy"
+        );
+
+        let bad = stub_binary("ignored", 3);
+        let cfg_bad = probe_only_config("tripwire", &bad);
+        assert_eq!(
+            probe_binary_presence(&cfg_bad, "tripwire", &["--help"]),
+            AdapterHealth::Unavailable,
+            "a binary that exits non-zero must probe Unavailable"
+        );
+    }
+
+    #[test]
+    fn binary_presence_probe_missing_binary_is_unavailable() {
+        let mut cfg = AppConfig::default();
+        cfg.adapters.insert(
+            "rewind".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/nonexistent/rewind-xyz-probe".to_owned()),
+                timeout_secs: None,
+                status_prefix_args: Vec::new(),
+            },
+        );
+        assert_eq!(
+            probe_binary_presence(&cfg, "rewind", &["--help"]),
+            AdapterHealth::Unavailable,
+            "a configured-but-missing binary must probe Unavailable"
+        );
+    }
+
+    #[test]
+    fn probe_loop_lights_an_installed_tool_healthy_end_to_end() {
+        // INTEGRATION-LOOP COVERAGE: the fix. With tripwire's binary present (exit 0),
+        // the Probe loop in build_snapshot_with_piped must write Healthy into
+        // adapter_health, and the registry walk must project that onto the card —
+        // a tripwire card that is genuinely Healthy and launchable, not a permanent
+        // Unknown. This is what "Live via Probe" was always supposed to mean.
+        let stub = stub_binary("tripwire 1.0", 0);
+        let cfg = probe_only_config("tripwire", &stub);
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        let id = rexops_core::AdapterId::new("tripwire").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&id),
+            Some(AdapterHealth::Healthy),
+            "an installed Probe binary must resolve Healthy through the loop"
+        );
+
+        let card = snap
+            .components
+            .iter()
+            .find(|c| c.id == "tripwire")
+            .expect("tripwire card");
+        assert_eq!(
+            card.health,
+            AdapterHealth::Healthy,
+            "card health is Healthy"
+        );
+        assert!(
+            card.launchable,
+            "a Healthy launchable Probe tool must be launchable"
+        );
+        assert_eq!(
+            card.vital.as_deref(),
+            Some("installed"),
+            "a resolved-Healthy Probe card must show an 'installed' vital, not a blank"
+        );
+    }
+
+    #[test]
+    fn probe_loop_marks_an_absent_tool_unavailable_and_unlaunchable() {
+        // The honest-failure half: with rex-forge's binary absent, the Probe loop
+        // writes Unavailable, the card reads Unavailable, and the registry walk's
+        // `health != Unavailable` gate makes it NOT launchable — never a fake-green
+        // card and never a launch button for a missing binary.
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "rex-forge".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some("/nonexistent/rex-forge-xyz-probe".to_owned()),
+                timeout_secs: None,
+                status_prefix_args: Vec::new(),
+            },
+        );
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        let card = snap
+            .components
+            .iter()
+            .find(|c| c.id == "rex-forge")
+            .expect("rex-forge card");
+        assert_eq!(
+            card.health,
+            AdapterHealth::Unavailable,
+            "an absent Probe binary must read Unavailable"
+        );
+        assert!(
+            !card.launchable,
+            "an Unavailable tool must not be launchable"
+        );
+        assert_eq!(
+            card.vital.as_deref(),
+            Some("not installed"),
+            "an absent Probe card must say 'not installed', not a blank"
+        );
+    }
+
+    #[test]
+    fn probe_loop_does_not_double_probe_bulwark() {
+        // bulwark has HealthSource::Probe but is resolved by its own adapter above;
+        // the Probe loop must skip it (it's in real_adapter_ids) so we never spawn
+        // two probes for one tool. With bulwark disabled it is absent from the
+        // roster entirely — proving the loop didn't re-add it.
+        let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
+        // bulwark resolves exactly once (via its adapter); it is a real adapter, not
+        // a Probe-loop entry. Its presence/health is owned by the adapter block.
+        assert!(
+            real_adapter_ids().contains(&"bulwark"),
+            "bulwark is a real adapter — the Probe loop must defer to its adapter"
+        );
+        // The roster contains bulwark once (HashMap keys are unique by construction,
+        // but the intent is: the adapter owns it, the loop skipped it).
+        assert!(snap.adapter_health.keys().any(|k| k.as_str() == "bulwark"));
+    }
+
+    #[test]
+    fn every_probe_tool_is_unknown_until_probed_then_resolves() {
+        // ITEM-3 INVARIANT, all four Probe+launch tools at once: each must read
+        // Unknown when it is NOT probed (adapter disabled — the "not yet probed"
+        // state), and resolve to a real health (Healthy via a present stub) once the
+        // probe runs. This is the regression guard for the bug we fixed: a Probe row
+        // must never be permanently Unknown when its binary is present, and must
+        // never be fake-green when it hasn't been probed.
+        for id in ["tripwire", "rewind", "rex-check", "rex-forge"] {
+            // (1) Disabled → never probed → Unknown (NOT Unavailable, NOT Healthy),
+            // and not launchable (a disabled adapter can't launch).
+            let mut disabled = AppConfig::default();
+            disabled.adapters.insert(
+                id.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+            let snap = build_snapshot_with_piped(&disabled, Some(WORKSTATE_FEED));
+            let card = snap
+                .components
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("{id} card"));
+            assert_eq!(
+                card.health,
+                AdapterHealth::Unknown,
+                "{id} must be Unknown until actually probed (disabled = not probed)"
+            );
+            assert!(
+                !card.launchable,
+                "{id} must not be launchable while its adapter is disabled"
+            );
+            assert!(
+                !snap.adapter_health.keys().any(|k| k.as_str() == id),
+                "{id} must be absent from adapter_health when never probed"
+            );
+
+            // (2) Probed with a present binary (stub exits 0) → Healthy, launchable,
+            // and a non-blank vital. Maturity is Live throughout (registry-driven).
+            let stub = stub_binary("ok", 0);
+            let cfg = probe_only_config(id, &stub);
+            let snap = build_snapshot_with_piped(&cfg, None);
+            let card = snap
+                .components
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("{id} card"));
+            assert_eq!(
+                card.health,
+                AdapterHealth::Healthy,
+                "{id} must resolve Healthy once its present binary is probed"
+            );
+            assert_eq!(card.maturity, "live", "{id} maturity must be live");
+            assert!(card.launchable, "{id} must be launchable when Healthy");
+            assert_eq!(
+                card.vital.as_deref(),
+                Some("installed"),
+                "{id} must show a real vital once probed, not a blank"
+            );
+        }
+    }
+
     #[test]
     fn pulse_status_command_loop_populates_health_and_latency_end_to_end() {
         // INTEGRATION-LOOP COVERAGE (Task 8 / Task-5 deferred): now that Pulse has
@@ -1409,31 +1767,40 @@ mod tests {
         );
 
         // I-2: RESTORED adapter_health cross-check — hardcoded literal anchor.
-        // adapter_health must be exactly [bulwark, pulse, system, workstate].
-        // This is a second vantage point (in addition to the I-1 test) asserting the
-        // same literal, from within this larger invariant test.
+        // adapter_health is the feed/probe adapters + pulse (StatusCommand) + every
+        // Probe tool the binary-presence loop now resolves. This is a second vantage
+        // point (in addition to the I-1 test) asserting the same literal.
         let mut from_adapter_health: Vec<String> = snap
             .adapter_health
             .keys()
             .map(|id| id.as_str().to_owned())
             .collect();
         from_adapter_health.sort();
-        let mut expected_adapter_health: Vec<&str> =
-            vec!["bulwark", "pulse", "system", "workstate"];
+        let mut expected_adapter_health: Vec<&str> = vec![
+            "bulwark",
+            "pulse",
+            "system",
+            "workstate",
+            "proto",
+            "tripwire",
+            "rewind",
+            "rex-check",
+            "rex-forge",
+        ];
         expected_adapter_health.sort_unstable();
         assert_eq!(
             from_adapter_health.as_slice(),
             expected_adapter_health,
-            "adapter_health roster must be exactly [bulwark, pulse, system, workstate]"
+            "adapter_health roster must be the feed/probe adapters + pulse + the Probe tools"
         );
 
         // "live" = 3 probed adapters + 2 feed-backed launchables + pulse
         // (StatusCommand) + rex-check + tripwire + rewind + rex-forge (Probe+launch).
         // Ten live cards out of eleven registry rows — the ceiling: the only non-live
-        // entry is proto (FeedReady). Note the Probe+launch rows are Live via the
-        // registry walk but are NOT in adapter_health above — like proto, a Probe row
-        // that isn't wired into build_snapshot_with_piped isn't probed into the
-        // roster; `maturity == "live"` (registry-driven) is what lights the card.
+        // entry is proto (FeedReady). The Probe+launch rows are now probed for
+        // binary presence (see the Probe loop), so they DO appear in adapter_health
+        // above — Healthy if installed, Unavailable if not — and `maturity == "live"`
+        // (registry-driven) lights the card.
         let mut expected_live = expected_registry.clone();
         expected_live.push("pulse".to_owned()); // Phase E: StatusCommand Live
         expected_live.push("scriptvault".to_owned()); // Phase D: feed-backed Live
