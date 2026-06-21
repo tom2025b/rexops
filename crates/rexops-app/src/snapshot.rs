@@ -80,6 +80,101 @@ fn system_adapter(config: &AppConfig) -> SystemAdapter {
     SystemAdapter::new().with_timeout(adapter_timeout(config, "system"))
 }
 
+/// Spawn a component's `status` subcommand, bounded by its configured timeout,
+/// and parse the one-line JSON contract. Returns the parsed probe result.
+///
+/// Resolution: the configured `binary` for the id (from adapters config) is
+/// used if present and non-empty, otherwise the id itself is tried on PATH.
+/// On spawn failure the binary is missing → Unavailable "not found".
+/// On timeout the child is killed → Unavailable "status timed out".
+/// The parse + health mapping live in `status_probe`; this is only the glue.
+fn status_command_probe(
+    config: &AppConfig,
+    id: &str,
+    args: &[&str],
+) -> crate::status_probe::StatusProbe {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let program = config
+        .adapters
+        .get(id)
+        .and_then(|a| a.binary.as_deref())
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or(id)
+        .to_owned();
+
+    // Any configured prefix args run before the status subcommand's own args.
+    // This is empty for every real adapter; tests use it to point `binary` at an
+    // interpreter that reads a script argument (so a probe never has to execute a
+    // freshly written file — which races `ETXTBSY` under parallel test spawns).
+    let prefix = config
+        .adapters
+        .get(id)
+        .map_or(&[][..], |a| a.status_prefix_args.as_slice());
+
+    let start = Instant::now();
+    let Ok(mut child) = Command::new(&program)
+        .args(prefix)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return crate::status_probe::StatusProbe {
+            health: rexops_core::AdapterHealth::Unavailable,
+            detail: "not found".to_owned(),
+            latency_ms: None,
+        };
+    };
+
+    let timeout = adapter_timeout(config, id);
+    let deadline = start + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut out = String::new();
+                if let Some(mut so) = child.stdout.take() {
+                    let _ = so.read_to_string(&mut out);
+                }
+                return crate::status_probe::parse_status(&out, status.success());
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return crate::status_probe::StatusProbe {
+                        health: rexops_core::AdapterHealth::Unavailable,
+                        detail: "status timed out".to_owned(),
+                        latency_ms: None,
+                    };
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(_) => {
+                return crate::status_probe::StatusProbe {
+                    health: rexops_core::AdapterHealth::Unavailable,
+                    detail: "bad status output".to_owned(),
+                    latency_ms: None,
+                };
+            }
+        }
+    }
+}
+
+// Learning Notes
+// - `status_command_probe` is spawn-only glue: parse + mapping live in
+//   `status_probe` so the probe contract is tested independently of I/O.
+// - We use `adapter_timeout(config, id)` (which already reads the per-adapter
+//   override else global default) so StatusCommand probes respect the same
+//   timeout config as Bulwark/system probes.
+// - Phase E: Pulse uses StatusCommand, so this function is now called on every
+//   real refresh (not just tests). The COMPONENTS loop in build_snapshot_with_piped
+//   fires for Pulse and populates both adapter_health and status_latency.
+
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
 ///
@@ -196,6 +291,28 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
         }
     }
 
+    // StatusCommand components: spawn `<bin> status`, bounded by the configured
+    // timeout, parse the one-line JSON contract into health + latency. Runs before
+    // the registry walk so adapter_health and status_latency are populated when the
+    // walk reads them. Phase E: Pulse has HealthSource::StatusCommand — this loop
+    // now fires for it on every build_snapshot_with_piped call (when enabled).
+    for comp in rexops_core::COMPONENTS {
+        if let rexops_core::HealthSource::StatusCommand { args, .. } = comp.health {
+            if config.adapter_enabled(comp.id) {
+                let probe = status_command_probe(config, comp.id, args);
+                if let Ok(id) = AdapterId::new(comp.id) {
+                    snap.set_adapter_health(&id, probe.health);
+                }
+                if let Some(ms) = probe.latency_ms {
+                    snap.status_latency.insert(comp.id.to_owned(), ms);
+                }
+                snap.status_detail
+                    .insert(comp.id.to_owned(), probe.detail.clone());
+                snap.add_note(format!("{} status: {}", comp.id, probe.detail));
+            }
+        }
+    }
+
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
@@ -285,7 +402,19 @@ fn component_vital(snap: &OpsSnapshot, id: &str) -> Option<String> {
             .as_ref()
             .map(|t| format!("{} need review", t.attention_count)),
         "system" => snap.system.as_ref().and_then(|s| s.hostname.clone()),
-        _ => None,
+        _ => {
+            // StatusCommand components (e.g. Pulse): the probe's one-line detail is
+            // the card vital fallback (the TUI overlays a heartbeat sparkline when it
+            // has samples; this is what shows otherwise, incl. a Degraded reason).
+            if matches!(
+                rexops_core::component_by_id(id).map(|c| &c.health),
+                Some(rexops_core::HealthSource::StatusCommand { .. })
+            ) {
+                snap.status_detail.get(id).cloned()
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -617,6 +746,7 @@ mod tests {
                 enabled: true,
                 binary: Some("rexops-no-such-bulwark-xyz987".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         let snap = build_snapshot_with_piped(&cfg, None);
@@ -679,6 +809,7 @@ mod tests {
                 enabled: true,
                 binary: Some(path.to_string_lossy().into_owned()),
                 timeout_secs: Some(1), // 1s cap vs a 30s hang
+                ..Default::default()
             },
         );
 
@@ -774,15 +905,25 @@ mod tests {
     #[test]
     fn adapter_health_roster_only_ever_holds_real_adapters() {
         // The roster guarantee behind UX-1: every key in adapter_health must be
-        // one of the three REAL adapters. If a future change re-introduces a
-        // synthetic adapter (e.g. folds a section back in), this fails.
+        // either one of the three real feed/probe adapters (bulwark/system/workstate)
+        // OR a StatusCommand component from the registry.
+        // Phase E: Pulse gains StatusCommand health, so it legitimately joins
+        // adapter_health via the StatusCommand loop — not as a synthetic/section key.
         let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
+        let status_command_ids: Vec<&str> = rexops_core::COMPONENTS
+            .iter()
+            .filter(|c| matches!(c.health, rexops_core::HealthSource::StatusCommand { .. }))
+            .map(|c| c.id)
+            .collect();
         for id in snap.adapter_health.keys() {
+            let is_real_adapter = real_adapter_ids().contains(&id.as_str());
+            let is_status_command = status_command_ids.contains(&id.as_str());
             assert!(
-                real_adapter_ids().contains(&id.as_str()),
-                "adapter_health contains '{}', which is not a real adapter ({:?})",
+                is_real_adapter || is_status_command,
+                "adapter_health contains '{}', which is neither a real adapter ({:?}) nor a StatusCommand component ({:?})",
                 id.as_str(),
-                real_adapter_ids()
+                real_adapter_ids(),
+                status_command_ids,
             );
         }
     }
@@ -790,35 +931,51 @@ mod tests {
     #[test]
     fn status_and_adapters_views_agree_on_the_roster() {
         // The exact bug from the audit: `status` (adapter_health) and `adapters`
-        // (the registry) must list the SAME adapters. With everything enabled,
-        // both must equal the three real adapters — no more "6 vs 3" disagreement.
+        // (the registry) must list the SAME adapters. With everything enabled, both
+        // must equal the three real feed/probe adapters — no more "6 vs 3"
+        // disagreement. Phase E: Pulse gains StatusCommand health and is probed via
+        // the StatusCommand loop, so adapter_health now also contains "pulse". The
+        // `build_adapter_registry` view still only covers the old-style feed/probe
+        // adapters (bulwark/system/workstate) — the two views legitimately differ by
+        // exactly the StatusCommand set.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
 
-        let mut from_status: Vec<String> = snap
-            .adapter_health
-            .keys()
-            .map(|id| id.as_str().to_owned())
-            .collect();
-        from_status.sort();
         let mut from_registry: Vec<String> = reg
             .list()
             .iter()
             .map(|e| e.id.as_str().to_owned())
             .collect();
         from_registry.sort();
-        let mut expected: Vec<String> =
+        let mut expected_registry: Vec<String> =
             real_adapter_ids().iter().map(|s| (*s).to_owned()).collect();
-        expected.sort();
+        expected_registry.sort();
 
+        // The registry view (build_adapter_registry) covers only the three
+        // feed/probe adapters — StatusCommand components are probed separately.
         assert_eq!(
-            from_status, expected,
-            "status roster must be exactly the real adapters"
+            from_registry, expected_registry,
+            "adapters registry must be exactly the feed/probe adapters"
         );
+
+        // adapter_health must be exactly: the three feed/probe adapters PLUS pulse
+        // (StatusCommand Live). This is a HARDCODED LITERAL anchor — intentionally
+        // NOT derived from the registry. If someone adds a second StatusCommand
+        // component to COMPONENTS that shouldn't be in adapter_health, this literal
+        // will catch the discrepancy (both sides would expand together if derived).
+        let mut expected_status: Vec<&str> = vec!["bulwark", "pulse", "system", "workstate"];
+        expected_status.sort_unstable();
+        let mut from_status: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_status.sort();
         assert_eq!(
-            from_registry, expected,
-            "adapters roster must be exactly the real adapters"
+            from_status.as_slice(),
+            expected_status,
+            "status roster must be exactly [bulwark, pulse, system, workstate] — update this literal consciously if the set changes"
         );
     }
 
@@ -881,18 +1038,25 @@ mod tests {
 
     #[test]
     fn planned_components_are_neutral_not_faulty() {
-        // A Planned component (e.g. pulse) must surface as Unknown health and a
-        // "planned" maturity — never Healthy (fake green) and never Unavailable
-        // (a fault). It is honest, dim, and does no I/O.
+        // A Planned component must surface as Unknown health and "planned" maturity
+        // — never Healthy (fake green) and never Unavailable (a fault). It is
+        // honest, dim, and does no I/O.
+        // Phase E: Pulse is no longer Planned (it became Live with StatusCommand).
+        // Use Tripwire — a component that is definitively still Planned — as the
+        // example. This is a deliberate update: the test's *purpose* (Planned →
+        // neutral/dim) is preserved; only the example component changed.
         let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
-        let pulse = snap
+        let tripwire = snap
             .components
             .iter()
-            .find(|c| c.id == "pulse")
-            .expect("pulse is a registry row");
-        assert_eq!(pulse.maturity, "planned");
-        assert_eq!(pulse.health, rexops_core::AdapterHealth::Unknown);
-        assert!(!pulse.launchable, "a planned component is not launchable");
+            .find(|c| c.id == "tripwire")
+            .expect("tripwire is a registry row");
+        assert_eq!(tripwire.maturity, "planned");
+        assert_eq!(tripwire.health, rexops_core::AdapterHealth::Unknown);
+        assert!(
+            !tripwire.launchable,
+            "a planned component is not launchable"
+        );
     }
 
     #[test]
@@ -942,26 +1106,265 @@ mod tests {
         );
     }
 
+    // --- Task 5: StatusCommand probe helpers and tests ---
+
+    /// A stub status "binary" for tests: writes a shell script that prints
+    /// `stdout_line` and exits with `exit_code`, and returns the program +
+    /// prefix args that run it. The script is a plain (non-executable) data file
+    /// that `/bin/sh` *reads* — it is never `execve`-d.
+    ///
+    /// This avoids a Heisenbug: creating an executable file and spawning it
+    /// moments later races under `cargo test`'s parallelism. While one test is
+    /// still writing its script, a `fork` for an unrelated spawn on another
+    /// thread can hold the open write handle across its exec window, so the
+    /// kernel rejects the exec with `ETXTBSY` ("Text file busy", raw OS error
+    /// 26). It only bit the saturated `--workspace` run and reproduced reliably
+    /// under stress; unique filenames/dirs do not help, because the contended
+    /// state is the process fd table. Running the script through the shell as an
+    /// argument (`sh <script> <args…>`) means nothing ever executes a written
+    /// file, so the race cannot occur.
+    #[cfg(test)]
+    fn stub_binary(stdout_line: &str, exit_code: i32) -> StubBinary {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!(
+            "rexops-stub-{}-{}",
+            std::process::id(),
+            next_stub_id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stub.sh");
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "echo '{stdout_line}'\nexit {exit_code}\n").unwrap();
+        f.flush().unwrap();
+        StubBinary {
+            program: "/bin/sh".to_owned(),
+            script: path.to_string_lossy().into_owned(),
+        }
+    }
+
+    /// A test status binary: the interpreter to spawn plus the script it reads.
+    /// `script` becomes the leading probe arg, so any status subcommand args the
+    /// probe appends arrive as ignored positional parameters. See [`stub_binary`].
+    #[cfg(test)]
+    struct StubBinary {
+        program: String,
+        script: String,
+    }
+
+    /// A per-process, monotonic id giving each stub its own directory. An atomic
+    /// counter is collision-free, unlike a wall-clock suffix (two parallel tests
+    /// can read the same nanosecond).
+    #[cfg(test)]
+    fn next_stub_id() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Build a config whose "pulse" adapter is probed via the given stub, with
+    /// all real adapters disabled (to isolate the status probe).
+    #[cfg(test)]
+    fn pulse_only_config(stub: &StubBinary) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "pulse".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(stub.program.clone()),
+                timeout_secs: None,
+                status_prefix_args: vec![stub.script.clone()],
+            },
+        );
+        cfg
+    }
+
+    /// A config whose "pulse" adapter points at a binary that does not exist,
+    /// used to prove the missing-binary path. Takes a plain program string.
+    #[cfg(test)]
+    fn pulse_missing_binary_config(binary: &str) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "pulse".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(binary.to_owned()),
+                timeout_secs: None,
+                status_prefix_args: Vec::new(),
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn status_command_probe_reads_a_tools_json_line() {
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":true,"detail":"ok","latency_ms":5}"#, 0);
+        let cfg = pulse_only_config(&stub);
+        // Call the probe function directly as a unit-test of parse+spawn wiring.
+        // (Phase E: Pulse now has StatusCommand health, so the COMPONENTS loop also
+        // fires — but this direct call still exercises the low-level function.)
+        let probe = status_command_probe(&cfg, "pulse", &["status"]);
+        assert_eq!(
+            probe.health,
+            AdapterHealth::Healthy,
+            "healthy JSON line must yield Healthy"
+        );
+        assert_eq!(
+            probe.latency_ms,
+            Some(5),
+            "latency_ms from the JSON line must be returned"
+        );
+    }
+
+    #[test]
+    fn status_command_probe_missing_binary_is_unavailable() {
+        use rexops_core::AdapterHealth;
+        let cfg = pulse_missing_binary_config("/nonexistent/pulse-xyz-task5");
+        // Call the probe function directly: proves missing binary → Unavailable.
+        let probe = status_command_probe(&cfg, "pulse", &["status"]);
+        assert_eq!(
+            probe.health,
+            AdapterHealth::Unavailable,
+            "a configured-but-missing binary must probe Unavailable"
+        );
+    }
+
+    #[test]
+    fn pulse_status_command_loop_populates_health_and_latency_end_to_end() {
+        // INTEGRATION-LOOP COVERAGE (Task 8 / Task-5 deferred): now that Pulse has
+        // HealthSource::StatusCommand, the COMPONENTS loop in build_snapshot_with_piped
+        // fires for it. This test drives the FULL loop (not just status_command_probe
+        // directly) and asserts that both adapter_health and status_latency are
+        // correctly populated — proving the wiring from registry flip → probe → snap.
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":true,"detail":"ok","latency_ms":5}"#, 0);
+        let cfg = pulse_only_config(&stub);
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        // Health: the COMPONENTS loop must have written Healthy for pulse.
+        let pulse_id = rexops_core::AdapterId::new("pulse").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&pulse_id),
+            Some(AdapterHealth::Healthy),
+            "pulse adapter_health must be Healthy after the StatusCommand loop fires"
+        );
+
+        // Latency: status_latency must contain pulse with the value from the JSON.
+        assert_eq!(
+            snap.status_latency.get("pulse").copied(),
+            Some(5u64),
+            "pulse status_latency must be 5 ms as reported by the stub"
+        );
+
+        // Maturity in the registry walk: pulse is now Live, not Planned.
+        let pulse_component = snap.components.iter().find(|c| c.id == "pulse");
+        assert!(pulse_component.is_some(), "pulse must be in components");
+        assert_eq!(
+            pulse_component.unwrap().maturity,
+            "live",
+            "pulse must surface as live after the registry flip"
+        );
+    }
+
+    #[test]
+    fn degraded_status_command_detail_surfaces_as_component_vital() {
+        // Spec §5 gap: a healthy:false (Degraded) probe must surface its detail
+        // string as the card vital, because the heartbeat ring-buffer has no
+        // samples (latency_ms is None on a Degraded probe). Verify end-to-end:
+        // stub → build_snapshot_with_piped → component_vital == probe.detail.
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":false,"detail":"1 crit","latency_ms":3}"#, 1);
+        let cfg = pulse_only_config(&stub);
+        let snap = build_snapshot_with_piped(&cfg, None);
+
+        // Probe was Degraded (healthy:false).
+        let pulse_id = rexops_core::AdapterId::new("pulse").unwrap();
+        assert_eq!(
+            snap.adapter_health_of(&pulse_id),
+            Some(AdapterHealth::Degraded),
+            "healthy:false must probe Degraded"
+        );
+
+        // status_detail must carry the probe's detail string.
+        assert_eq!(
+            snap.status_detail.get("pulse").map(String::as_str),
+            Some("1 crit"),
+            "status_detail[pulse] must be the probe's detail"
+        );
+
+        // component_vital must return the detail as the card vital.
+        let pulse_component = snap.components.iter().find(|c| c.id == "pulse");
+        assert!(pulse_component.is_some(), "pulse must be in components");
+        assert_eq!(
+            pulse_component.unwrap().vital.as_deref(),
+            Some("1 crit"),
+            "a Degraded Pulse card vital must show the probe detail"
+        );
+    }
+
+    #[test]
+    fn non_status_command_component_vital_is_unaffected_by_catch_all() {
+        // Guard: the new catch-all arm must NOT bleed into non-StatusCommand
+        // components. The catch-all is guarded by a HealthSource::StatusCommand
+        // check, so non-StatusCommand ids must never appear in status_detail.
+        // Use a workstate-only build so we have a real snapshot to work with.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+
+        // workstate is NOT a StatusCommand component — its vital comes from its
+        // named arm, not status_detail. It must not appear in status_detail.
+        assert!(
+            !snap.status_detail.contains_key("workstate"),
+            "workstate is not a StatusCommand component and must not appear in status_detail"
+        );
+
+        // system is also not a StatusCommand component — same guarantee.
+        assert!(
+            !snap.status_detail.contains_key("system"),
+            "system is not a StatusCommand component and must not appear in status_detail"
+        );
+
+        // A completely unknown id (not in the registry at all) returns None from
+        // component_vital — proving the catch-all's else branch still returns None.
+        let dummy_snap = OpsSnapshot::new();
+        assert!(
+            component_vital(&dummy_snap, "__no_such_id__").is_none(),
+            "an id not in the registry must return None from component_vital"
+        );
+    }
+
     #[test]
     fn status_and_adapters_agree_on_the_roster_and_live_is_that_roster_plus_feed_tools() {
-        // THE INVARIANT (refined in Phase D): `status`'s adapter_health and
-        // `adapters`' registry still agree EXACTLY with the adapter roster
-        // (bulwark/system/workstate) — feeds are not adapters. But Phase D widened
-        // what "live" means: a feed-backed tool with a launch (ScriptVault,
-        // ToolFoundry) is `Live` too, even though it is not adapter-*probed*. So
-        // the cockpit's "live" cards are the adapter roster PLUS those feed-backed
-        // launchables — a superset, not an equal set. The registry is still one
-        // source; "live" is just a richer maturity than "is an adapter".
+        // THE INVARIANT (refined in Phase E): `adapters`' registry still covers only
+        // the three feed/probe adapters (bulwark/system/workstate). `status`'s
+        // adapter_health is now a SUPERSET: it also contains StatusCommand components
+        // (pulse, Phase E). Phase D widened "live" to include feed-backed launchables
+        // (ScriptVault/ToolFoundry); Phase E adds pulse via StatusCommand, so live
+        // is now 6/11: the three probed adapters + ScriptVault + ToolFoundry + Pulse.
+        //
+        // I-2 RESTORE: the adapter_health cross-check (from_adapter_health vs the
+        // literal) was dropped in Phase E — restored here so both the registry-view
+        // AND the adapter_health-view of the roster are asserted against the literal.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
-
-        let mut from_adapter_health: Vec<String> = snap
-            .adapter_health
-            .keys()
-            .map(|id| id.as_str().to_owned())
-            .collect();
-        from_adapter_health.sort();
 
         let mut from_registry: Vec<String> = reg
             .list()
@@ -978,25 +1381,48 @@ mod tests {
             .collect();
         live_components.sort();
 
-        let mut expected = real_adapter_ids()
+        let mut expected_registry = real_adapter_ids()
             .iter()
             .map(|s| (*s).to_owned())
             .collect::<Vec<_>>();
-        expected.sort();
+        expected_registry.sort();
 
-        // The two cross-source rosters still agree exactly with the adapter
-        // roster — feeds are not adapters, so adding feed-backed Live tools does
-        // not change adapter_health or the registry adapter list.
-        assert_eq!(from_adapter_health, expected, "status roster");
-        assert_eq!(from_registry, expected, "adapters roster");
+        // The build_adapter_registry view covers only the three feed/probe adapters
+        // — StatusCommand components are probed by the snapshot loop, not here.
+        assert_eq!(
+            from_registry, expected_registry,
+            "adapters registry must be exactly the feed/probe adapters"
+        );
 
-        // Phase D: `live` now means "fully wired" — the adapter roster PLUS the
-        // feed-backed launchable tools (ScriptVault + ToolFoundry). So the live
-        // cards are a SUPERSET of the adapter roster. Assert the exact new set.
-        let mut expected_live = expected.clone();
-        expected_live.push("scriptvault".to_owned());
-        expected_live.push("toolfoundry".to_owned());
+        // I-2: RESTORED adapter_health cross-check — hardcoded literal anchor.
+        // adapter_health must be exactly [bulwark, pulse, system, workstate].
+        // This is a second vantage point (in addition to the I-1 test) asserting the
+        // same literal, from within this larger invariant test.
+        let mut from_adapter_health: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_adapter_health.sort();
+        let mut expected_adapter_health: Vec<&str> =
+            vec!["bulwark", "pulse", "system", "workstate"];
+        expected_adapter_health.sort_unstable();
+        assert_eq!(
+            from_adapter_health.as_slice(),
+            expected_adapter_health,
+            "adapter_health roster must be exactly [bulwark, pulse, system, workstate]"
+        );
+
+        // Phase E: "live" = 3 probed adapters + 2 feed-backed launchables + pulse
+        // (StatusCommand Live). Six live cards total out of eleven registry rows.
+        let mut expected_live = expected_registry.clone();
+        expected_live.push("pulse".to_owned()); // Phase E: StatusCommand Live
+        expected_live.push("scriptvault".to_owned()); // Phase D: feed-backed Live
+        expected_live.push("toolfoundry".to_owned()); // Phase D: feed-backed Live
         expected_live.sort();
-        assert_eq!(live_components, expected_live, "live component cards");
+        assert_eq!(
+            live_components, expected_live,
+            "live component cards (6/11)"
+        );
     }
 }

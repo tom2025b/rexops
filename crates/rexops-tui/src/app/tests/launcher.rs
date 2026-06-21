@@ -22,6 +22,7 @@ pub(super) fn launcher_app_with_proto() -> App {
                 enabled: true,
                 binary: Some("/tmp/bulwark".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -62,6 +63,7 @@ fn activate_on_launcher_arms_proto_as_a_foreground_tool() {
                 enabled: true,
                 binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -96,6 +98,7 @@ fn activate_on_disabled_launcher_entry_does_not_open_confirm() {
                 enabled: false,
                 binary: None,
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -148,6 +151,7 @@ fn confirm_proto_uses_the_foreground_runner() {
                 enabled: true,
                 binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -250,6 +254,7 @@ fn preview_shows_resolved_command_or_no_command() {
                 enabled: true,
                 binary: Some("/tmp/fake-tool".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -314,6 +319,7 @@ fn launcher_enter_arms_the_selected_tool() {
                 enabled: true,
                 binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -387,6 +393,7 @@ fn arm_tool_refuses_an_unavailable_tool_and_opens_no_confirm() {
                 enabled: true,
                 binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -422,6 +429,7 @@ fn start_job_reports_a_spawn_failure_and_leaves_clean_state() {
                 enabled: true,
                 binary: Some("/nonexistent/definitely-not-a-binary".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });

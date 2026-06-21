@@ -54,13 +54,18 @@ mod tests {
     #[test]
     fn launchable_lists_the_registry_launch_rows_in_order() {
         let ids: Vec<&str> = launchable().iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec!["bulwark", "proto", "scriptvault", "toolfoundry"]);
+        // Phase E: Pulse joins as the fifth launchable (after bulwark/proto/
+        // scriptvault/toolfoundry, in registry display order).
+        assert_eq!(
+            ids,
+            vec!["bulwark", "proto", "scriptvault", "toolfoundry", "pulse"]
+        );
     }
 
     #[test]
     fn run_mode_helpers_read_the_registry() {
-        // All four current launchables are Foreground → not streamable.
-        for id in ["bulwark", "proto", "scriptvault", "toolfoundry"] {
+        // All five current launchables are Foreground → not streamable.
+        for id in ["bulwark", "proto", "scriptvault", "toolfoundry", "pulse"] {
             assert!(!is_streamable(id), "{id} is Foreground, not streamable");
         }
         // Unknown ids are inert, never panic.

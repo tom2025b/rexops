@@ -16,6 +16,8 @@ rexops-core = { path = "../rexops-core" }
 # into a coherent snapshot for the front-ends (CLI and TUI).
 rexops-adapters = { path = "../rexops-adapters" }
 
+# Serialization framework (needed for Wire struct Deserialize derive).
+serde = { workspace = true }
 # YAML for loading AppConfig from disk (same as before in CLI/TUI).
 serde_yaml = { workspace = true }
 # JSON for classifying piped stdin as a Workstate snapshot.

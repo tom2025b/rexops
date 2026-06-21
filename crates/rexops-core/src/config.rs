@@ -121,6 +121,13 @@ pub struct AdapterConfig {
     /// Overrides the global default when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+
+    /// Arguments injected *before* a status subcommand's own args when probing.
+    /// Lets `binary` point at an interpreter (e.g. `/bin/sh`) that runs a script
+    /// supplied as an argument, instead of executing the script file directly.
+    /// Defaults to empty, so production config is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub status_prefix_args: Vec<String>,
 }
 
 /// Global defaults applied when an adapter (or other subsystem) does not
@@ -183,6 +190,7 @@ mod tests {
                 enabled: true,
                 binary: Some("   ".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         let err = cfg.validate().unwrap_err();
@@ -207,6 +215,7 @@ mod tests {
                 enabled: true,
                 binary: Some("bulwark".to_owned()),
                 timeout_secs: Some(30),
+                ..Default::default()
             },
         );
 
@@ -232,6 +241,7 @@ mod tests {
                 enabled: false,
                 binary: None,
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         assert!(!cfg.adapter_enabled("bulwark"), "explicit false → disabled");
@@ -256,6 +266,7 @@ mod tests {
                 enabled: true,
                 binary: None,
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         assert_eq!(cfg.adapter_timeout_secs("system"), 45);
@@ -267,6 +278,7 @@ mod tests {
                 enabled: true,
                 binary: None,
                 timeout_secs: Some(7),
+                ..Default::default()
             },
         );
         assert_eq!(cfg.adapter_timeout_secs("bulwark"), 7);

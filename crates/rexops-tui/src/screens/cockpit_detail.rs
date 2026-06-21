@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use suite_ui::{pane, Theme};
+use suite_ui::{pane, Heartbeat, Theme};
 
 use crate::app::App;
 use crate::ui::cockpit_widgets::light_state_from_health;
@@ -71,6 +71,24 @@ pub fn render_cockpit_detail(f: &mut Frame, app: &App, area: Rect, theme: Theme)
         )));
         lines.push(Line::from(Span::styled(
             format!("status: {}", c.maturity),
+            theme.dim(),
+        )));
+    }
+
+    // Heartbeat history: only for StatusCommand components. Shows the sparkline
+    // over the full ring buffer so the operator can see the recent response-time
+    // trend without leaving the drill-down. Falls back gracefully to "no data yet"
+    // when the buffer is empty (e.g. before the first probe completes).
+    if reg.is_some_and(|r| matches!(r.health, rexops_core::HealthSource::StatusCommand { .. })) {
+        let samples = app.heartbeats.samples(id);
+        let latest = app.heartbeats.latest(id);
+        let hb_text = Heartbeat {
+            samples: &samples,
+            latest_ms: latest,
+        }
+        .text();
+        lines.push(Line::from(Span::styled(
+            format!("heartbeat: {hb_text}"),
             theme.dim(),
         )));
     }
@@ -147,6 +165,55 @@ mod tests {
             "empty detail guides instead of blank:\n{text}"
         );
     }
+
+    /// Build an app focused on Pulse with heartbeat samples recorded.
+    fn app_focused_on_pulse_with_samples() -> App {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        let mut snap = OpsSnapshot::new();
+        snap.push_component(ComponentStatus {
+            id: "pulse".into(),
+            name: "Pulse".into(),
+            group: "monitor".into(),
+            maturity: "live".into(),
+            health: AdapterHealth::Healthy,
+            freshness: None,
+            vital: Some("plain vital".into()),
+            launchable: true,
+        });
+        app.apply_snapshot(snap);
+        app.selected_component = Some("pulse".to_owned());
+        // Record samples so the heartbeat section has data.
+        app.heartbeats.record("pulse", 4);
+        app.heartbeats.record("pulse", 7);
+        app.heartbeats.record("pulse", 12);
+        app
+    }
+
+    #[test]
+    fn detail_shows_heartbeat_section_for_status_command_component() {
+        // A StatusCommand component (pulse) drill-down must show a heartbeat line
+        // with the ♥ glyph from the HeartbeatLog sparkline.
+        let text = render(&app_focused_on_pulse_with_samples());
+        assert!(text.contains("Pulse"), "name present:\n{text}");
+        // The ♥ glyph from Heartbeat::text() must be present.
+        assert!(
+            text.contains('♥'),
+            "StatusCommand detail shows heartbeat ♥ glyph:\n{text}"
+        );
+    }
+
+    #[test]
+    fn detail_does_not_show_heartbeat_section_for_non_status_command_component() {
+        // A non-StatusCommand component (bulwark uses Probe) must NOT show a
+        // heartbeat section in its drill-down.
+        let text = render(&app_focused_on("bulwark"));
+        // No samples recorded for bulwark, so no ♥ glyph in the output.
+        assert!(
+            !text.contains('♥'),
+            "non-StatusCommand detail must not show heartbeat:\n{text}"
+        );
+    }
 }
 
 // Learning Notes
@@ -155,3 +222,5 @@ mod tests {
 //   ComponentStatus for state (health, vital). Neither alone is the full story.
 // - It reads only app.selected_component — the same id the cockpit focus uses —
 //   so "drill into the focused card" needs no extra plumbing than the screen swap.
+// - The heartbeat section appears only for StatusCommand components; it is guarded
+//   by a registry lookup so a Probe or Feed component cannot accidentally show it.

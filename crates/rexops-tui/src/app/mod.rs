@@ -1,5 +1,6 @@
 //! Application state and state transitions for the RexOps TUI.
 
+mod heartbeat;
 mod navigation;
 mod state;
 mod update;

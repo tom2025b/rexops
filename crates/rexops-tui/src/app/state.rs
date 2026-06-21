@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use rexops_app::build_snapshot_with_piped;
 use rexops_core::{AppConfig, OpsSnapshot};
 
+use super::heartbeat::HeartbeatLog;
 use super::Screen;
 use crate::commands::PendingAction;
 use crate::jobs::{JobHandle, JobOutput, JobRecord, LastOutcome};
@@ -66,6 +67,8 @@ pub struct App {
     /// is private and every write path (`set_config`, `modify_config`) refreshes
     /// this — there is no way to change config without recomputing availability.
     launch_availability: HashMap<&'static str, bool>,
+    /// Per-component heartbeat ring buffer (latency samples for the sparkline).
+    pub(crate) heartbeats: HeartbeatLog,
     /// The piped stdin captured ONCE at startup (a Workstate snapshot fed in via
     /// a pipe), or `None` when stdin was a terminal / empty. Cloned into every
     /// refresh thread so each refresh routes the same bytes. stdin is
@@ -111,6 +114,7 @@ impl App {
             config,
             recent_events: VecDeque::from(["TUI started".to_owned()]),
             launch_availability: HashMap::new(),
+            heartbeats: HeartbeatLog::with_capacity(16),
             piped_stdin,
             tx,
         };
@@ -274,6 +278,9 @@ impl App {
     pub fn apply_snapshot(&mut self, snapshot: OpsSnapshot) {
         self.snapshot = snapshot;
         self.refreshing = false;
+        for (id, ms) in &self.snapshot.status_latency {
+            self.heartbeats.record(id, *ms);
+        }
         let mut names: Vec<String> = self
             .snapshot
             .adapter_health

@@ -10,7 +10,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use suite_ui::{pane, Theme};
+use suite_ui::{pane, Heartbeat, Theme};
 
 use crate::app::App;
 use crate::screens::cockpit_nav::{cockpit_visit_order, marker_for, GROUP_ORDER};
@@ -72,6 +72,36 @@ fn render_grid(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let comps = &app.snapshot.components;
     let group_rects = pre_split_groups(area, comps);
 
+    // Precompute heartbeat vitals for StatusCommand components BEFORE the loop.
+    // Heartbeat::text() returns an owned String, but CardInput.vital wants
+    // Option<&str>. Building a HashMap<&str, String> here ensures the owned
+    // Strings outlive the loop — borrowing a temporary would not compile.
+    // Only components whose registry health is StatusCommand get a heartbeat vital;
+    // fall back to c.vital when the buffer is empty (text() returns just "♥").
+    let hb_vitals: std::collections::HashMap<&str, String> = comps
+        .iter()
+        .filter(|c| {
+            rexops_core::component_by_id(&c.id).is_some_and(|reg| {
+                matches!(reg.health, rexops_core::HealthSource::StatusCommand { .. })
+            })
+        })
+        .filter_map(|c| {
+            let samples = app.heartbeats.samples(&c.id);
+            let latest = app.heartbeats.latest(&c.id);
+            let t = Heartbeat {
+                samples: &samples,
+                latest_ms: latest,
+            }
+            .text();
+            // "♥" alone means no data yet; skip so the card falls back to c.vital.
+            if t == "♥" {
+                None
+            } else {
+                Some((c.id.as_str(), t))
+            }
+        })
+        .collect();
+
     // The global visit order — markers are assigned by a card's position HERE, so
     // letters run a,s,d,… continuously down the whole cockpit, not per group.
     let visit = cockpit_visit_order(comps);
@@ -83,11 +113,17 @@ fn render_grid(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
             .filter(|c| ids.contains(&c.group.as_str()))
             .map(|c| {
                 let marker = visit.iter().position(|v| v.id == c.id).and_then(marker_for);
+                // StatusCommand components use the precomputed heartbeat vital (if any);
+                // all other components keep their plain vital unchanged.
+                let vital = hb_vitals
+                    .get(c.id.as_str())
+                    .map(String::as_str)
+                    .or(c.vital.as_deref());
                 CardInput {
                     name: &c.name,
                     role: &c.group,
                     light: light_state_from_health(c.health),
-                    vital: c.vital.as_deref(),
+                    vital,
                     dim: c.maturity == "planned",
                     marker,
                     focused: focused == Some(c.id.as_str()),
@@ -297,6 +333,68 @@ mod tests {
             "launchable field tool shows a marker:\n{text}"
         );
     }
+
+    #[test]
+    fn statuscommand_card_with_heartbeat_samples_shows_sparkline_vital() {
+        // When a StatusCommand component (pulse) has recorded heartbeat samples,
+        // its card vital should show the heartbeat sparkline text, not the plain vital.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        let mut snap = OpsSnapshot::new();
+        snap.push_component(ComponentStatus {
+            id: "pulse".into(),
+            name: "Pulse".into(),
+            group: "monitor".into(),
+            maturity: "live".into(),
+            health: AdapterHealth::Healthy,
+            freshness: None,
+            vital: Some("plain vital".into()),
+            launchable: true,
+        });
+        app.apply_snapshot(snap);
+        // Manually record heartbeat samples as apply_snapshot would via status_latency.
+        app.heartbeats.record("pulse", 2);
+        app.heartbeats.record("pulse", 5);
+        app.heartbeats.record("pulse", 9);
+        let text = render(&app);
+        // The heartbeat text (♥ + sparkline + ms) must appear somewhere in the card.
+        // suite_ui::Heartbeat { samples: &[2,5,9], latest_ms: Some(9) }.text() == "♥ ▁▄█ 9ms"
+        assert!(
+            text.contains('♥'),
+            "StatusCommand card with samples shows heartbeat glyph:\n{text}"
+        );
+        // The plain vital must NOT be shown (replaced by heartbeat text).
+        assert!(
+            !text.contains("plain vital"),
+            "heartbeat vital replaces plain vital for StatusCommand with samples:\n{text}"
+        );
+    }
+
+    #[test]
+    fn statuscommand_card_with_no_samples_falls_back_to_plain_vital() {
+        // When a StatusCommand component has no heartbeat samples yet, fall back
+        // to the component's plain vital string.
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        let mut snap = OpsSnapshot::new();
+        snap.push_component(ComponentStatus {
+            id: "pulse".into(),
+            name: "Pulse".into(),
+            group: "monitor".into(),
+            maturity: "live".into(),
+            health: AdapterHealth::Healthy,
+            freshness: None,
+            vital: Some("waiting...".into()),
+            launchable: true,
+        });
+        app.apply_snapshot(snap);
+        // No heartbeat samples recorded — heartbeats buffer is empty for pulse.
+        let text = render(&app);
+        assert!(
+            text.contains("waiting..."),
+            "empty heartbeat buffer falls back to plain vital:\n{text}"
+        );
+    }
 }
 
 // Learning Notes
@@ -307,3 +405,7 @@ mod tests {
 //   why we render group-by-group rather than building one global slice.
 // - GROUP_ORDER makes the metaphor the layout and fixes display order; a
 //   component whose group string isn't listed simply isn't shown (none today).
+// - Heartbeat vitals are precomputed BEFORE the card-building loop into an owned
+//   HashMap<&str, String> so the borrowed &str vital lives long enough for the loop.
+//   This avoids the "borrow a temporary" lifetime trap: Heartbeat::text() returns
+//   an owned String but StatusCard.vital wants Option<&str>.

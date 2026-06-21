@@ -31,6 +31,7 @@
 
 mod config;
 mod snapshot;
+mod status_probe;
 
 // Re-export the primary public surface in a flat namespace.
 pub use config::load_config;

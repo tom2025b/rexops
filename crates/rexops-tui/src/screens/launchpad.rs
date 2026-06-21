@@ -376,6 +376,7 @@ mod tests {
                     enabled: true,
                     binary: Some("/tmp/proto".to_owned()),
                     timeout_secs: None,
+                    ..Default::default()
                 },
             );
         });

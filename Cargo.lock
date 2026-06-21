@@ -468,6 +468,7 @@ version = "0.1.2"
 dependencies = [
  "rexops-adapters",
  "rexops-core",
+ "serde",
  "serde_json",
  "serde_yaml",
 ]
@@ -666,8 +667,8 @@ dependencies = [
 
 [[package]]
 name = "suite-ui"
-version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=2f5fa8231ea85f0827d11aef1cb13d3ddb347249#2f5fa8231ea85f0827d11aef1cb13d3ddb347249"
+version = "0.2.0"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=49b71e9168ec2ece2195217a90ff7c065e7d8aa8#49b71e9168ec2ece2195217a90ff7c065e7d8aa8"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -707,11 +708,13 @@ dependencies = [
 
 [[package]]
 name = "thomas-tui"
-version = "0.1.0"
-source = "git+https://github.com/tom2025b/linux-ops-suite?rev=2f5fa8231ea85f0827d11aef1cb13d3ddb347249#2f5fa8231ea85f0827d11aef1cb13d3ddb347249"
+version = "0.2.0"
+source = "git+https://github.com/tom2025b/linux-ops-suite?rev=49b71e9168ec2ece2195217a90ff7c065e7d8aa8#49b71e9168ec2ece2195217a90ff7c065e7d8aa8"
 dependencies = [
  "crossterm",
  "ratatui",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

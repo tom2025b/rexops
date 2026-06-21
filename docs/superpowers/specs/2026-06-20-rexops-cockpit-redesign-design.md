@@ -296,7 +296,7 @@ The design covers all nine. Implementation lands in honest increments; each phas
 - **Phase B — suite-ui cockpit widgets.** Add `StatusLight`/`StatusCard`/`CardGrid`/`IdentityBanner` to suite-ui (render-tested).
 - **Phase C — Cockpit screen.** Replace screen `1` with the card grid reading `OpsSnapshot.components`; wire card hotkeys → existing confirm gate; existing screens become drill-downs (`Esc` → cockpit). All nine appear; the six unwired render as `Planned` cards.
 - **Phase D — FeedReady tools.** Light up ScriptVault + ToolFoundry as full cards via their existing contracts (health + freshness + launch), promoting them from data-only to first-class components.
-- **Phase E — Monitors & mechanics.** Add the `StatusCommand` adapter; wire Pulse (+ `Heartbeat` widget), then Tripwire/Rewind/rex-check/rex-forge as each grows a stable `status`/launch contract. Each is one registry row + a contract, no new screens required.
+- **Phase E — Monitors & mechanics.** Add the `StatusCommand` adapter; wire Pulse (+ `Heartbeat` widget), then Tripwire/Rewind/rex-check/rex-forge as each grows a stable `status`/launch contract. Each is one registry row + a contract, no new screens required. ✅ *Pulse slice done (2026-06-21): `StatusCommand` health path + the suite-ui `Heartbeat` widget shipped; Pulse is a `Live`, launchable card with a heartbeat vital (rollup 6/11). Tripwire/Rewind/rex-check/rex-forge remain `Planned` — each a future one-row flip.*
 - **Phase F — CLI parity.** `rexops components` + gated `rexops launch`.
 
 Each phase is a spec-commit + `feat(rexops): … (Phase X)` impl-commit, matching the project's established cadence, with the four cargo gates (build/test/clippy/fmt) green at every step.
