@@ -36,8 +36,8 @@ pub(super) fn screen_hints(app: &App) -> &'static [(&'static str, &'static str)]
     }
     match app.current_screen {
         Screen::Dashboard => &[
-            ("q", "quit"),
-            ("^P", "palette"),
+            ("a-z", "launch card"),
+            ("g", "detail"),
             ("/", "filter"),
             ("r", "refresh"),
             ("?", "help"),

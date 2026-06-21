@@ -17,19 +17,30 @@ fn app_on(screen: Screen) -> App {
 
 #[test]
 fn every_screen_has_non_empty_hints() {
-    for screen in [
-        Screen::Dashboard,
+    // The list/global screens lead their footer with quit; the cockpit and its
+    // detail view lead with their primary action instead (card launch / launch),
+    // since on a keyboard-first card grid the launch keys are the headline, not
+    // quit (which stays available as `q` and is documented in help).
+    let leads_with_quit = [
         Screen::Adapters,
         Screen::System,
         Screen::Scripts,
         Screen::Tools,
         Screen::Launcher,
         Screen::Jobs,
-    ] {
+    ];
+    for screen in leads_with_quit {
         let app = app_on(screen);
         let hints = screen_hints(&app);
         assert!(!hints.is_empty(), "{screen:?} must show footer hints");
         assert_eq!(hints[0].0, "q", "{screen:?} should lead with quit");
+    }
+
+    // The cockpit screens must still show non-empty hints, just not led by quit.
+    for screen in [Screen::Dashboard, Screen::CockpitDetail] {
+        let app = app_on(screen);
+        let hints = screen_hints(&app);
+        assert!(!hints.is_empty(), "{screen:?} must show footer hints");
     }
 }
 
