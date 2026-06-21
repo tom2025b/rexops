@@ -63,14 +63,10 @@ pub enum Action {
     Backspace,
 
     /// A cockpit card hotkey (its dim letter marker) was pressed — arm that card.
-    /// Emitted by the navigation keymap (wired in the keymap task); already
-    /// handled in `on_action`. `allow(dead_code)` until the keymap emits it.
-    #[allow(dead_code)]
+    /// Emitted by the navigation keymap; handled in `on_action` (cockpit only).
     CardKey(char),
 
     /// Drill into the focused cockpit card's detail view (g). Emitted by the
-    /// navigation keymap (wired in the keymap task); already handled in
-    /// `on_action`. `allow(dead_code)` until the keymap emits it.
-    #[allow(dead_code)]
+    /// navigation keymap; handled in `on_action` (cockpit only).
     Drill,
 }
