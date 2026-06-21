@@ -142,10 +142,11 @@ pub const COMPONENTS: &[Component] = &[
         group: ComponentGroup::BlackBox,
         // Probe + launch (the rex-check/bulwark pattern): tripwire's `--json` is a
         // Workstate-style envelope (source_tool/clean/added…), not the one-line
-        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
-        // (`--help` exits 0) and it launches its current watch view in the
-        // foreground. Live and launchable without a live-status feed; a
-        // StatusCommand flip can follow if tripwire grows the one-line contract.
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence —
+        // the snapshot builder's Probe loop spawns `tripwire --help` on each
+        // refresh: exits 0 → Healthy, absent → Unavailable (never fake-green). It
+        // launches its current watch view in the foreground. A StatusCommand flip
+        // can follow if tripwire grows the one-line contract.
         health: HealthSource::Probe {
             binary: "tripwire",
             version_args: &["--help"],
@@ -166,10 +167,10 @@ pub const COMPONENTS: &[Component] = &[
         group: ComponentGroup::BlackBox,
         // Probe + launch (the rex-check/tripwire pattern): rewind's `--json` is a
         // TimelineEnvelope (schema_version/source_tool/captures…), not the one-line
-        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
-        // (`--help` exits 0) and it launches its capture timeline in the foreground.
-        // The binary isn't on PATH yet, so the Probe honestly reports Unavailable
-        // until the suite installer places it — never a fake-green card.
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence —
+        // the snapshot builder spawns `rewind --help` each refresh and maps exit 0
+        // → Healthy. The binary isn't on PATH yet, so that probe currently reports
+        // Unavailable until the suite installer places it — never a fake-green card.
         health: HealthSource::Probe {
             binary: "rewind",
             version_args: &["--help"],
@@ -189,10 +190,11 @@ pub const COMPONENTS: &[Component] = &[
         blurb: "Suite health checks / doctor",
         group: ComponentGroup::Mechanic,
         // Probe + launch (the bulwark/proto pattern): rex-check has no JSON
-        // `status` contract yet, so health is binary-presence (`--help` exits 0),
-        // and it launches its doctor run in the foreground. It becomes Live and
-        // launchable without a live-status feed; a StatusCommand flip can follow
-        // if/when the tool grows the one-line contract.
+        // `status` contract yet, so health is binary-presence — the snapshot
+        // builder spawns `rex-check --help` each refresh (exits 0 → Healthy,
+        // absent → Unavailable), and it launches its doctor run in the foreground.
+        // A StatusCommand flip can follow if/when the tool grows the one-line
+        // contract.
         health: HealthSource::Probe {
             binary: "rex-check",
             version_args: &["--help"],
@@ -217,8 +219,9 @@ pub const COMPONENTS: &[Component] = &[
         // Launch runs `list` (not bare, which errors: a subcommand is required; and
         // not `new`, which is interactive and *writes* a project): `list` is the
         // read-only catalog view — non-interactive, zero side effects — so it proves
-        // the tool runs without scaffolding anything from a launch button. The binary
-        // isn't on PATH yet, so the Probe honestly reports Unavailable until installed.
+        // the tool runs without scaffolding anything from a launch button. The snapshot
+        // builder spawns `rex-forge --help` each refresh; the binary isn't on PATH yet,
+        // so that probe currently reports Unavailable until installed (never fake-green).
         health: HealthSource::Probe {
             binary: "rex-forge",
             version_args: &["--help"],

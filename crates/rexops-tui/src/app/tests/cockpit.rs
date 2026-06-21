@@ -203,19 +203,95 @@ fn every_flippable_tool_is_live_launchable_and_no_row_stays_planned() {
     assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
 
     // The four Probe+launch tools are Live via Probe (binary presence), not StatusCommand.
+    // The four Probe+launch tools are Live via Probe (binary presence), not
+    // StatusCommand. Pin the FULL contract per tool so a regression in any field
+    // trips: maturity Live, a Probe source whose binary matches the id and whose
+    // version_args are exactly `--help` (the presence check the snapshot builder
+    // spawns — silently emptying these would break health detection), and a
+    // Foreground LaunchSpec.
     for id in ["rex-check", "tripwire", "rewind", "rex-forge"] {
         let c = rexops_core::component_by_id(id).unwrap();
-        assert!(
-            matches!(c.health, rexops_core::HealthSource::Probe { .. }),
-            "{id} health must be Probe"
+        assert_eq!(c.maturity, rexops_core::Maturity::Live, "{id} must be Live");
+        match c.health {
+            rexops_core::HealthSource::Probe {
+                binary,
+                version_args,
+            } => {
+                assert_eq!(binary, id, "{id} probe binary must be the tool id");
+                assert_eq!(
+                    version_args,
+                    &["--help"],
+                    "{id} probe must use --help for presence"
+                );
+            }
+            other => panic!("{id} health must be Probe, got {other:?}"),
+        }
+        let launch = c
+            .launch
+            .unwrap_or_else(|| panic!("{id} must have a LaunchSpec"));
+        assert_eq!(
+            launch.run_mode,
+            rexops_core::RunMode::Foreground,
+            "{id} must launch in the foreground"
         );
-        assert_eq!(c.maturity, rexops_core::Maturity::Live);
     }
+}
+
+#[test]
+fn probe_tool_card_gates_launch_on_resolved_health() {
+    // ITEM-3 launch-behavior guard at the cockpit level: a Probe tool's card is
+    // armable only when its resolved health is not Unavailable. Build two cards —
+    // a Healthy tripwire (launchable) and an Unavailable rewind (blocked) — with
+    // both launch commands forced resolvable via a configured binary, so
+    // launchability turns purely on health. This proves the registry walk's
+    // `health != Unavailable` gate reaches the UI's `is_tool_available`.
+    let (tx, _rx) = mpsc::channel();
+    let mut cfg = AppConfig::default();
+    for id in ["tripwire", "rewind"] {
+        cfg.adapters.insert(
+            id.to_owned(),
+            AdapterConfig {
+                enabled: true,
+                binary: Some(format!("/tmp/{id}")),
+                timeout_secs: None,
+                ..Default::default()
+            },
+        );
+    }
+    let mut app = App::new(tx, cfg, None);
+
+    let mut snap = OpsSnapshot::new();
+    snap.push_component(comp("tripwire", "Tripwire", "black box", "live", true));
+    snap.push_component(ComponentStatus {
+        id: "rewind".into(),
+        name: "Rewind".into(),
+        group: "black box".into(),
+        maturity: "live".into(),
+        health: AdapterHealth::Unavailable,
+        freshness: None,
+        vital: Some("not installed".into()),
+        launchable: false,
+    });
+    let tw = rexops_core::AdapterId::new("tripwire").unwrap();
+    let rw = rexops_core::AdapterId::new("rewind").unwrap();
+    snap.set_adapter_health(&tw, AdapterHealth::Healthy);
+    snap.set_adapter_health(&rw, AdapterHealth::Unavailable);
+    app.apply_snapshot(snap);
+
+    assert!(
+        app.is_tool_available("tripwire"),
+        "a Healthy Probe tool must be available to launch"
+    );
+    assert!(
+        !app.is_tool_available("rewind"),
+        "an Unavailable Probe tool must be blocked from launch"
+    );
 }
 
 // Learning Notes
 // - The guard test locks the three-field flip (health, launch, maturity) as a
-//   permanent invariant: CI will catch any accidental rollback to Planned.
-// - Now that every flippable tool is Live, the test pins the terminal state — the
-//   four Probe+launch tools are launchable AND no row stays Planned — so a rollback
-//   to Planned, or a regression that drops a tool from the launchable set, both trip.
+//   permanent invariant: CI will catch any accidental rollback to Planned, an
+//   emptied version_args, or a tool dropping out of the launchable set.
+// - probe_tool_card_gates_launch_on_resolved_health proves the launch GATE: a
+//   Probe tool follows its resolved health (Healthy launches, Unavailable is
+//   blocked) — the behavioral half of the Probe-wiring fix, at the UI boundary.
