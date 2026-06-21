@@ -131,6 +131,8 @@ mod tests {
                 light: LightState::Healthy,
                 vital: Some("3/3 fresh"),
                 dim: false,
+                marker: None,
+                focused: false,
             },
             CardInput {
                 name: "Bulwark",
@@ -138,6 +140,8 @@ mod tests {
                 light: LightState::Degraded,
                 vital: Some("1 crit"),
                 dim: false,
+                marker: None,
+                focused: false,
             },
         ];
         let sections = [CardSection {

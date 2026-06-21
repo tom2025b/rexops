@@ -52,6 +52,12 @@ pub struct CardInput<'a> {
     pub vital: Option<&'a str>,
     /// Render muted (a planned / inactive component).
     pub dim: bool,
+    /// The single-letter hotkey label for this card, drawn dim as `[a]` before
+    /// the name. `None` draws no marker (a card with no actuation letter).
+    pub marker: Option<char>,
+    /// Whether this card currently has cockpit focus — drawn with the accent
+    /// selection rail + name, the same focus look the Launcher rows use.
+    pub focused: bool,
 }
 
 #[cfg(test)]
