@@ -42,6 +42,7 @@ fn cockpit_app() -> App {
             enabled: true,
             binary: Some("/bin/true".to_owned()),
             timeout_secs: None,
+            ..Default::default()
         },
     );
     let mut app = App::new(tx, cfg, None);

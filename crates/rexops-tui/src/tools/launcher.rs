@@ -193,6 +193,7 @@ mod tests {
                 enabled: true,
                 binary: Some(binary.to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         config
@@ -208,6 +209,7 @@ mod tests {
                 enabled: false,
                 binary: Some(binary.to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         config

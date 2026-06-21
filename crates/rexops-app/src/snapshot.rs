@@ -106,8 +106,18 @@ fn status_command_probe(
         .unwrap_or(id)
         .to_owned();
 
+    // Any configured prefix args run before the status subcommand's own args.
+    // This is empty for every real adapter; tests use it to point `binary` at an
+    // interpreter that reads a script argument (so a probe never has to execute a
+    // freshly written file — which races `ETXTBSY` under parallel test spawns).
+    let prefix = config
+        .adapters
+        .get(id)
+        .map_or(&[][..], |a| a.status_prefix_args.as_slice());
+
     let start = Instant::now();
     let Ok(mut child) = Command::new(&program)
+        .args(prefix)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -736,6 +746,7 @@ mod tests {
                 enabled: true,
                 binary: Some("rexops-no-such-bulwark-xyz987".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
         let snap = build_snapshot_with_piped(&cfg, None);
@@ -798,6 +809,7 @@ mod tests {
                 enabled: true,
                 binary: Some(path.to_string_lossy().into_owned()),
                 timeout_secs: Some(1), // 1s cap vs a 30s hang
+                ..Default::default()
             },
         );
 
@@ -1096,37 +1108,89 @@ mod tests {
 
     // --- Task 5: StatusCommand probe helpers and tests ---
 
-    /// Write a tiny executable shell script to a temp path. The script prints
-    /// `stdout_line` to stdout and exits with `exit_code`. Used by tests that
-    /// need a controlled status binary without spawning a real binary.
+    /// A stub status "binary" for tests: writes a shell script that prints
+    /// `stdout_line` and exits with `exit_code`, and returns the program +
+    /// prefix args that run it. The script is a plain (non-executable) data file
+    /// that `/bin/sh` *reads* — it is never `execve`-d.
+    ///
+    /// This avoids a Heisenbug: creating an executable file and spawning it
+    /// moments later races under `cargo test`'s parallelism. While one test is
+    /// still writing its script, a `fork` for an unrelated spawn on another
+    /// thread can hold the open write handle across its exec window, so the
+    /// kernel rejects the exec with `ETXTBSY` ("Text file busy", raw OS error
+    /// 26). It only bit the saturated `--workspace` run and reproduced reliably
+    /// under stress; unique filenames/dirs do not help, because the contended
+    /// state is the process fd table. Running the script through the shell as an
+    /// argument (`sh <script> <args…>`) means nothing ever executes a written
+    /// file, so the race cannot occur.
     #[cfg(test)]
-    fn stub_binary(stdout_line: &str, exit_code: i32) -> String {
+    fn stub_binary(stdout_line: &str, exit_code: i32) -> StubBinary {
         use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("rexops-stub-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "rexops-stub-{}-{}",
+            std::process::id(),
+            next_stub_id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("stub-{}", unique_suffix()));
+        let path = dir.join("stub.sh");
         let mut f = std::fs::File::create(&path).unwrap();
-        write!(f, "#!/bin/sh\necho '{stdout_line}'\nexit {exit_code}\n").unwrap();
-        let mut perm = f.metadata().unwrap().permissions();
-        perm.set_mode(0o755);
-        std::fs::set_permissions(&path, perm).unwrap();
-        path.to_string_lossy().into_owned()
+        write!(f, "echo '{stdout_line}'\nexit {exit_code}\n").unwrap();
+        f.flush().unwrap();
+        StubBinary {
+            program: "/bin/sh".to_owned(),
+            script: path.to_string_lossy().into_owned(),
+        }
     }
 
+    /// A test status binary: the interpreter to spawn plus the script it reads.
+    /// `script` becomes the leading probe arg, so any status subcommand args the
+    /// probe appends arrive as ignored positional parameters. See [`stub_binary`].
     #[cfg(test)]
-    fn unique_suffix() -> u128 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    struct StubBinary {
+        program: String,
+        script: String,
     }
 
-    /// Build a config with a "pulse" adapter entry pointing at the given binary,
-    /// and all existing real adapters disabled (to isolate the status probe).
+    /// A per-process, monotonic id giving each stub its own directory. An atomic
+    /// counter is collision-free, unlike a wall-clock suffix (two parallel tests
+    /// can read the same nanosecond).
     #[cfg(test)]
-    fn pulse_only_config(binary: &str) -> AppConfig {
+    fn next_stub_id() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Build a config whose "pulse" adapter is probed via the given stub, with
+    /// all real adapters disabled (to isolate the status probe).
+    #[cfg(test)]
+    fn pulse_only_config(stub: &StubBinary) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "pulse".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(stub.program.clone()),
+                timeout_secs: None,
+                status_prefix_args: vec![stub.script.clone()],
+            },
+        );
+        cfg
+    }
+
+    /// A config whose "pulse" adapter points at a binary that does not exist,
+    /// used to prove the missing-binary path. Takes a plain program string.
+    #[cfg(test)]
+    fn pulse_missing_binary_config(binary: &str) -> AppConfig {
         let mut cfg = AppConfig::default();
         for name in ["bulwark", "system", "workstate"] {
             cfg.adapters.insert(
@@ -1143,6 +1207,7 @@ mod tests {
                 enabled: true,
                 binary: Some(binary.to_owned()),
                 timeout_secs: None,
+                status_prefix_args: Vec::new(),
             },
         );
         cfg
@@ -1172,7 +1237,7 @@ mod tests {
     #[test]
     fn status_command_probe_missing_binary_is_unavailable() {
         use rexops_core::AdapterHealth;
-        let cfg = pulse_only_config("/nonexistent/pulse-xyz-task5");
+        let cfg = pulse_missing_binary_config("/nonexistent/pulse-xyz-task5");
         // Call the probe function directly: proves missing binary → Unavailable.
         let probe = status_command_probe(&cfg, "pulse", &["status"]);
         assert_eq!(

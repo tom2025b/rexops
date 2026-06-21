@@ -47,6 +47,7 @@ fn palette_run_tool_arms_confirm_without_spawning() {
                 enabled: true,
                 binary: Some("/tmp/proto".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -90,6 +91,7 @@ fn palette_run_disabled_tool_does_not_open_confirm() {
                 enabled: false,
                 binary: None,
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
@@ -195,6 +197,7 @@ fn palette_run_tag_reflects_a_configured_tool_as_runnable() {
                 enabled: true,
                 binary: Some("/bin/sh".to_owned()),
                 timeout_secs: None,
+                ..Default::default()
             },
         );
     });
