@@ -126,6 +126,10 @@ pub struct Component {
     pub id: &'static str,
     pub name: &'static str,
     pub role: &'static str,
+    /// A short human description for the Launcher screen + command palette (the
+    /// "what is this tool" line). The registry is the single source of launch
+    /// data, so this lives here rather than in a separate catalog.
+    pub blurb: &'static str,
     pub group: ComponentGroup,
     pub health: HealthSource,
     pub launch: Option<LaunchSpec>,

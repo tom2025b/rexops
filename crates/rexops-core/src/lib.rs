@@ -47,7 +47,7 @@ pub use adapter_types::{AdapterHealth, AdapterOutput};
 pub use component::{
     Component, ComponentGroup, ComponentId, FeedSpec, HealthSource, LaunchSpec, Maturity, RunMode,
 };
-pub use component_table::{component_by_id, COMPONENTS};
+pub use component_table::{component_by_id, launchable_components, COMPONENTS};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
