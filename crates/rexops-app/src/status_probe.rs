@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 /// The parsed outcome of a `status` probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct StatusProbe {
     pub health: AdapterHealth,
     pub detail: String,
@@ -17,7 +16,6 @@ pub struct StatusProbe {
 
 /// The wire shape emitted by `pulse status` (and any future StatusCommand tool).
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct Wire {
     healthy: bool,
     #[serde(default)]
@@ -29,7 +27,6 @@ struct Wire {
 /// Map a tool's status output to health. The first stdout line must be the JSON
 /// contract; anything else (empty, non-JSON) is `Unavailable`. `exit_ok` is
 /// advisory — the JSON `healthy` field is authoritative when present.
-#[allow(dead_code)]
 pub fn parse_status(stdout: &str, _exit_ok: bool) -> StatusProbe {
     let first = stdout.lines().next().unwrap_or("").trim();
     match serde_json::from_str::<Wire>(first) {

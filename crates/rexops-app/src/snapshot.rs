@@ -80,6 +80,90 @@ fn system_adapter(config: &AppConfig) -> SystemAdapter {
     SystemAdapter::new().with_timeout(adapter_timeout(config, "system"))
 }
 
+/// Spawn a component's `status` subcommand, bounded by its configured timeout,
+/// and parse the one-line JSON contract. Returns the parsed probe result.
+///
+/// Resolution: the configured `binary` for the id (from adapters config) is
+/// used if present and non-empty, otherwise the id itself is tried on PATH.
+/// On spawn failure the binary is missing → Unavailable "not found".
+/// On timeout the child is killed → Unavailable "status timed out".
+/// The parse + health mapping live in `status_probe`; this is only the glue.
+fn status_command_probe(
+    config: &AppConfig,
+    id: &str,
+    args: &[&str],
+) -> crate::status_probe::StatusProbe {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let program = config
+        .adapters
+        .get(id)
+        .and_then(|a| a.binary.as_deref())
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or(id)
+        .to_owned();
+
+    let start = Instant::now();
+    let Ok(mut child) = Command::new(&program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return crate::status_probe::StatusProbe {
+            health: rexops_core::AdapterHealth::Unavailable,
+            detail: "not found".to_owned(),
+            latency_ms: None,
+        };
+    };
+
+    let timeout = adapter_timeout(config, id);
+    let deadline = start + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut out = String::new();
+                if let Some(mut so) = child.stdout.take() {
+                    let _ = so.read_to_string(&mut out);
+                }
+                return crate::status_probe::parse_status(&out, status.success());
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return crate::status_probe::StatusProbe {
+                        health: rexops_core::AdapterHealth::Unavailable,
+                        detail: "status timed out".to_owned(),
+                        latency_ms: None,
+                    };
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(_) => {
+                return crate::status_probe::StatusProbe {
+                    health: rexops_core::AdapterHealth::Unavailable,
+                    detail: "bad status output".to_owned(),
+                    latency_ms: None,
+                };
+            }
+        }
+    }
+}
+
+// Learning Notes
+// - `status_command_probe` is spawn-only glue: parse + mapping live in
+//   `status_probe` so the probe contract is tested independently of I/O.
+// - We use `adapter_timeout(config, id)` (which already reads the per-adapter
+//   override else global default) so StatusCommand probes respect the same
+//   timeout config as Bulwark/system probes.
+// - No component uses StatusCommand yet (Pulse flips in a later task), so this
+//   function is exercised only by tests until then — which is intentional.
+
 /// Build a live OpsSnapshot by probing adapters that are enabled in config,
 /// reading the piped stdin (if any) inline.
 ///
@@ -193,6 +277,28 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
                 }
             },
             None => populate_workstate(&mut snap, None),
+        }
+    }
+
+    // StatusCommand components (e.g. Pulse once it flips): spawn `<bin> status`,
+    // bounded by the configured timeout, parse the one-line JSON contract into
+    // health + latency. Runs before the registry walk so adapter_health and
+    // status_latency are populated when the walk reads them.
+    // Note: no component uses StatusCommand yet — Pulse flips in a later task —
+    // so this loop is exercised only by tests that insert a "pulse" adapter
+    // config. That is intentional: the wiring lands now, lights up then.
+    for comp in rexops_core::COMPONENTS {
+        if let rexops_core::HealthSource::StatusCommand { args, .. } = comp.health {
+            if config.adapter_enabled(comp.id) {
+                let probe = status_command_probe(config, comp.id, args);
+                if let Ok(id) = AdapterId::new(comp.id) {
+                    snap.set_adapter_health(&id, probe.health);
+                }
+                if let Some(ms) = probe.latency_ms {
+                    snap.status_latency.insert(comp.id.to_owned(), ms);
+                }
+                snap.add_note(format!("{} status: {}", comp.id, probe.detail));
+            }
         }
     }
 
@@ -939,6 +1045,94 @@ mod tests {
         assert_eq!(
             first.risk.critical, second.risk.critical,
             "merged risk must be identical across repeated calls"
+        );
+    }
+
+    // --- Task 5: StatusCommand probe helpers and tests ---
+
+    /// Write a tiny executable shell script to a temp path. The script prints
+    /// `stdout_line` to stdout and exits with `exit_code`. Used by tests that
+    /// need a controlled status binary without spawning a real binary.
+    #[cfg(test)]
+    fn stub_binary(stdout_line: &str, exit_code: i32) -> String {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("rexops-stub-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("stub-{}", unique_suffix()));
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "#!/bin/sh\necho '{stdout_line}'\nexit {exit_code}\n").unwrap();
+        let mut perm = f.metadata().unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&path, perm).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[cfg(test)]
+    fn unique_suffix() -> u128 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    /// Build a config with a "pulse" adapter entry pointing at the given binary,
+    /// and all existing real adapters disabled (to isolate the status probe).
+    #[cfg(test)]
+    fn pulse_only_config(binary: &str) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for name in ["bulwark", "system", "workstate"] {
+            cfg.adapters.insert(
+                name.to_owned(),
+                rexops_core::AdapterConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+            );
+        }
+        cfg.adapters.insert(
+            "pulse".to_owned(),
+            rexops_core::AdapterConfig {
+                enabled: true,
+                binary: Some(binary.to_owned()),
+                timeout_secs: None,
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn status_command_probe_reads_a_tools_json_line() {
+        use rexops_core::AdapterHealth;
+        let stub = stub_binary(r#"{"healthy":true,"detail":"ok","latency_ms":5}"#, 0);
+        let cfg = pulse_only_config(&stub);
+        // Call the probe function directly: the COMPONENTS loop won't fire for
+        // "pulse" until its HealthSource flips to StatusCommand (a later task).
+        // Testing the function directly proves the spawn + parse wiring.
+        let probe = status_command_probe(&cfg, "pulse", &["status"]);
+        assert_eq!(
+            probe.health,
+            AdapterHealth::Healthy,
+            "healthy JSON line must yield Healthy"
+        );
+        assert_eq!(
+            probe.latency_ms,
+            Some(5),
+            "latency_ms from the JSON line must be returned"
+        );
+    }
+
+    #[test]
+    fn status_command_probe_missing_binary_is_unavailable() {
+        use rexops_core::AdapterHealth;
+        let cfg = pulse_only_config("/nonexistent/pulse-xyz-task5");
+        // Call the probe function directly: proves missing binary → Unavailable.
+        let probe = status_command_probe(&cfg, "pulse", &["status"]);
+        assert_eq!(
+            probe.health,
+            AdapterHealth::Unavailable,
+            "a configured-but-missing binary must probe Unavailable"
         );
     }
 

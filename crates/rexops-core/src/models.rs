@@ -213,6 +213,12 @@ pub struct OpsSnapshot {
     /// layer's registry walk; empty until the first build.
     #[serde(default)]
     pub components: Vec<ComponentStatus>,
+
+    /// Latency in milliseconds reported by each StatusCommand probe (keyed by
+    /// component id). Only populated when the component's status binary reports
+    /// a `latency_ms` field. Empty when no StatusCommand probes have run.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub status_latency: std::collections::HashMap<String, u64>,
 }
 
 impl OpsSnapshot {
@@ -232,6 +238,7 @@ impl OpsSnapshot {
             workstate: None,
             panicked: false,
             components: Vec::new(),
+            status_latency: std::collections::HashMap::new(),
         }
     }
 
