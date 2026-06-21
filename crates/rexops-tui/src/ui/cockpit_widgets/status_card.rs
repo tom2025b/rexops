@@ -33,14 +33,29 @@ pub fn render_status_card(f: &mut Frame, input: CardInput, area: Rect, theme: Th
     // accessor; default renders correctly under both colour and NO_COLOR). A
     // dim/planned card mutes the name and vital via the theme's dim style.
     let text_style: Style = Style::default();
-    let name_style = if input.dim { theme.dim() } else { text_style };
 
-    let title = Line::from(vec![
-        light_span(input.light, theme),
-        Span::raw(" "),
-        Span::styled(input.name.to_owned(), name_style),
-    ]);
-    f.render_widget(Paragraph::new(title), rows[0]);
+    // Line 1: optional focus rail, optional dim marker, the lamp, then the name.
+    let mut title_spans = Vec::new();
+    if input.focused {
+        title_spans.push(Span::styled("▌", theme.selected_rail()));
+    }
+    if let Some(m) = input.marker {
+        title_spans.push(Span::styled(format!("[{m}] "), theme.dim()));
+    } else if input.focused {
+        // Keep the lamp column aligned when focused but unlabeled.
+        title_spans.push(Span::raw(" "));
+    }
+    title_spans.push(light_span(input.light, theme));
+    title_spans.push(Span::raw(" "));
+    let name_style = if input.focused {
+        theme.selection()
+    } else if input.dim {
+        theme.dim()
+    } else {
+        text_style
+    };
+    title_spans.push(Span::styled(input.name.to_owned(), name_style));
+    f.render_widget(Paragraph::new(Line::from(title_spans)), rows[0]);
 
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(input.role.to_owned(), theme.dim()))),
@@ -88,6 +103,8 @@ mod tests {
             light: LightState::Healthy,
             vital: Some("1 crit 1 high"),
             dim: false,
+            marker: None,
+            focused: false,
         });
         assert!(text.contains("Bulwark"), "name on the card:\n{text}");
         assert!(text.contains("security"), "role on the card:\n{text}");
@@ -106,6 +123,8 @@ mod tests {
             light: LightState::Neutral,
             vital: None,
             dim: true,
+            marker: None,
+            focused: false,
         });
         assert!(text.contains("Pulse"), "name present:\n{text}");
         assert!(
@@ -113,6 +132,63 @@ mod tests {
             "missing vital renders as em dash:\n{text}"
         );
         assert!(text.contains('○'), "neutral lamp glyph:\n{text}");
+    }
+
+    #[test]
+    fn card_draws_its_marker_letter() {
+        let text = render(CardInput {
+            name: "Bulwark",
+            role: "security",
+            light: LightState::Healthy,
+            vital: Some("1 crit"),
+            dim: false,
+            marker: Some('s'),
+            focused: false,
+        });
+        assert!(text.contains("[s]"), "marker label on the card:\n{text}");
+        assert!(text.contains("Bulwark"), "name still present:\n{text}");
+    }
+
+    #[test]
+    fn focused_card_shows_the_selection_rail() {
+        let text = render(CardInput {
+            name: "Workstate",
+            role: "brain",
+            light: LightState::Healthy,
+            vital: Some("3/3 fresh"),
+            dim: false,
+            marker: Some('a'),
+            focused: true,
+        });
+        // The accent rail glyph the suite uses for the focused row.
+        assert!(
+            text.contains('▌'),
+            "focused card shows the rail glyph:\n{text}"
+        );
+    }
+
+    #[test]
+    fn unfocused_card_without_marker_is_unchanged_from_phase_b() {
+        // Back-compat: None marker + not focused renders name/role/vital as before.
+        let text = render(CardInput {
+            name: "Pulse",
+            role: "heartbeat",
+            light: LightState::Neutral,
+            vital: None,
+            dim: true,
+            marker: None,
+            focused: false,
+        });
+        assert!(text.contains("Pulse"), "name:\n{text}");
+        assert!(
+            text.contains('—'),
+            "missing vital still an em dash:\n{text}"
+        );
+        assert!(!text.contains('▌'), "no rail when unfocused:\n{text}");
+        assert!(
+            !text.contains('['),
+            "no marker brackets when marker is None:\n{text}"
+        );
     }
 }
 

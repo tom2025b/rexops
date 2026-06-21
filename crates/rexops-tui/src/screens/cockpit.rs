@@ -82,6 +82,10 @@ fn render_grid(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
                 light: light_state_from_health(c.health),
                 vital: c.vital.as_deref(),
                 dim: c.maturity == "planned",
+                // Real marker + focus values are wired in Task 3; placeholders
+                // here keep the crate building (no behaviour change from Phase B).
+                marker: None,
+                focused: false,
             })
             .collect();
         if inputs.is_empty() {
