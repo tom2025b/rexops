@@ -28,6 +28,8 @@
 // Module declarations — order is declaration order, not importance.
 mod adapter_models;
 mod adapter_types;
+mod component;
+mod component_table;
 mod config;
 mod error;
 mod ids;
@@ -42,10 +44,16 @@ pub use adapter_models::findings::{FindingsInfo, RiskTally, ScanItem, Severity};
 pub use adapter_models::scripts::{Script, ScriptsInfo};
 pub use adapter_models::tools::{Tool, ToolsInfo};
 pub use adapter_types::{AdapterHealth, AdapterOutput};
+pub use component::{
+    Component, ComponentGroup, ComponentId, FeedSpec, HealthSource, LaunchSpec, Maturity, RunMode,
+};
+pub use component_table::{component_by_id, COMPONENTS};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
-pub use models::{format_unix_millis_utc, JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
+pub use models::{
+    format_unix_millis_utc, ComponentStatus, JobStatus, OpsSnapshot, ReportSummary, RiskSummary,
+};
 pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 pub use system_info::SystemInfo;
 pub use workstate_info::{status_to_freshness, Freshness, Provenance, Section, WorkstateInfo};

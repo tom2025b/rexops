@@ -19,32 +19,35 @@ use rexops_core::{
     Provenance, RiskSummary, WorkstateInfo,
 };
 
-/// The three real adapters RexOps probes — each a distinct data SOURCE with its
-/// own backing (a binary, the local host, or a compiled snapshot) and therefore
-/// its own [`AdapterHealth`](rexops_core::AdapterHealth).
-///
-/// This is the single source of truth for "what adapters exist," shared by the
-/// snapshot builder and the registry builder so the `status` and `adapters`
-/// views can never disagree about the roster again (they used to: `status`
-/// listed six because it folded Workstate's scripts/tools/findings *sections*
-/// into `adapter_health`, while `adapters` listed only these three).
-///
-/// scripts/tools/findings are deliberately ABSENT here: they are not adapters,
-/// they are sections of the one Workstate snapshot. They carry *freshness*, not
-/// health, and are surfaced under Workstate — never as adapters.
-const REAL_ADAPTERS: &[&str] = &["bulwark", "system", "workstate"];
+/// The ids the app currently resolves to live health. Derived from the core
+/// registry (every id must be a real, non-`Planned` component) intersected with
+/// the set this crate actually probes today. The intersection is what preserves
+/// behavior parity while the table already lists not-yet-wired feeds
+/// (ScriptVault/ToolFoundry) that Phase D will light up.
+fn real_adapter_ids() -> Vec<&'static str> {
+    // The sources the app resolves in `build_snapshot_with_piped` today.
+    const RESOLVED_TODAY: &[&str] = &["bulwark", "system", "workstate"];
+    rexops_core::COMPONENTS
+        .iter()
+        .filter(|c| !matches!(c.health, rexops_core::HealthSource::Planned))
+        .map(|c| c.id)
+        .filter(|id| RESOLVED_TODAY.contains(id))
+        .collect()
+}
 
-/// Whether a real adapter should be probed: it must be one of [`REAL_ADAPTERS`]
-/// AND enabled in config. Routing every probe site (in both the snapshot and the
-/// registry builder) through this one gate is what makes `REAL_ADAPTERS` the
-/// single authoritative roster — an id that isn't in it can't be probed or land
-/// in `adapter_health`, so `status` and `adapters` cannot drift apart again.
+/// Whether a real adapter should be probed: it must be one of the ids returned
+/// by [`real_adapter_ids`] AND enabled in config. Routing every probe site (in
+/// both the snapshot and the registry builder) through this one gate is what
+/// makes the registry-derived roster the single authoritative source — an id
+/// that isn't in it can't be probed or land in `adapter_health`, so `status`
+/// and `adapters` cannot drift apart again.
 fn real_adapter_enabled(config: &AppConfig, id: &str) -> bool {
+    let roster = real_adapter_ids();
     debug_assert!(
-        REAL_ADAPTERS.contains(&id),
-        "{id} is not a real adapter; only {REAL_ADAPTERS:?} may be probed"
+        roster.contains(&id),
+        "{id} is not a real adapter; only {roster:?} may be probed"
     );
-    REAL_ADAPTERS.contains(&id) && config.adapter_enabled(id)
+    roster.contains(&id) && config.adapter_enabled(id)
 }
 
 /// The configured probe timeout for an adapter, as a `Duration`. Resolves the
@@ -196,7 +199,94 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
+    // Project the resolved state into per-component statuses (must be last: it
+    // reads adapter_health + the folded fields the blocks above populated).
+    registry_walk(&mut snap, config);
+
     snap
+}
+
+/// Project the already-resolved snapshot state into one `ComponentStatus` per
+/// registry row. Runs LAST in the build, after the probe blocks have populated
+/// `adapter_health` and the structured fields — it re-probes nothing, it only
+/// reads what is already there. This is what makes the cockpit, `status`, and
+/// `components` all read the same single resolution.
+fn registry_walk(snap: &mut OpsSnapshot, config: &AppConfig) {
+    use rexops_core::{AdapterHealth, ComponentStatus, HealthSource};
+
+    for comp in rexops_core::COMPONENTS {
+        // Health: a Planned source never touches I/O and reads Unknown; every
+        // other source's health was already resolved into adapter_health by the
+        // probe blocks (or stays Unknown if that source isn't wired this phase).
+        let health = match comp.health {
+            HealthSource::Planned => AdapterHealth::Unknown,
+            _ => snap
+                .adapter_health
+                .get(comp.id)
+                .copied()
+                .unwrap_or(AdapterHealth::Unknown),
+        };
+
+        let launchable = comp.launch.is_some()
+            && config.adapter_enabled(comp.id)
+            && health != AdapterHealth::Unavailable;
+
+        snap.push_component(ComponentStatus {
+            id: comp.id.to_owned(),
+            name: comp.name.to_owned(),
+            group: comp.group.label().to_owned(),
+            maturity: comp.maturity.label().to_owned(),
+            health,
+            freshness: component_freshness(snap, comp.id),
+            vital: component_vital(snap, comp.id),
+            launchable,
+        });
+    }
+}
+
+/// Freshness for a feed-backed component, read from the matching Workstate
+/// section's status the fold already produced. `None` for non-feed sources.
+///
+/// Only the components whose data IS a Workstate section map here:
+/// `scriptvault` → the scripts section, `toolfoundry` → the tools section. The
+/// `workstate` component itself is the whole-snapshot brain, not any single
+/// section — borrowing one section's freshness for it would be incoherent, so it
+/// returns `None` and conveys its currency through its vital ("N/3 fresh")
+/// instead.
+fn component_freshness(snap: &OpsSnapshot, id: &str) -> Option<rexops_core::Freshness> {
+    use rexops_core::status_to_freshness;
+    let ws = snap.workstate.as_ref()?;
+    let status = match id {
+        "scriptvault" => ws.scripts.status.as_str(),
+        "toolfoundry" => ws.tools.status.as_str(),
+        _ => return None,
+    };
+    Some(status_to_freshness(status))
+}
+
+/// The one headline number per component, derived from already-folded data.
+/// `None` when there is nothing meaningful to show (e.g. a Planned component).
+fn component_vital(snap: &OpsSnapshot, id: &str) -> Option<String> {
+    match id {
+        "workstate" => snap
+            .workstate
+            .as_ref()
+            .map(|ws| format!("{}/3 fresh", ws.populated_section_count())),
+        "bulwark" => snap.findings.as_ref().map(|f| {
+            let t = f.risk_tally();
+            format!("{} crit {} high", t.critical, t.high)
+        }),
+        "scriptvault" => snap
+            .scripts
+            .as_ref()
+            .map(|s| format!("{} scripts", s.total())),
+        "toolfoundry" => snap
+            .tools
+            .as_ref()
+            .map(|t| format!("{} need review", t.attention_count)),
+        "system" => snap.system.as_ref().and_then(|s| s.hostname.clone()),
+        _ => None,
+    }
 }
 
 /// Whether a blob of piped JSON is a Workstate v3 snapshot or something else.
@@ -689,10 +779,10 @@ mod tests {
         let snap = build_snapshot_with_piped(&AppConfig::default(), Some(WORKSTATE_FEED));
         for id in snap.adapter_health.keys() {
             assert!(
-                REAL_ADAPTERS.contains(&id.as_str()),
+                real_adapter_ids().contains(&id.as_str()),
                 "adapter_health contains '{}', which is not a real adapter ({:?})",
                 id.as_str(),
-                REAL_ADAPTERS
+                real_adapter_ids()
             );
         }
     }
@@ -701,7 +791,7 @@ mod tests {
     fn status_and_adapters_views_agree_on_the_roster() {
         // The exact bug from the audit: `status` (adapter_health) and `adapters`
         // (the registry) must list the SAME adapters. With everything enabled,
-        // both must equal REAL_ADAPTERS — no more "6 vs 3" disagreement.
+        // both must equal the three real adapters — no more "6 vs 3" disagreement.
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
@@ -718,7 +808,8 @@ mod tests {
             .map(|e| e.id.as_str().to_owned())
             .collect();
         from_registry.sort();
-        let mut expected: Vec<String> = REAL_ADAPTERS.iter().map(|s| (*s).to_owned()).collect();
+        let mut expected: Vec<String> =
+            real_adapter_ids().iter().map(|s| (*s).to_owned()).collect();
         expected.sort();
 
         assert_eq!(
@@ -729,6 +820,26 @@ mod tests {
             from_registry, expected,
             "adapters roster must be exactly the real adapters"
         );
+    }
+
+    #[test]
+    fn real_adapter_roster_is_derived_from_the_registry() {
+        // The roster the app probes must be exactly today's three, and every one of
+        // them must be a real (non-Planned) component in the core registry — proving
+        // the roster is registry-derived, not a hand-maintained duplicate that can
+        // drift.
+        let mut roster = real_adapter_ids();
+        roster.sort_unstable();
+        assert_eq!(roster, vec!["bulwark", "system", "workstate"]);
+
+        for id in &roster {
+            let c = rexops_core::component_by_id(id)
+                .unwrap_or_else(|| panic!("roster id '{id}' missing from COMPONENTS"));
+            assert!(
+                !matches!(c.health, rexops_core::HealthSource::Planned),
+                "roster id '{id}' must have a real health source, not Planned"
+            );
+        }
     }
 
     #[test]
@@ -750,6 +861,56 @@ mod tests {
         assert!(snap.tools.is_none());
         assert!(snap.scripts.is_none());
         assert!(snap.findings.is_none());
+    }
+
+    #[test]
+    fn registry_walk_projects_one_status_per_component() {
+        // The walk must emit exactly one ComponentStatus per registry row, in table
+        // order, projecting the already-resolved health — never re-probing.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        assert_eq!(
+            snap.components.len(),
+            rexops_core::COMPONENTS.len(),
+            "one status per registry component"
+        );
+        // Order matches the table.
+        for (status, comp) in snap.components.iter().zip(rexops_core::COMPONENTS) {
+            assert_eq!(status.id, comp.id, "component statuses follow table order");
+        }
+    }
+
+    #[test]
+    fn planned_components_are_neutral_not_faulty() {
+        // A Planned component (e.g. pulse) must surface as Unknown health and a
+        // "planned" maturity — never Healthy (fake green) and never Unavailable
+        // (a fault). It is honest, dim, and does no I/O.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        let pulse = snap
+            .components
+            .iter()
+            .find(|c| c.id == "pulse")
+            .expect("pulse is a registry row");
+        assert_eq!(pulse.maturity, "planned");
+        assert_eq!(pulse.health, rexops_core::AdapterHealth::Unknown);
+        assert!(!pulse.launchable, "a planned component is not launchable");
+    }
+
+    #[test]
+    fn live_workstate_component_reflects_resolved_health() {
+        // The workstate component's projected health must equal what the probe block
+        // already wrote into adapter_health — proving projection, not re-probe.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        let ws_health = snap
+            .adapter_health
+            .get("workstate")
+            .copied()
+            .expect("workstate probed");
+        let ws_component = snap
+            .components
+            .iter()
+            .find(|c| c.id == "workstate")
+            .expect("workstate is a registry row");
+        assert_eq!(ws_component.health, ws_health);
     }
 
     #[test]
@@ -779,5 +940,49 @@ mod tests {
             first.risk.critical, second.risk.critical,
             "merged risk must be identical across repeated calls"
         );
+    }
+
+    #[test]
+    fn status_adapters_and_components_never_disagree_on_the_live_roster() {
+        // THE PHASE-A INVARIANT: the three views must agree. The set of components
+        // reporting a real (non-Unknown, non-Planned-maturity) health must be
+        // exactly the adapter roster — so the cockpit's "live" cards, `status`'s
+        // adapter_health, and `adapters`' registry can never drift apart.
+        let cfg = AppConfig::default();
+        let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
+        let reg = build_adapter_registry(&cfg);
+
+        let mut from_adapter_health: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_adapter_health.sort();
+
+        let mut from_registry: Vec<String> = reg
+            .list()
+            .iter()
+            .map(|e| e.id.as_str().to_owned())
+            .collect();
+        from_registry.sort();
+
+        // Components whose maturity is "live" must be exactly the adapter roster.
+        let mut live_components: Vec<String> = snap
+            .components
+            .iter()
+            .filter(|c| c.maturity == "live")
+            .map(|c| c.id.clone())
+            .collect();
+        live_components.sort();
+
+        let mut expected = real_adapter_ids()
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect::<Vec<_>>();
+        expected.sort();
+
+        assert_eq!(from_adapter_health, expected, "status roster");
+        assert_eq!(from_registry, expected, "adapters roster");
+        assert_eq!(live_components, expected, "live component cards");
     }
 }

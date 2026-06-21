@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::AdapterId;
-use crate::AdapterHealth;
+use crate::{AdapterHealth, Freshness};
 
 /// High-level risk rollup derived from one or more adapter scans (e.g. Bulwark).
 ///
@@ -113,6 +113,26 @@ pub struct ReportSummary {
     pub source_adapter: Option<String>,
 }
 
+/// A single component's RESOLVED status, ready to render. Produced by the app
+/// layer's registry walk from a `Component` + a live probe; carries owned
+/// strings (no `'static` borrow) so it serializes cleanly into the snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ComponentStatus {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub maturity: String,
+    pub health: AdapterHealth,
+    /// Data freshness when the source is a feed; `None` for probe/host/planned.
+    /// Populated by the registry walk but not yet rendered anywhere — the cockpit
+    /// cards that read it land in Phase B. Until then it only surfaces in `--json`.
+    pub freshness: Option<Freshness>,
+    /// The one headline number for the card (e.g. "3/3 fresh", "1 crit 1 high").
+    pub vital: Option<String>,
+    /// Whether this component currently resolves to a launch command.
+    pub launchable: bool,
+}
+
 /// The single point-in-time aggregate that higher layers query.
 ///
 /// OpsSnapshot is deliberately "wide but shallow": it contains enough to render
@@ -188,6 +208,11 @@ pub struct OpsSnapshot {
     /// a note substring so callers can branch on it without string matching.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub panicked: bool,
+
+    /// Resolved per-component statuses for the cockpit. Populated by the app
+    /// layer's registry walk; empty until the first build.
+    #[serde(default)]
+    pub components: Vec<ComponentStatus>,
 }
 
 impl OpsSnapshot {
@@ -206,6 +231,7 @@ impl OpsSnapshot {
             findings: None,
             workstate: None,
             panicked: false,
+            components: Vec::new(),
         }
     }
 
@@ -239,6 +265,12 @@ impl OpsSnapshot {
         self.adapter_health
             .values()
             .any(AdapterHealth::is_available)
+    }
+
+    /// Append a resolved component status (the registry walk calls this once per
+    /// component, in table order).
+    pub fn push_component(&mut self, status: ComponentStatus) {
+        self.components.push(status);
     }
 }
 
@@ -414,5 +446,33 @@ mod tests {
         let bul = AdapterId::new("bulwark").unwrap();
         assert_eq!(snap.adapter_health_of(&bul), Some(AdapterHealth::Healthy));
         assert_eq!(snap.adapter_health.len(), 2);
+    }
+
+    #[test]
+    fn ops_snapshot_carries_resolved_component_statuses() {
+        use crate::ComponentStatus;
+        let mut snap = OpsSnapshot::new();
+        assert!(snap.components.is_empty(), "new snapshot has no components");
+
+        snap.push_component(ComponentStatus {
+            id: "bulwark".to_owned(),
+            name: "Bulwark".to_owned(),
+            group: "field tool".to_owned(),
+            maturity: "live".to_owned(),
+            health: AdapterHealth::Healthy,
+            freshness: None,
+            vital: Some("1 crit 1 high".to_owned()),
+            launchable: true,
+        });
+
+        assert_eq!(snap.components.len(), 1);
+        assert_eq!(snap.components[0].id, "bulwark");
+        assert_eq!(snap.components[0].health, AdapterHealth::Healthy);
+
+        // Round-trips through serde so the CLI `--json` view can emit it.
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: OpsSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.components.len(), 1);
+        assert_eq!(back.components[0].vital.as_deref(), Some("1 crit 1 high"));
     }
 }
