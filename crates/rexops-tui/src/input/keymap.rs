@@ -134,10 +134,18 @@ fn handle_key_navigation(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('x') => Some(Action::CancelJob),
         KeyCode::Char('j') | KeyCode::Down => Some(Action::Down),
         KeyCode::Char('k') | KeyCode::Up => Some(Action::Up),
+        // Drill into the focused cockpit card. Inert on other screens.
+        KeyCode::Char('g') => Some(Action::Drill),
         KeyCode::Enter => Some(Action::Activate),
         // Cancel (Esc / Ctrl-G) is handled globally in `handle_key`, before this.
         KeyCode::Backspace => Some(Action::Backspace),
-        KeyCode::Char(c) => Some(Action::InputChar(c)),
+        // `/` stays the filter trigger (on_action turns it into filter mode on a
+        // filter screen); it must NOT become a CardKey or the filter breaks.
+        KeyCode::Char('/') => Some(Action::InputChar('/')),
+        // Every other printable char is a cockpit card hotkey. on_action only acts
+        // on it on the cockpit screen (and ignores letters that label no card), so
+        // this is a no-op everywhere else — never a stray InputChar.
+        KeyCode::Char(c) => Some(Action::CardKey(c)),
         _ => None,
     }
 }
@@ -228,12 +236,11 @@ mod tests {
 
     #[test]
     fn h_is_no_longer_a_help_toggle_in_either_mode() {
-        // `h` collided with vim-style navigation; it must NOT open help. Help is
-        // `?` only. In nav mode `h` is a plain InputChar (no binding); in text
-        // mode it types normally.
+        // `h` never opens help. In nav it's now a (harmless, unlabeled) CardKey;
+        // in text it types normally. Either way it is NOT ToggleHelp.
         assert_eq!(
             handle_key(ch('h'), InputMode::Navigation),
-            Some(Action::InputChar('h'))
+            Some(Action::CardKey('h'))
         );
         assert_eq!(
             handle_key(ch('h'), InputMode::Text),
@@ -243,6 +250,48 @@ mod tests {
             handle_key(ch('h'), InputMode::Navigation),
             Some(Action::ToggleHelp)
         );
+    }
+
+    #[test]
+    fn nav_mode_maps_card_letters_to_cardkey() {
+        // A marker-eligible letter in nav mode is a CardKey now (the cockpit arms
+        // it). The bound nav keys are unaffected (covered by other tests).
+        assert_eq!(
+            handle_key(ch('a'), InputMode::Navigation),
+            Some(Action::CardKey('a'))
+        );
+        assert_eq!(
+            handle_key(ch('s'), InputMode::Navigation),
+            Some(Action::CardKey('s'))
+        );
+        // `g` is the drill key, not a CardKey.
+        assert_eq!(
+            handle_key(ch('g'), InputMode::Navigation),
+            Some(Action::Drill)
+        );
+    }
+
+    #[test]
+    fn nav_mode_keeps_slash_as_the_filter_trigger() {
+        // `/` must stay InputChar so on_action can enter filter mode — it must NOT
+        // become a CardKey, or the cockpit/adapters filter would break.
+        assert_eq!(
+            handle_key(ch('/'), InputMode::Navigation),
+            Some(Action::InputChar('/'))
+        );
+    }
+
+    #[test]
+    fn text_mode_letters_are_unchanged_literal_input() {
+        // The filter (Text mode) still captures every letter as input — CardKey is
+        // a NAV-only concept. This guards that we didn't leak CardKey into Text.
+        for c in ['a', 's', 'g', '/', 'q', '1'] {
+            assert_eq!(
+                handle_key(ch(c), InputMode::Text),
+                Some(Action::InputChar(c)),
+                "Text mode: '{c}' stays literal input"
+            );
+        }
     }
 
     #[test]
@@ -271,15 +320,15 @@ mod tests {
                 "{mode:?}"
             );
         }
-        // A bare `g` is NOT cancel — it must still type into a focused field and
-        // be an ordinary char in nav mode. Only the Ctrl chord cancels.
+        // A bare `g` is NOT cancel. In nav it's the drill key now; in text it
+        // types. Only the Ctrl chord cancels.
         assert_eq!(
             handle_key(ch('g'), InputMode::Text),
             Some(Action::InputChar('g'))
         );
         assert_eq!(
             handle_key(ch('g'), InputMode::Navigation),
-            Some(Action::InputChar('g'))
+            Some(Action::Drill)
         );
     }
 
