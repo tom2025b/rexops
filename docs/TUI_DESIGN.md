@@ -166,3 +166,41 @@ pub struct App {
 See ARCHITECTURE.md for how TUI fits: it consumes core types and calls adapters; it does not own data or execution policy.
 
 Start small: get a clean dashboard + reliable non-blocking refresh + perfect quit behavior. Then iterate.
+
+---
+
+## Cockpit Interactivity (Phase C)
+
+> The original "Dashboard" (above) was replaced by the **cockpit** landing screen
+> in Phase B (a grouped grid of component status cards) and made interactive in
+> Phase C. The sections above are kept for history; this is the current behaviour
+> of screen 1.
+
+Screen 1 is an interactive cockpit:
+
+- **Card focus:** `j`/`k` (and ↑/↓) move a highlighted card. Focus is keyed by
+  component `id` (`App::selected_component`), so it survives a refresh that
+  reorders or drops components; applying a snapshot auto-focuses the first card so
+  the cockpit is immediately keyboard-navigable.
+- **Letter hotkeys:** each card shows a dim `[a]` marker. Pressing that letter in
+  Navigation mode arms the component through the **existing** confirm gate
+  (`arm_tool → pending_action → confirm_pending`) — no separate launch path. The
+  marker alphabet (`cockpit_nav::MARKER_ALPHABET`) is curated to exclude every
+  bound nav key (`q r x j k h y n g`) and the digits `1`–`7`, so a card letter can
+  never shadow a global key. Marker order and focus order both come from
+  `cockpit_nav::cockpit_visit_order`, the single source of truth shared with the
+  renderer — "the `a` you see is the `a` that fires."
+- **Drill-down:** `g` (any focused card) or `Enter` (on a non-launchable card)
+  opens `Screen::CockpitDetail` (`screens/cockpit_detail.rs`), which joins the
+  static registry row (`component_by_id`: role, group, whether it launches) with
+  the live `ComponentStatus` (health, vital). `Esc` backs out, keeping focus.
+  `Enter` on a *launchable* focused card launches it (one-keypress launch); `g`
+  is the universal drill key so read-only components are still inspectable.
+- **Filter coexists:** the `/` filter still works on the cockpit; while filtering
+  (Text mode) every printable key types into the filter, so the card letters never
+  collide with filter input.
+
+State note: `App` now also carries `selected_component: Option<String>` (the
+focused card's id) alongside `selected_adapter`. Both Enter-arming and the letter
+hotkeys funnel into the same `arm_tool` gate the Launcher and palette use, so the
+three run surfaces can never disagree about what is launchable.
