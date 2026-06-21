@@ -123,6 +123,21 @@ Component {
   invariant test `live_components_have_a_non_planned_health_source` already passes
   for them (their health source is `Feed`, not `Planned`).
 
+> **Semantic change — what `live` means.** Phase A established an invariant test
+> (`status_adapters_and_components_never_disagree_on_the_live_roster` in
+> `rexops-app/src/snapshot.rs`) asserting that the `live`-maturity component cards
+> are *exactly* the **adapter roster** (`bulwark`/`system`/`workstate`). Phase D
+> deliberately widens `live`: a feed-backed tool with a launch is `Live` even
+> though it is not adapter-*probed*. So after Phase D, `live` cards = the adapter
+> roster **plus** ScriptVault + ToolFoundry. The two cross-source rosters
+> (`status`'s `adapter_health` and `adapters`' registry) are **unchanged** — feeds
+> are not adapters — so those two still agree exactly with the adapter roster; only
+> the "live cards == adapter roster" leg changes to "live cards == adapter roster +
+> feed-backed launchables". The plan updates (and renames) that test accordingly.
+> This does not weaken success-criterion #6 ("status/adapters/components can never
+> disagree about the *roster*"): the registry is still one source; "live" is just a
+> richer maturity than "is an adapter".
+
 ## 5. Launch mechanism (per the user's "type one word, however is cleanest")
 
 No new resolution logic. `resolve_launch_command` keeps its existing two-step
