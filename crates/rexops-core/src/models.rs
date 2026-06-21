@@ -124,6 +124,8 @@ pub struct ComponentStatus {
     pub maturity: String,
     pub health: AdapterHealth,
     /// Data freshness when the source is a feed; `None` for probe/host/planned.
+    /// Populated by the registry walk but not yet rendered anywhere — the cockpit
+    /// cards that read it land in Phase B. Until then it only surfaces in `--json`.
     pub freshness: Option<Freshness>,
     /// The one headline number for the card (e.g. "3/3 fresh", "1 crit 1 high").
     pub vital: Option<String>,

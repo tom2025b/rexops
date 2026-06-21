@@ -244,15 +244,21 @@ fn registry_walk(snap: &mut OpsSnapshot, config: &AppConfig) {
     }
 }
 
-/// Freshness for feed-backed components, read from the structured data the
-/// Workstate fold already produced. `None` for non-feed sources.
+/// Freshness for a feed-backed component, read from the matching Workstate
+/// section's status the fold already produced. `None` for non-feed sources.
+///
+/// Only the components whose data IS a Workstate section map here:
+/// `scriptvault` → the scripts section, `toolfoundry` → the tools section. The
+/// `workstate` component itself is the whole-snapshot brain, not any single
+/// section — borrowing one section's freshness for it would be incoherent, so it
+/// returns `None` and conveys its currency through its vital ("N/3 fresh")
+/// instead.
 fn component_freshness(snap: &OpsSnapshot, id: &str) -> Option<rexops_core::Freshness> {
     use rexops_core::status_to_freshness;
     let ws = snap.workstate.as_ref()?;
     let status = match id {
         "scriptvault" => ws.scripts.status.as_str(),
         "toolfoundry" => ws.tools.status.as_str(),
-        "workstate" => ws.findings.status.as_str(),
         _ => return None,
     };
     Some(status_to_freshness(status))
