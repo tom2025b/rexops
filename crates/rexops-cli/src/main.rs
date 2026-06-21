@@ -50,6 +50,9 @@ enum Commands {
 
     /// List known/registered adapters and their health.
     Adapters,
+
+    /// List the suite component registry (id, group, maturity, health, vital).
+    Components,
 }
 
 /// Top level run. Returns a proper exit code so scripts can react.
@@ -91,6 +94,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string_pretty(&reg)?);
             } else {
                 print_adapters_human(&reg);
+            }
+        }
+        Commands::Components => {
+            let snapshot = build_snapshot(&config);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&snapshot.components)?);
+            } else {
+                print!("{}", render_components_human(&snapshot));
             }
         }
     }
@@ -307,5 +318,67 @@ fn print_adapters_human(reg: &AdapterRegistry) {
     }
     if reg.is_empty() {
         println!("  (no adapters registered)");
+    }
+}
+
+/// Render the human component roster to a String (separated from printing so it
+/// can be unit-tested without capturing stdout).
+fn render_components_human(snap: &OpsSnapshot) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Components ({} in the suite map):",
+        snap.components.len()
+    );
+    if snap.components.is_empty() {
+        let _ = writeln!(out, "  (none — run a refresh)");
+        return out;
+    }
+    for c in &snap.components {
+        let mark = match c.health {
+            AdapterHealth::Healthy => "✓",
+            AdapterHealth::Degraded => "!",
+            AdapterHealth::Unavailable => "✗",
+            AdapterHealth::Unknown => "·",
+        };
+        let vital = c.vital.as_deref().unwrap_or("-");
+        let _ = writeln!(
+            out,
+            "  {mark} {:<22} {:<11} {:<10} {}",
+            c.name, c.group, c.maturity, vital
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use rexops_core::{AdapterHealth, ComponentStatus, OpsSnapshot};
+
+    use super::render_components_human;
+
+    fn snap_with_one() -> OpsSnapshot {
+        let mut s = OpsSnapshot::new();
+        s.push_component(ComponentStatus {
+            id: "pulse".to_owned(),
+            name: "Pulse".to_owned(),
+            group: "monitor".to_owned(),
+            maturity: "planned".to_owned(),
+            health: AdapterHealth::Unknown,
+            freshness: None,
+            vital: None,
+            launchable: false,
+        });
+        s
+    }
+
+    #[test]
+    fn components_human_lists_the_row_with_its_maturity() {
+        let out = render_components_human(&snap_with_one());
+        assert!(out.contains("Pulse"), "names the component:\n{out}");
+        assert!(out.contains("planned"), "shows maturity:\n{out}");
+        assert!(out.contains("monitor"), "shows the group:\n{out}");
     }
 }
