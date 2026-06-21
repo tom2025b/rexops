@@ -5,6 +5,7 @@
 
 pub mod adapters;
 pub mod cockpit;
+pub mod cockpit_detail;
 pub mod cockpit_nav;
 pub mod jobs;
 pub mod launchpad;
@@ -14,6 +15,7 @@ pub mod tools;
 
 pub use adapters::render_adapters;
 pub use cockpit::render_cockpit;
+pub use cockpit_detail::render_cockpit_detail;
 pub use cockpit_nav::{cockpit_visit_order, component_for_marker};
 pub use jobs::render_jobs;
 pub use launchpad::render_launcher;

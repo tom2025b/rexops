@@ -31,9 +31,7 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
         Screen::Tools => screens::render_tools(f, app, chunks[1], theme),
         Screen::Launcher => screens::render_launcher(f, app, chunks[1], theme),
         Screen::Jobs => screens::render_jobs(f, app, chunks[1], theme),
-        // Task 6 routes this to `render_cockpit_detail`; until that screen exists
-        // the variant falls back to the cockpit so the build stays green.
-        Screen::CockpitDetail => screens::render_cockpit(f, app, chunks[1], theme),
+        Screen::CockpitDetail => screens::render_cockpit_detail(f, app, chunks[1], theme),
     }
     status_bar::render_status_bar(f, app, chunks[2], theme);
 

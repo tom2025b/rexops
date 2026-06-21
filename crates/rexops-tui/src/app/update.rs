@@ -206,6 +206,12 @@ impl App {
                     self.drill_into_selected_component();
                 }
             }
+            // On the detail screen, Enter launches the focused component if it is
+            // launchable (same arm path as the cockpit). A read-only component's
+            // Enter is a no-op here — there's nothing deeper to drill into.
+            Screen::CockpitDetail => {
+                self.arm_selected_component();
+            }
             _ => {}
         }
     }
@@ -237,6 +243,8 @@ impl App {
         } else if self.current_screen == Screen::Launcher {
             self.current_screen = Screen::Dashboard;
             self.log_event("Launcher: back to Dashboard");
+        } else if self.current_screen == Screen::CockpitDetail {
+            self.cockpit_back();
         } else {
             // Top level: nothing to back out of. Esc does NOT quit — that is `q`
             // / Ctrl-C. A no-op here is what keeps Esc from killing a running job
