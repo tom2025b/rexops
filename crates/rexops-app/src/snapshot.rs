@@ -199,7 +199,88 @@ pub fn build_snapshot_with_piped(config: &AppConfig, piped: Option<&str>) -> Ops
     // Config note (now loaded). Neutral message that makes sense for both CLI and TUI.
     snap.add_note("config: loaded (respects 'enabled' per adapter)".to_owned());
 
+    // Project the resolved state into per-component statuses (must be last: it
+    // reads adapter_health + the folded fields the blocks above populated).
+    registry_walk(&mut snap, config);
+
     snap
+}
+
+/// Project the already-resolved snapshot state into one `ComponentStatus` per
+/// registry row. Runs LAST in the build, after the probe blocks have populated
+/// `adapter_health` and the structured fields — it re-probes nothing, it only
+/// reads what is already there. This is what makes the cockpit, `status`, and
+/// `components` all read the same single resolution.
+fn registry_walk(snap: &mut OpsSnapshot, config: &AppConfig) {
+    use rexops_core::{AdapterHealth, ComponentStatus, HealthSource};
+
+    for comp in rexops_core::COMPONENTS {
+        // Health: a Planned source never touches I/O and reads Unknown; every
+        // other source's health was already resolved into adapter_health by the
+        // probe blocks (or stays Unknown if that source isn't wired this phase).
+        let health = match comp.health {
+            HealthSource::Planned => AdapterHealth::Unknown,
+            _ => snap
+                .adapter_health
+                .get(comp.id)
+                .copied()
+                .unwrap_or(AdapterHealth::Unknown),
+        };
+
+        let launchable = comp.launch.is_some()
+            && config.adapter_enabled(comp.id)
+            && health != AdapterHealth::Unavailable;
+
+        snap.push_component(ComponentStatus {
+            id: comp.id.to_owned(),
+            name: comp.name.to_owned(),
+            group: comp.group.label().to_owned(),
+            maturity: comp.maturity.label().to_owned(),
+            health,
+            freshness: component_freshness(snap, comp.id),
+            vital: component_vital(snap, comp.id),
+            launchable,
+        });
+    }
+}
+
+/// Freshness for feed-backed components, read from the structured data the
+/// Workstate fold already produced. `None` for non-feed sources.
+fn component_freshness(snap: &OpsSnapshot, id: &str) -> Option<rexops_core::Freshness> {
+    use rexops_core::status_to_freshness;
+    let ws = snap.workstate.as_ref()?;
+    let status = match id {
+        "scriptvault" => ws.scripts.status.as_str(),
+        "toolfoundry" => ws.tools.status.as_str(),
+        "workstate" => ws.findings.status.as_str(),
+        _ => return None,
+    };
+    Some(status_to_freshness(status))
+}
+
+/// The one headline number per component, derived from already-folded data.
+/// `None` when there is nothing meaningful to show (e.g. a Planned component).
+fn component_vital(snap: &OpsSnapshot, id: &str) -> Option<String> {
+    match id {
+        "workstate" => snap
+            .workstate
+            .as_ref()
+            .map(|ws| format!("{}/3 fresh", ws.populated_section_count())),
+        "bulwark" => snap.findings.as_ref().map(|f| {
+            let t = f.risk_tally();
+            format!("{} crit {} high", t.critical, t.high)
+        }),
+        "scriptvault" => snap
+            .scripts
+            .as_ref()
+            .map(|s| format!("{} scripts", s.total())),
+        "toolfoundry" => snap
+            .tools
+            .as_ref()
+            .map(|t| format!("{} need review", t.attention_count)),
+        "system" => snap.system.as_ref().and_then(|s| s.hostname.clone()),
+        _ => None,
+    }
 }
 
 /// Whether a blob of piped JSON is a Workstate v3 snapshot or something else.
@@ -774,6 +855,56 @@ mod tests {
         assert!(snap.tools.is_none());
         assert!(snap.scripts.is_none());
         assert!(snap.findings.is_none());
+    }
+
+    #[test]
+    fn registry_walk_projects_one_status_per_component() {
+        // The walk must emit exactly one ComponentStatus per registry row, in table
+        // order, projecting the already-resolved health — never re-probing.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        assert_eq!(
+            snap.components.len(),
+            rexops_core::COMPONENTS.len(),
+            "one status per registry component"
+        );
+        // Order matches the table.
+        for (status, comp) in snap.components.iter().zip(rexops_core::COMPONENTS) {
+            assert_eq!(status.id, comp.id, "component statuses follow table order");
+        }
+    }
+
+    #[test]
+    fn planned_components_are_neutral_not_faulty() {
+        // A Planned component (e.g. pulse) must surface as Unknown health and a
+        // "planned" maturity — never Healthy (fake green) and never Unavailable
+        // (a fault). It is honest, dim, and does no I/O.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        let pulse = snap
+            .components
+            .iter()
+            .find(|c| c.id == "pulse")
+            .expect("pulse is a registry row");
+        assert_eq!(pulse.maturity, "planned");
+        assert_eq!(pulse.health, rexops_core::AdapterHealth::Unknown);
+        assert!(!pulse.launchable, "a planned component is not launchable");
+    }
+
+    #[test]
+    fn live_workstate_component_reflects_resolved_health() {
+        // The workstate component's projected health must equal what the probe block
+        // already wrote into adapter_health — proving projection, not re-probe.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        let ws_health = snap
+            .adapter_health
+            .get("workstate")
+            .copied()
+            .expect("workstate probed");
+        let ws_component = snap
+            .components
+            .iter()
+            .find(|c| c.id == "workstate")
+            .expect("workstate is a registry row");
+        assert_eq!(ws_component.health, ws_health);
     }
 
     #[test]
