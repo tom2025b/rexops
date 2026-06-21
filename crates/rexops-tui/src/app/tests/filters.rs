@@ -140,14 +140,15 @@ fn opening_the_palette_exits_filter_mode() {
 }
 
 #[test]
-fn j_k_navigate_the_adapter_selection_on_the_dashboard() {
-    // The regression this guards: the Dashboard rendered the adapter table but
-    // had no move_selection arm, so j/k were silently ignored there (they only
-    // worked on the Adapters screen). Now both screens share the same
-    // selection movement. Names are stored sorted, so selection starts on
+fn j_k_navigate_the_adapter_selection_on_the_adapters_screen() {
+    // j/k move the adapter table selection on the Adapters screen. (As of Phase
+    // C the cockpit/Dashboard's j/k move CARD focus instead — see
+    // app::tests::cockpit — so the adapter-table movement is asserted here, on
+    // the screen that owns it.) Names are stored sorted, so selection starts on
     // "alpha"; Down → "bravo", Up → back to "alpha".
     let mut app = dashboard_app_with_adapters(&["alpha", "bravo", "charlie"]);
-    assert_eq!(app.current_screen, Screen::Dashboard);
+    app.current_screen = Screen::Adapters;
+    app.select_first_visible_adapter();
     assert_eq!(app.selected_adapter.as_deref(), Some("alpha"));
 
     let mut runner = FakeRunner { calls: 0 };
@@ -155,7 +156,7 @@ fn j_k_navigate_the_adapter_selection_on_the_dashboard() {
     assert_eq!(
         app.selected_adapter.as_deref(),
         Some("bravo"),
-        "Down must move the Dashboard selection (was a no-op before)"
+        "Down moves the adapter selection on the Adapters screen"
     );
     app.on_action(Action::Up, &mut runner);
     assert_eq!(

@@ -93,6 +93,21 @@ impl App {
                 false
             }
             Action::Cancel => self.cancel_current_context(),
+            Action::CardKey(c) => {
+                // Cockpit-only: a card's letter arms it. On any other screen it's
+                // inert (no card grid). Navigation mode only — while filtering the
+                // keymap emits InputChar, so letters type into the filter instead.
+                if self.current_screen == Screen::Dashboard {
+                    self.arm_component_by_marker(c);
+                }
+                false
+            }
+            Action::Drill => {
+                if self.current_screen == Screen::Dashboard {
+                    self.drill_into_selected_component();
+                }
+                false
+            }
             // `/` on a filter screen enters filter mode. It is intercepted here
             // and NOT appended to the query — the slash is the trigger, not text.
             // (While already filtering we run in Text mode, so `/` arrives as a
@@ -134,9 +149,10 @@ impl App {
 
     fn move_selection(&mut self, down: bool) {
         match self.current_screen {
-            // Dashboard and Adapters show the same filtered adapter table and
-            // share its selection, so j/k move it identically on both.
-            Screen::Dashboard | Screen::Adapters => self.move_adapter_selection(down),
+            // The cockpit moves its own card focus (keyed by component id).
+            Screen::Dashboard => self.move_cockpit_selection(down),
+            // Adapters keeps the filtered adapter table + its shared selection.
+            Screen::Adapters => self.move_adapter_selection(down),
             // On the Jobs screen, Up/Down scroll the output viewport instead of
             // moving a list selection. Up = toward older output.
             Screen::Jobs => self.scroll_jobs_output(!down),
@@ -170,6 +186,24 @@ impl App {
             Screen::Launcher => {
                 if let Some(tool) = tools::CATALOG.get(self.selected_tool) {
                     self.arm_tool(tool.id.to_owned(), tool.name.to_owned());
+                }
+            }
+            // On the cockpit, Enter arms the focused card if it is launchable;
+            // otherwise it drills into the card's detail (so Enter is never a
+            // silent no-op on a planned/read-only card). `arm_tool` itself gates
+            // launchability, so we check `launchable` here only to choose between
+            // arm vs. drill.
+            Screen::Dashboard => {
+                let launchable = self
+                    .selected_component
+                    .as_deref()
+                    .and_then(|id| self.snapshot.components.iter().find(|c| c.id == id))
+                    .map(|c| c.launchable)
+                    .unwrap_or(false);
+                if launchable {
+                    self.arm_selected_component();
+                } else {
+                    self.drill_into_selected_component();
                 }
             }
             _ => {}

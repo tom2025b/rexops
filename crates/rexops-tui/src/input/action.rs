@@ -61,4 +61,16 @@ pub enum Action {
 
     /// Backspace for editing filter.
     Backspace,
+
+    /// A cockpit card hotkey (its dim letter marker) was pressed — arm that card.
+    /// Emitted by the navigation keymap (wired in the keymap task); already
+    /// handled in `on_action`. `allow(dead_code)` until the keymap emits it.
+    #[allow(dead_code)]
+    CardKey(char),
+
+    /// Drill into the focused cockpit card's detail view (g). Emitted by the
+    /// navigation keymap (wired in the keymap task); already handled in
+    /// `on_action`. `allow(dead_code)` until the keymap emits it.
+    #[allow(dead_code)]
+    Drill,
 }
