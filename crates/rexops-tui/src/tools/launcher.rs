@@ -5,11 +5,13 @@
 //! how to suspend/restore the TUI around a child process.
 
 use std::io;
-use std::process::Command;
 
 use rexops_core::AppConfig;
 
-use super::catalog;
+// Launch-command resolution moved to `rexops_app::launch` in Phase F so the CLI
+// can share it without depending on the TUI crate. We re-export the types here
+// so this module (and `tools::`) keep their existing surface unchanged.
+pub use rexops_app::{resolve_launch_command, LaunchCommand};
 
 /// Small abstraction over "run this with the user's real terminal".
 pub trait ForegroundRunner {
@@ -21,23 +23,6 @@ pub trait ForegroundRunner {
 pub enum ChildExit {
     Success,
     Status(String),
-}
-
-/// Fully resolved child process invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchCommand {
-    pub program: String,
-    pub args: Vec<String>,
-}
-
-impl LaunchCommand {
-    pub fn display(&self) -> String {
-        if self.args.is_empty() {
-            self.program.clone()
-        } else {
-            format!("{} {}", self.program, self.args.join(" "))
-        }
-    }
 }
 
 /// User-facing result of a launch attempt.
@@ -101,68 +86,6 @@ pub fn launch_tool(
     }
 }
 
-/// Resolve a tool's launch target. Config is authoritative: an explicitly
-/// configured `binary` wins, and only when none is configured do we fall back to
-/// the tool on the user's PATH. Returns None when neither yields a command (e.g.
-/// a feed-only tool with no executable), or when the adapter is administratively
-/// disabled (`enabled: false`) — a disabled adapter never resolves to a command,
-/// even when its binary is on PATH.
-///
-/// The config-over-PATH order is deliberate: `binary` is an administrative pin
-/// (the same control surface as `enabled`), so a stray same-named binary on PATH
-/// must not silently shadow the build an operator chose.
-///
-/// Private: this is the *program-only* half. Every caller outside this module —
-/// the confirm-gate preview, the foreground launch, and the background job — must
-/// go through [`resolve_launch_command`], which appends the catalog args. Routing
-/// them all through the one full resolver is what guarantees the dry-run preview
-/// shows exactly what later runs (CR-2: no preview/run arg divergence).
-fn resolve_command(tool_id: &str, config: &AppConfig) -> Option<String> {
-    if !config.adapter_enabled(tool_id) {
-        return None;
-    }
-    command_from_config(tool_id, config).or_else(|| command_from_path(tool_id))
-}
-
-/// Resolve the complete launch command for a tool, including any registry-owned
-/// arguments needed to open its interactive surface. Args come from the
-/// component's `LaunchSpec`; the program is resolved (`which` then config binary)
-/// as before — the registry is the single source of launch data.
-pub fn resolve_launch_command(tool_id: &str, config: &AppConfig) -> Option<LaunchCommand> {
-    let program = resolve_command(tool_id, config)?;
-    let args = catalog::by_id(tool_id)
-        .and_then(|c| c.launch)
-        .map(|l| l.args.iter().map(|arg| (*arg).to_owned()).collect())
-        .unwrap_or_default();
-    Some(LaunchCommand { program, args })
-}
-
-/// Prefer the user's PATH by asking the platform `which` command.
-fn command_from_path(tool_id: &str) -> Option<String> {
-    let output = Command::new("which").arg(tool_id).output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_owned)
-}
-
-/// Fall back to an explicit binary configured for this tool's adapter.
-fn command_from_config(tool_id: &str, config: &AppConfig) -> Option<String> {
-    config
-        .adapters
-        .get(tool_id)
-        .and_then(|adapter| adapter.binary.as_deref())
-        .map(str::trim)
-        .filter(|binary| !binary.is_empty())
-        .map(str::to_owned)
-}
-
 #[cfg(test)]
 mod tests {
     use rexops_core::AdapterConfig;
@@ -216,15 +139,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_command_returns_none_for_disabled_adapter() {
-        // A disabled adapter must never resolve to a command, even when its
-        // binary is explicitly configured (and would otherwise win the
-        // config-fallback). This is the P1: enabled: false must be respected.
-        let config = config_with_disabled_binary("scripts", "/tmp/scripts");
-        assert_eq!(resolve_command("scripts", &config), None);
-    }
-
-    #[test]
     fn launch_tool_refuses_disabled_adapter_and_skips_runner() {
         // launch_tool must treat a disabled adapter as unlaunchable: report
         // gracefully and never touch the foreground runner.
@@ -244,64 +158,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn configured_binary_overrides_a_binary_on_path() {
-        // Config is authoritative: when a tool is BOTH configured with an
-        // explicit binary AND present on PATH, resolution must return the
-        // configured path — never the PATH hit. A stray same-named binary on
-        // PATH must not silently shadow the build an operator pinned.
-        //
-        // We discover a real on-PATH command at runtime (sh is on any POSIX
-        // box, but we resolve it rather than assume a path) so the test proves
-        // "config wins over a genuine PATH hit" without hardcoding a location.
-        let on_path = command_from_path("sh").expect("sh must be on PATH for this test");
-        assert!(
-            !on_path.is_empty(),
-            "precondition: `which sh` resolved to a real path"
-        );
-
-        // Pin a DIFFERENT path in config for that same id. If PATH still won,
-        // resolution would return `on_path`; config winning returns our pin.
-        let pinned = "/tmp/pinned-sh-override";
-        assert_ne!(pinned, on_path, "the pin must differ from the PATH hit");
-        let config = config_with_binary("sh", pinned);
-
-        assert_eq!(
-            resolve_command("sh", &config),
-            Some(pinned.to_owned()),
-            "configured binary must win over the PATH hit"
-        );
-    }
-
-    #[test]
-    fn path_is_used_only_when_no_binary_is_configured() {
-        // The fallback half of the contract: with NO configured binary, an
-        // on-PATH tool still resolves (to the PATH location). This guards
-        // against a reorder accidentally dropping the PATH fallback entirely.
-        let on_path = command_from_path("sh").expect("sh must be on PATH for this test");
-        assert_eq!(
-            resolve_command("sh", &AppConfig::default()),
-            Some(on_path),
-            "with no config binary, PATH is the fallback"
-        );
-    }
-
-    #[test]
-    fn command_from_config_uses_trimmed_binary() {
-        let config = config_with_binary("scripts", "  /tmp/scripts  ");
-        assert_eq!(
-            command_from_config("scripts", &config),
-            Some("/tmp/scripts".to_owned())
-        );
-    }
-
-    #[test]
-    fn command_from_config_ignores_missing_or_empty_binary() {
-        assert_eq!(command_from_config("scripts", &AppConfig::default()), None);
-
-        let config = config_with_binary("scripts", "   ");
-        assert_eq!(command_from_config("scripts", &config), None);
-    }
+    // Note: the program/args resolution unit tests (config-over-PATH, trimming,
+    // disabled-adapter, missing-binary) moved with `resolve_launch_command` into
+    // `rexops_app::launch` in Phase F. The tests below exercise the TUI launch
+    // *orchestration* (`launch_tool` + the runner) that still lives here.
 
     #[test]
     fn launch_tool_reports_success_and_refreshes() {

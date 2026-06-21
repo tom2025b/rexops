@@ -1,4 +1,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+// Tests may use unwrap/expect freely — a panic IS the failure signal there.
+// (Matches rexops-tui's test allow.)
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #![warn(clippy::all, clippy::pedantic)]
 // A few allows for a small orchestration crate (similar to the other crates).
 #![allow(
@@ -30,11 +33,13 @@
 //!   stdin). It must never read stdin per refresh — stdin is consume-once.
 
 mod config;
+pub mod launch;
 mod snapshot;
 mod status_probe;
 
 // Re-export the primary public surface in a flat namespace.
 pub use config::load_config;
+pub use launch::{resolve_launch_command, LaunchCommand};
 pub use snapshot::{
     build_adapter_registry, build_snapshot, build_snapshot_with_piped, read_piped_stdin,
 };

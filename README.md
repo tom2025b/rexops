@@ -95,6 +95,12 @@ cargo build --all
 cargo run -p rexops-cli -- status
 cargo run -p rexops-cli -- status --json
 cargo run -p rexops-cli -- adapters
+cargo run -p rexops-cli -- components
+
+# Launch a component's tool from the CLI (confirm prompt mirrors the cockpit)
+cargo run -p rexops-cli -- launch bulwark            # prompts before running
+cargo run -p rexops-cli -- launch bulwark --dry-run  # prints the command, runs nothing
+cargo run -p rexops-cli -- launch bulwark --yes      # skip the prompt (scripts)
 
 # Launch the TUI (best in a real terminal)
 cargo run -p rexops-tui
@@ -107,6 +113,8 @@ cargo run -p rexops-tui
 - `cargo run -p rexops-cli -- status` — Human status (adapter health + snapshot).
 - `cargo run -p rexops-cli -- status --json` — Same snapshot as JSON for scripts and other automation.
 - `cargo run -p rexops-cli -- adapters` — List adapters from the registry.
+- `cargo run -p rexops-cli -- components` — List the suite component registry (id, group, maturity, health, vital).
+- `cargo run -p rexops-cli -- launch <tool>` — Launch a component's tool with a confirm prompt that mirrors the cockpit's. `--yes` skips the prompt (scripts), `--dry-run` prints the exact command without running it. Refuses tools that don't resolve (not on PATH / no configured binary / disabled).
 - `cargo run -p rexops-tui` — Launch the ratatui dashboard. Keys: r=refresh, q/Esc/Ctrl-C=quit, ?=help, 1=Dashboard, 2=Adapters, 3=System, 4=Scripts, 5=Tools, 6=Launcher, 7=Jobs; `:`/Ctrl-P command palette; `/` filter; `x` cancel a running job.
 - The four gate commands (`fmt --check`, `clippy -D warnings`, `test --all`, `build --all`) are mandatory for every change.
 

@@ -119,6 +119,14 @@ wrappers around `decide`, kept out of unit tests.
 `cargo build --workspace --all-targets`, `cargo test --workspace`, `cargo clippy
 --workspace --all-targets -- -D warnings`, `cargo fmt --all --check` green at
 every commit. One `feat(rexops): … (Phase F)` impl-commit on a branch → PR →
-merge, matching the A–E cadence. The pre-existing red "hub schema" CI check
-(fixture `schema_version` 3 vs umbrella schema 4) is bumped to v4 in this branch
-so the PR lands on fully-green CI.
+merge, matching the A–E cadence.
+
+The pre-existing red "Validate Workstate fixture against hub schema" CI check is
+**out of scope** for this phase. It is not a one-line fixture bump: the umbrella
+schema now mandates `schema_version` const **4** ("only v4 is consumed"), but the
+rexops `workstate` adapter is built around the **v3** shape (it parses v3, asserts
+`schema_version == 3`, and its version gate *skips* unknown versions). Bumping the
+fixture to 4 alone would make the adapter skip its own fixture and break the v3
+parsing tests — a genuine v3→v4 contract migration that deserves its own task.
+Phase F therefore merges on **"Rust verification" green**, exactly as Phases A–E
+did while that check has been red on `main`. Tracked as a follow-up.

@@ -19,6 +19,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod launch;
+
 // CLI is now a pure thin shell. All config loading and snapshot/registry
 // building has moved to rexops-app (the shared layer). We only import the
 // types we need for clap dispatch and pretty-printing.
@@ -53,11 +55,32 @@ enum Commands {
 
     /// List the suite component registry (id, group, maturity, health, vital).
     Components,
+
+    /// Launch a component's tool, with a confirm prompt (mirrors the cockpit).
+    Launch {
+        /// Component id to launch (e.g. bulwark, proto, scriptvault, pulse).
+        tool: String,
+
+        /// Skip the confirmation prompt (for scripts / non-interactive use).
+        #[arg(long, short = 'y')]
+        yes: bool,
+
+        /// Print the exact command that would run, then exit without running it.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// Top level run. Returns a proper exit code so scripts can react.
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    // `launch` forwards the child's exit code (and uses non-zero to refuse), so
+    // it bypasses the Ok/Err inspection flow and returns its own ExitCode.
+    if let Some(Commands::Launch { tool, yes, dry_run }) = &cli.command {
+        let code = launch::run_launch(tool, *yes, *dry_run, &load_config());
+        return ExitCode::from(code);
+    }
 
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -104,6 +127,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}", render_components_human(&snapshot));
             }
         }
+        // `launch` is intercepted in `main` (it owns its exit code), so it never
+        // reaches here. Kept as an explicit arm so the match stays exhaustive.
+        Commands::Launch { .. } => unreachable!("launch is handled in main()"),
     }
     Ok(())
 }
