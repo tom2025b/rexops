@@ -51,9 +51,17 @@ pub(super) fn render_help_popup(f: &mut Frame, area: Rect, theme: Theme) {
         ("7", "Jobs — live output of a background job"),
         (
             "j / k · ↑ / ↓",
-            "move selection (Dashboard / Adapters / Launcher / palette); scroll output (Jobs)",
+            "move selection (cockpit cards / Adapters / Launcher / palette); scroll output (Jobs)",
         ),
-        ("Enter", "activate selection / run enabled tools"),
+        (
+            "a-z (cockpit)",
+            "press a card's letter to launch it (confirm first)",
+        ),
+        ("g", "drill into the focused cockpit card's detail"),
+        (
+            "Enter",
+            "activate selection / launch a launchable card / run enabled tools",
+        ),
         ("y / n", "confirm / cancel a pending run"),
         ("x", "cancel the running job (Jobs screen)"),
         ("backspace", "edit the filter / palette query"),
@@ -134,6 +142,16 @@ mod tests {
         assert!(
             !text.contains("type to filter"),
             "help must not describe the old bare-typing filter model:\n{text}"
+        );
+    }
+
+    #[test]
+    fn help_documents_the_cockpit_card_hotkeys() {
+        let text = help_text();
+        assert!(text.contains("card"), "help mentions card hotkeys:\n{text}");
+        assert!(
+            text.to_lowercase().contains("drill"),
+            "help mentions drill:\n{text}"
         );
     }
 }
