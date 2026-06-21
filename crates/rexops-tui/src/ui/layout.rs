@@ -24,7 +24,7 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
 
     render_header(f, app, chunks[0], theme);
     match app.current_screen {
-        Screen::Dashboard => screens::render_dashboard(f, app, chunks[1], theme),
+        Screen::Dashboard => screens::render_cockpit(f, app, chunks[1], theme),
         Screen::Adapters => screens::render_adapters(f, app, chunks[1], theme),
         Screen::System => screens::render_system(f, app, chunks[1], theme),
         Screen::Scripts => screens::render_scripts(f, app, chunks[1], theme),
@@ -47,7 +47,7 @@ pub fn render(f: &mut Frame, app: &App, theme: Theme) {
 
 fn render_header(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let screen_name = match app.current_screen {
-        Screen::Dashboard => "Dashboard",
+        Screen::Dashboard => "Cockpit",
         Screen::Adapters => "Adapters",
         Screen::System => "System",
         Screen::Scripts => "Scripts",
