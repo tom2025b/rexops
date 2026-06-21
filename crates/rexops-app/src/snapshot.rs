@@ -1415,9 +1415,9 @@ mod tests {
         );
 
         // "live" = 3 probed adapters + 2 feed-backed launchables + pulse
-        // (StatusCommand) + rex-check + tripwire (Probe+launch). Eight live cards
-        // out of eleven registry rows. Note the Probe+launch rows are Live via the
-        // registry walk but are NOT in adapter_health above — like proto, a Probe
+        // (StatusCommand) + rex-check + tripwire + rewind (Probe+launch). Nine live
+        // cards out of eleven registry rows. Note the Probe+launch rows are Live via
+        // the registry walk but are NOT in adapter_health above — like proto, a Probe
         // row that isn't wired into build_snapshot_with_piped isn't probed into the
         // roster; `maturity == "live"` (registry-driven) is what lights the card.
         let mut expected_live = expected_registry.clone();
@@ -1426,10 +1426,11 @@ mod tests {
         expected_live.push("toolfoundry".to_owned()); // Phase D: feed-backed Live
         expected_live.push("rex-check".to_owned()); // Phase F-tail: Probe+launch Live
         expected_live.push("tripwire".to_owned()); // Probe+launch Live
+        expected_live.push("rewind".to_owned()); // Probe+launch Live
         expected_live.sort();
         assert_eq!(
             live_components, expected_live,
-            "live component cards (8/11)"
+            "live component cards (9/11)"
         );
     }
 }

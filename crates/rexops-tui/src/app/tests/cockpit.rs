@@ -167,7 +167,7 @@ fn drill_key_opens_detail_for_a_launchable_card_too() {
 }
 
 #[test]
-fn live_launchables_include_pulse_rex_check_tripwire_and_rewind_rex_forge_stay_planned() {
+fn live_launchables_include_pulse_rex_check_tripwire_rewind_and_rex_forge_stays_planned() {
     let launchable: Vec<&str> = rexops_core::launchable_components()
         .iter()
         .map(|c| c.id)
@@ -177,21 +177,19 @@ fn live_launchables_include_pulse_rex_check_tripwire_and_rewind_rex_forge_stay_p
         "pulse must be launchable: {launchable:?}"
     );
 
-    // rex-check and tripwire are launchable via Probe + launch (the bulwark pattern).
-    for id in ["rex-check", "tripwire"] {
+    // rex-check, tripwire and rewind are launchable via Probe + launch.
+    for id in ["rex-check", "tripwire", "rewind"] {
         assert!(
             launchable.contains(&id),
             "{id} must be launchable: {launchable:?}"
         );
     }
 
-    // The still-Planned tools stay non-launchable.
-    for id in ["rewind", "rex-forge"] {
-        assert!(
-            !launchable.contains(&id),
-            "{id} must stay Planned/non-launchable"
-        );
-    }
+    // rex-forge stays Planned/non-launchable (flipped last).
+    assert!(
+        !launchable.contains(&"rex-forge"),
+        "rex-forge must stay Planned/non-launchable"
+    );
 
     // Pulse's health source is StatusCommand and its maturity is Live.
     let pulse = rexops_core::component_by_id("pulse").unwrap();
@@ -201,8 +199,8 @@ fn live_launchables_include_pulse_rex_check_tripwire_and_rewind_rex_forge_stay_p
     ));
     assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
 
-    // rex-check and tripwire are Live via Probe (binary presence), not StatusCommand.
-    for id in ["rex-check", "tripwire"] {
+    // rex-check, tripwire, rewind are Live via Probe (binary presence), not StatusCommand.
+    for id in ["rex-check", "tripwire", "rewind"] {
         let c = rexops_core::component_by_id(id).unwrap();
         assert!(
             matches!(c.health, rexops_core::HealthSource::Probe { .. }),

@@ -164,10 +164,23 @@ pub const COMPONENTS: &[Component] = &[
         role: "black box",
         blurb: "Black-box event recorder",
         group: ComponentGroup::BlackBox,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the rex-check/tripwire pattern): rewind's `--json` is a
+        // TimelineEnvelope (schema_version/source_tool/captures…), not the one-line
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
+        // (`--help` exits 0) and it launches its capture timeline in the foreground.
+        // The binary isn't on PATH yet, so the Probe honestly reports Unavailable
+        // until the suite installer places it — never a fake-green card.
+        health: HealthSource::Probe {
+            binary: "rewind",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "rex-check",
@@ -287,8 +300,8 @@ mod tests {
     #[test]
     fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
         let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
-        // In table order: the five Phase-E launchables, then tripwire (Probe+launch,
-        // table position 8, between pulse and rex-check), then rex-check.
+        // In table order: the five Phase-E launchables, then the Probe+launch black
+        // boxes tripwire (row 8) and rewind (row 9), then rex-check.
         assert_eq!(
             ids,
             vec![
@@ -298,6 +311,7 @@ mod tests {
                 "toolfoundry",
                 "pulse",
                 "tripwire",
+                "rewind",
                 "rex-check"
             ]
         );
