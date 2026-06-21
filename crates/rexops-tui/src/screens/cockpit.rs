@@ -270,6 +270,33 @@ mod tests {
         let text = render(&app);
         assert!(!text.contains('▌'), "nothing focused → no rail:\n{text}");
     }
+
+    #[test]
+    fn a_launchable_field_tool_renders_a_marker() {
+        // Phase D: ScriptVault/ToolFoundry are launchable Live cards now. They
+        // render with an actuation marker like any launchable card (the cockpit
+        // card draws a marker whenever the component is in the visit order).
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx, AppConfig::default(), None);
+        let mut snap = OpsSnapshot::new();
+        snap.push_component(ComponentStatus {
+            id: "scriptvault".into(),
+            name: "ScriptVault".into(),
+            group: "field tool".into(),
+            maturity: "live".into(),
+            health: AdapterHealth::Healthy,
+            freshness: None,
+            vital: Some("3 scripts".into()),
+            launchable: true,
+        });
+        app.apply_snapshot(snap);
+        let text = render(&app);
+        assert!(text.contains("ScriptVault"), "card present:\n{text}");
+        assert!(
+            text.contains('['),
+            "launchable field tool shows a marker:\n{text}"
+        );
+    }
 }
 
 // Learning Notes

@@ -463,3 +463,24 @@ fn start_job_reports_a_spawn_failure_and_leaves_clean_state() {
 }
 
 // --- command palette ----------------------------------------------------
+
+#[test]
+fn launcher_list_is_exactly_the_registry_launchable_set() {
+    // The Phase D invariant: there is ONE launch source. The Launcher's list must
+    // equal the registry components with a LaunchSpec, in registry order — if a
+    // future row gains/loses a launch, the screen follows with no second list to
+    // update.
+    let screen: Vec<&str> = crate::tools::launchable().iter().map(|c| c.id).collect();
+    let registry: Vec<&str> = rexops_core::COMPONENTS
+        .iter()
+        .filter(|c| c.launch.is_some())
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(
+        screen, registry,
+        "Launcher list must equal the registry launch set"
+    );
+    // And the two Phase D promotions are present.
+    assert!(screen.contains(&"scriptvault"));
+    assert!(screen.contains(&"toolfoundry"));
+}

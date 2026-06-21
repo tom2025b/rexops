@@ -204,3 +204,23 @@ State note: `App` now also carries `selected_component: Option<String>` (the
 focused card's id) alongside `selected_adapter`. Both Enter-arming and the letter
 hotkeys funnel into the same `arm_tool` gate the Launcher and palette use, so the
 three run surfaces can never disagree about what is launchable.
+
+## Launch Data Source (Phase D)
+
+There is **one** source of launch data: the `rexops_core::COMPONENTS` registry.
+Each component's `LaunchSpec` (`run_mode` / `args` / `refresh_after`) plus its
+`blurb` description is read by every run surface — `resolve_launch_command`, the
+Launcher screen (screen 6), the command palette's `run <tool>` rows, the
+launch-availability cache, and `is_streamable`/`refreshes_after`. The old
+hand-maintained `tools/catalog.rs::CATALOG`/`ToolEntry` is gone; `tools::catalog`
+is now a thin view over the registry (`tools::launchable()` =
+`rexops_core::launchable_components()`). Adding a launchable tool is a one-row
+registry change, and a guard test
+(`launcher_list_is_exactly_the_registry_launchable_set`) locks the Launcher list
+to the registry's `launch.is_some()` set so the two can never drift.
+
+Phase D also promoted **ScriptVault** and **ToolFoundry** from data-only cards to
+launchable `Live` components (feed health + freshness + a launch). Note this
+widened what `live` means: live cards = the adapter roster *plus* feed-backed
+launchables; the two cross-source rosters (`status`/`adapters`) are unchanged
+because feeds are not adapters.
