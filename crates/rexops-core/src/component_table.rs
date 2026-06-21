@@ -72,7 +72,7 @@ pub const COMPONENTS: &[Component] = &[
             refresh_after: false,
         }),
         feed: Some(FeedSpec { contract: "proto" }),
-        maturity: Maturity::Live,
+        maturity: Maturity::FeedReady,
     },
     Component {
         id: "scriptvault",

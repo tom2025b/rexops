@@ -935,4 +935,48 @@ mod tests {
             "merged risk must be identical across repeated calls"
         );
     }
+
+    #[test]
+    fn status_adapters_and_components_never_disagree_on_the_live_roster() {
+        // THE PHASE-A INVARIANT: the three views must agree. The set of components
+        // reporting a real (non-Unknown, non-Planned-maturity) health must be
+        // exactly the adapter roster — so the cockpit's "live" cards, `status`'s
+        // adapter_health, and `adapters`' registry can never drift apart.
+        let cfg = AppConfig::default();
+        let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
+        let reg = build_adapter_registry(&cfg);
+
+        let mut from_adapter_health: Vec<String> = snap
+            .adapter_health
+            .keys()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        from_adapter_health.sort();
+
+        let mut from_registry: Vec<String> = reg
+            .list()
+            .iter()
+            .map(|e| e.id.as_str().to_owned())
+            .collect();
+        from_registry.sort();
+
+        // Components whose maturity is "live" must be exactly the adapter roster.
+        let mut live_components: Vec<String> = snap
+            .components
+            .iter()
+            .filter(|c| c.maturity == "live")
+            .map(|c| c.id.clone())
+            .collect();
+        live_components.sort();
+
+        let mut expected = real_adapter_ids()
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect::<Vec<_>>();
+        expected.sort();
+
+        assert_eq!(from_adapter_health, expected, "status roster");
+        assert_eq!(from_registry, expected, "adapters roster");
+        assert_eq!(live_components, expected, "live component cards");
+    }
 }
