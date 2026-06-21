@@ -51,7 +51,9 @@ pub use component_table::{component_by_id, COMPONENTS};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
-pub use models::{format_unix_millis_utc, JobStatus, OpsSnapshot, ReportSummary, RiskSummary};
+pub use models::{
+    format_unix_millis_utc, ComponentStatus, JobStatus, OpsSnapshot, ReportSummary, RiskSummary,
+};
 pub use registry::{AdapterEntry, AdapterRegistry, ToolEntry, ToolRegistry};
 pub use system_info::SystemInfo;
 pub use workstate_info::{status_to_freshness, Freshness, Provenance, Section, WorkstateInfo};
