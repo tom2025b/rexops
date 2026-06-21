@@ -167,7 +167,7 @@ fn drill_key_opens_detail_for_a_launchable_card_too() {
 }
 
 #[test]
-fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
+fn every_flippable_tool_is_live_launchable_and_no_row_stays_planned() {
     let launchable: Vec<&str> = rexops_core::launchable_components()
         .iter()
         .map(|c| c.id)
@@ -177,19 +177,22 @@ fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
         "pulse must be launchable: {launchable:?}"
     );
 
-    // rex-check is now launchable too (Probe + launch, the bulwark/proto pattern).
-    assert!(
-        launchable.contains(&"rex-check"),
-        "rex-check must be launchable: {launchable:?}"
-    );
-
-    // The still-Planned tools stay non-launchable.
-    for id in ["tripwire", "rewind", "rex-forge"] {
+    // All four Probe+launch tools are launchable. With rex-forge flipped, the
+    // black-box and factory rows are wired and nothing remains Planned.
+    for id in ["rex-check", "tripwire", "rewind", "rex-forge"] {
         assert!(
-            !launchable.contains(&id),
-            "{id} must stay Planned/non-launchable"
+            launchable.contains(&id),
+            "{id} must be launchable: {launchable:?}"
         );
     }
+
+    // The registry has reached the Live ceiling: no row is Planned anymore.
+    assert!(
+        rexops_core::COMPONENTS
+            .iter()
+            .all(|c| c.maturity != rexops_core::Maturity::Planned),
+        "no registry row may stay Planned once every flippable tool is Live"
+    );
 
     // Pulse's health source is StatusCommand and its maturity is Live.
     let pulse = rexops_core::component_by_id("pulse").unwrap();
@@ -199,17 +202,20 @@ fn pulse_and_rex_check_are_live_launchable_and_the_other_three_stay_planned() {
     ));
     assert_eq!(pulse.maturity, rexops_core::Maturity::Live);
 
-    // rex-check is Live via the Probe pattern (binary presence), not StatusCommand.
-    let rex_check = rexops_core::component_by_id("rex-check").unwrap();
-    assert!(matches!(
-        rex_check.health,
-        rexops_core::HealthSource::Probe { .. }
-    ));
-    assert_eq!(rex_check.maturity, rexops_core::Maturity::Live);
+    // The four Probe+launch tools are Live via Probe (binary presence), not StatusCommand.
+    for id in ["rex-check", "tripwire", "rewind", "rex-forge"] {
+        let c = rexops_core::component_by_id(id).unwrap();
+        assert!(
+            matches!(c.health, rexops_core::HealthSource::Probe { .. }),
+            "{id} health must be Probe"
+        );
+        assert_eq!(c.maturity, rexops_core::Maturity::Live);
+    }
 }
 
 // Learning Notes
 // - The guard test locks the three-field flip (health, launch, maturity) as a
 //   permanent invariant: CI will catch any accidental rollback to Planned.
-// - The "others stay Planned" assertion prevents a copy-paste error from silently
-//   lighting up a not-yet-built tool.
+// - Now that every flippable tool is Live, the test pins the terminal state — the
+//   four Probe+launch tools are launchable AND no row stays Planned — so a rollback
+//   to Planned, or a regression that drops a tool from the launchable set, both trip.

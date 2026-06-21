@@ -140,10 +140,23 @@ pub const COMPONENTS: &[Component] = &[
         role: "alarm",
         blurb: "Change/intrusion alarm",
         group: ComponentGroup::BlackBox,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the rex-check/bulwark pattern): tripwire's `--json` is a
+        // Workstate-style envelope (source_tool/clean/added…), not the one-line
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
+        // (`--help` exits 0) and it launches its current watch view in the
+        // foreground. Live and launchable without a live-status feed; a
+        // StatusCommand flip can follow if tripwire grows the one-line contract.
+        health: HealthSource::Probe {
+            binary: "tripwire",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "rewind",
@@ -151,10 +164,23 @@ pub const COMPONENTS: &[Component] = &[
         role: "black box",
         blurb: "Black-box event recorder",
         group: ComponentGroup::BlackBox,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the rex-check/tripwire pattern): rewind's `--json` is a
+        // TimelineEnvelope (schema_version/source_tool/captures…), not the one-line
+        // `{healthy,detail,latency_ms}` contract, so health is binary-presence
+        // (`--help` exits 0) and it launches its capture timeline in the foreground.
+        // The binary isn't on PATH yet, so the Probe honestly reports Unavailable
+        // until the suite installer places it — never a fake-green card.
+        health: HealthSource::Probe {
+            binary: "rewind",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "rex-check",
@@ -185,10 +211,25 @@ pub const COMPONENTS: &[Component] = &[
         role: "tool factory",
         blurb: "Scaffolder — new tools from templates",
         group: ComponentGroup::Factory,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the rex-check/tripwire/rewind pattern). rex-forge is a TUI
+        // scaffolder with only `new`/`list` and no JSON contract at all, so
+        // StatusCommand is impossible — health is binary-presence (`--help` exits 0).
+        // Launch runs `list` (not bare, which errors: a subcommand is required; and
+        // not `new`, which is interactive and *writes* a project): `list` is the
+        // read-only catalog view — non-interactive, zero side effects — so it proves
+        // the tool runs without scaffolding anything from a launch button. The binary
+        // isn't on PATH yet, so the Probe honestly reports Unavailable until installed.
+        health: HealthSource::Probe {
+            binary: "rex-forge",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &["list"],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
 ];
 
@@ -274,8 +315,9 @@ mod tests {
     #[test]
     fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
         let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
-        // After Phase E, five rows carry a LaunchSpec; rex-check (Probe+launch)
-        // joins as the sixth, in table order (it sits after pulse/tripwire/rewind).
+        // In table order: the five Phase-E launchables, then the four Probe+launch
+        // tools — tripwire (8), rewind (9), rex-check (10), rex-forge (11). Nine
+        // launchable rows; only workstate (Feed) and system (Host) never launch.
         assert_eq!(
             ids,
             vec![
@@ -284,7 +326,10 @@ mod tests {
                 "scriptvault",
                 "toolfoundry",
                 "pulse",
-                "rex-check"
+                "tripwire",
+                "rewind",
+                "rex-check",
+                "rex-forge"
             ]
         );
         // And the view must agree with the predicate it claims to implement.
