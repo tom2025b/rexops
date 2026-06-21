@@ -29,6 +29,7 @@
 mod adapter_models;
 mod adapter_types;
 mod component;
+mod component_table;
 mod config;
 mod error;
 mod ids;
@@ -44,9 +45,9 @@ pub use adapter_models::scripts::{Script, ScriptsInfo};
 pub use adapter_models::tools::{Tool, ToolsInfo};
 pub use adapter_types::{AdapterHealth, AdapterOutput};
 pub use component::{
-    component_by_id, Component, ComponentGroup, ComponentId, FeedSpec, HealthSource, LaunchSpec,
-    Maturity, RunMode, COMPONENTS,
+    Component, ComponentGroup, ComponentId, FeedSpec, HealthSource, LaunchSpec, Maturity, RunMode,
 };
+pub use component_table::{component_by_id, COMPONENTS};
 pub use config::{AdapterConfig, AppConfig, Defaults};
 pub use error::CoreError;
 pub use ids::{AdapterId, ToolId};
