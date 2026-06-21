@@ -1037,27 +1037,40 @@ mod tests {
     }
 
     #[test]
-    fn planned_components_are_neutral_not_faulty() {
-        // A Planned component must surface as Unknown health and "planned" maturity
-        // — never Healthy (fake green) and never Unavailable (a fault). It is
-        // honest, dim, and does no I/O.
-        // The Planned set shrinks as tools are flipped Live, so pick the exemplar
-        // dynamically — the first registry row still marked Planned — rather than
-        // naming one (Pulse, then Tripwire, …) and chasing it on every flip. The
-        // test's *purpose* (Planned → neutral/dim) is what's pinned, not the
-        // identity of the example.
-        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
-        let planned = snap
-            .components
-            .iter()
-            .find(|c| c.maturity == "planned")
-            .expect("at least one registry row is still Planned");
-        assert_eq!(planned.health, rexops_core::AdapterHealth::Unknown);
-        assert!(
-            !planned.launchable,
-            "a planned component ({}) is not launchable",
-            planned.id
+    fn registry_has_reached_the_live_ceiling_and_nothing_is_fake_green() {
+        // History: this test used to pick a Planned exemplar (Pulse → Tripwire → the
+        // first remaining Planned row) and assert Planned → Unknown health + not
+        // launchable. Every flippable tool is now Live, so the registry holds ZERO
+        // Planned rows — the old premise is permanently false. Pin the new invariant:
+        // the ceiling is reached (10 Live + proto FeedReady, 0 Planned), and no card
+        // is fake-green — an Unwired/unresolved source must read Unknown, never a
+        // spurious Healthy. (The Planned → Unknown projection rule still lives in
+        // registry_walk's `HealthSource::Planned => Unknown` arm; it's simply
+        // unexercised by the table until someone adds a new Planned tool — at which
+        // point this renamed test makes them confront the neutrality contract.)
+        assert_eq!(
+            rexops_core::COMPONENTS
+                .iter()
+                .filter(|c| matches!(c.health, rexops_core::HealthSource::Planned))
+                .count(),
+            0,
+            "all flippable tools are Live — the registry has no Planned rows left"
         );
+
+        // Nothing is fake-green: with only the workstate feed piped, every component
+        // is either genuinely resolved (Healthy/Degraded/Unavailable from a real
+        // probe) or honestly Unknown — never Healthy without a resolution behind it.
+        let snap = build_snapshot_with_piped(&workstate_only_config(), Some(WORKSTATE_FEED));
+        for c in &snap.components {
+            if c.health == rexops_core::AdapterHealth::Healthy {
+                assert!(
+                    snap.adapter_health.get(c.id.as_str()).copied()
+                        == Some(rexops_core::AdapterHealth::Healthy),
+                    "{} reads Healthy with no resolution behind it (fake-green)",
+                    c.id
+                );
+            }
+        }
     }
 
     #[test]
@@ -1415,10 +1428,11 @@ mod tests {
         );
 
         // "live" = 3 probed adapters + 2 feed-backed launchables + pulse
-        // (StatusCommand) + rex-check + tripwire + rewind (Probe+launch). Nine live
-        // cards out of eleven registry rows. Note the Probe+launch rows are Live via
-        // the registry walk but are NOT in adapter_health above — like proto, a Probe
-        // row that isn't wired into build_snapshot_with_piped isn't probed into the
+        // (StatusCommand) + rex-check + tripwire + rewind + rex-forge (Probe+launch).
+        // Ten live cards out of eleven registry rows — the ceiling: the only non-live
+        // entry is proto (FeedReady). Note the Probe+launch rows are Live via the
+        // registry walk but are NOT in adapter_health above — like proto, a Probe row
+        // that isn't wired into build_snapshot_with_piped isn't probed into the
         // roster; `maturity == "live"` (registry-driven) is what lights the card.
         let mut expected_live = expected_registry.clone();
         expected_live.push("pulse".to_owned()); // Phase E: StatusCommand Live
@@ -1427,10 +1441,11 @@ mod tests {
         expected_live.push("rex-check".to_owned()); // Phase F-tail: Probe+launch Live
         expected_live.push("tripwire".to_owned()); // Probe+launch Live
         expected_live.push("rewind".to_owned()); // Probe+launch Live
+        expected_live.push("rex-forge".to_owned()); // Probe+launch Live
         expected_live.sort();
         assert_eq!(
             live_components, expected_live,
-            "live component cards (9/11)"
+            "live component cards (10/11)"
         );
     }
 }
