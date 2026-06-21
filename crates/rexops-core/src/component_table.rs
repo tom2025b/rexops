@@ -162,10 +162,22 @@ pub const COMPONENTS: &[Component] = &[
         role: "mechanic",
         blurb: "Suite health checks / doctor",
         group: ComponentGroup::Mechanic,
-        health: HealthSource::Planned,
-        launch: None,
+        // Probe + launch (the bulwark/proto pattern): rex-check has no JSON
+        // `status` contract yet, so health is binary-presence (`--help` exits 0),
+        // and it launches its doctor run in the foreground. It becomes Live and
+        // launchable without a live-status feed; a StatusCommand flip can follow
+        // if/when the tool grows the one-line contract.
+        health: HealthSource::Probe {
+            binary: "rex-check",
+            version_args: &["--help"],
+        },
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: None,
-        maturity: Maturity::Planned,
+        maturity: Maturity::Live,
     },
     Component {
         id: "rex-forge",
@@ -262,11 +274,18 @@ mod tests {
     #[test]
     fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
         let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
-        // After Phase E, five rows carry a LaunchSpec, in table order.
-        // Pulse joins bulwark/proto/scriptvault/toolfoundry as the fifth launchable.
+        // After Phase E, five rows carry a LaunchSpec; rex-check (Probe+launch)
+        // joins as the sixth, in table order (it sits after pulse/tripwire/rewind).
         assert_eq!(
             ids,
-            vec!["bulwark", "proto", "scriptvault", "toolfoundry", "pulse"]
+            vec![
+                "bulwark",
+                "proto",
+                "scriptvault",
+                "toolfoundry",
+                "pulse",
+                "rex-check"
+            ]
         );
         // And the view must agree with the predicate it claims to implement.
         for c in launchable_components() {

@@ -1413,16 +1413,20 @@ mod tests {
             "adapter_health roster must be exactly [bulwark, pulse, system, workstate]"
         );
 
-        // Phase E: "live" = 3 probed adapters + 2 feed-backed launchables + pulse
-        // (StatusCommand Live). Six live cards total out of eleven registry rows.
+        // "live" = 3 probed adapters + 2 feed-backed launchables + pulse
+        // (StatusCommand) + rex-check (Probe+launch). Seven live cards out of
+        // eleven registry rows. Note rex-check is Live via the registry walk but
+        // is NOT in adapter_health above — like proto, a Probe row that isn't
+        // wired into build_snapshot_with_piped is not probed into the roster.
         let mut expected_live = expected_registry.clone();
         expected_live.push("pulse".to_owned()); // Phase E: StatusCommand Live
         expected_live.push("scriptvault".to_owned()); // Phase D: feed-backed Live
         expected_live.push("toolfoundry".to_owned()); // Phase D: feed-backed Live
+        expected_live.push("rex-check".to_owned()); // Phase F-tail: Probe+launch Live
         expected_live.sort();
         assert_eq!(
             live_components, expected_live,
-            "live component cards (6/11)"
+            "live component cards (7/11)"
         );
     }
 }
