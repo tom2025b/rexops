@@ -18,6 +18,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "workstate",
         name: "Workstate",
         role: "brain",
+        blurb: "Suite brain — registry + state hub",
         group: ComponentGroup::Brain,
         health: HealthSource::Feed {
             contract: "workstate",
@@ -32,6 +33,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "system",
         name: "System",
         role: "host",
+        blurb: "Host facts (kernel, uptime, load)",
         group: ComponentGroup::Mechanic,
         health: HealthSource::Host,
         launch: None,
@@ -42,6 +44,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "bulwark",
         name: "Bulwark",
         role: "security",
+        blurb: "Content/security inspection (live scan)",
         group: ComponentGroup::FieldTool,
         health: HealthSource::Probe {
             binary: "bulwark",
@@ -61,6 +64,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "proto",
         name: "Proto",
         role: "checklists",
+        blurb: "Protocol / checklist runner (interactive picker)",
         group: ComponentGroup::FieldTool,
         health: HealthSource::Probe {
             binary: "proto",
@@ -78,34 +82,45 @@ pub const COMPONENTS: &[Component] = &[
         id: "scriptvault",
         name: "ScriptVault",
         role: "scripts",
+        blurb: "Script library + runner",
         group: ComponentGroup::FieldTool,
         health: HealthSource::Feed {
             contract: "scriptvault",
         },
-        launch: None,
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: Some(FeedSpec {
             contract: "scriptvault",
         }),
-        maturity: Maturity::FeedReady,
+        maturity: Maturity::Live,
     },
     Component {
         id: "toolfoundry",
         name: "ToolFoundry",
         role: "tool lifecycle",
+        blurb: "Tool build/lifecycle manager",
         group: ComponentGroup::FieldTool,
         health: HealthSource::Feed {
             contract: "toolfoundry",
         },
-        launch: None,
+        launch: Some(LaunchSpec {
+            run_mode: RunMode::Foreground,
+            args: &[],
+            refresh_after: false,
+        }),
         feed: Some(FeedSpec {
             contract: "toolfoundry",
         }),
-        maturity: Maturity::FeedReady,
+        maturity: Maturity::Live,
     },
     Component {
         id: "pulse",
         name: "Pulse",
         role: "heartbeat",
+        blurb: "Heartbeat / liveness monitor",
         group: ComponentGroup::Monitor,
         health: HealthSource::Planned,
         launch: None,
@@ -116,6 +131,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "tripwire",
         name: "Tripwire",
         role: "alarm",
+        blurb: "Change/intrusion alarm",
         group: ComponentGroup::BlackBox,
         health: HealthSource::Planned,
         launch: None,
@@ -126,6 +142,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "rewind",
         name: "Rewind",
         role: "black box",
+        blurb: "Black-box event recorder",
         group: ComponentGroup::BlackBox,
         health: HealthSource::Planned,
         launch: None,
@@ -136,6 +153,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "rex-check",
         name: "rex-check / RexDoctor",
         role: "mechanic",
+        blurb: "Suite health checks / doctor",
         group: ComponentGroup::Mechanic,
         health: HealthSource::Planned,
         launch: None,
@@ -146,6 +164,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "rex-forge",
         name: "rex-forge",
         role: "tool factory",
+        blurb: "Scaffolder — new tools from templates",
         group: ComponentGroup::Factory,
         health: HealthSource::Planned,
         launch: None,
@@ -157,6 +176,14 @@ pub const COMPONENTS: &[Component] = &[
 /// Look up a component by its stable id. `None` for an unknown id.
 pub fn component_by_id(id: &str) -> Option<&'static Component> {
     COMPONENTS.iter().find(|c| c.id == id)
+}
+
+/// The launchable components — those with a `LaunchSpec` — in registry (display)
+/// order. This is the single list the Launcher screen and command palette
+/// iterate, replacing the old hand-maintained `CATALOG`. Adding a launchable tool
+/// is now exactly: give its registry row a `launch`.
+pub fn launchable_components() -> Vec<&'static Component> {
+    COMPONENTS.iter().filter(|c| c.launch.is_some()).collect()
 }
 
 // Learning Notes
@@ -216,5 +243,36 @@ mod tests {
     fn suite_ui_is_not_a_component_row() {
         // suite-ui is the common face (the medium), never an instrument card.
         assert!(component_by_id("suite-ui").is_none());
+    }
+
+    #[test]
+    fn every_component_has_a_nonempty_blurb() {
+        for c in COMPONENTS {
+            assert!(!c.blurb.is_empty(), "{} must have a blurb", c.id);
+        }
+    }
+
+    #[test]
+    fn launchable_view_is_exactly_the_rows_with_a_launch_spec() {
+        let ids: Vec<&str> = launchable_components().iter().map(|c| c.id).collect();
+        // After Phase D, four rows carry a LaunchSpec, in table order.
+        assert_eq!(ids, vec!["bulwark", "proto", "scriptvault", "toolfoundry"]);
+        // And the view must agree with the predicate it claims to implement.
+        for c in launchable_components() {
+            assert!(
+                c.launch.is_some(),
+                "{} in the view must be launchable",
+                c.id
+            );
+        }
+    }
+
+    #[test]
+    fn scriptvault_and_toolfoundry_are_launchable_live() {
+        for id in ["scriptvault", "toolfoundry"] {
+            let c = component_by_id(id).expect("present");
+            assert!(c.launch.is_some(), "{id} must be launchable in Phase D");
+            assert_eq!(c.maturity, Maturity::Live, "{id} must be Live in Phase D");
+        }
     }
 }

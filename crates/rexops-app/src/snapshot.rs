@@ -943,11 +943,15 @@ mod tests {
     }
 
     #[test]
-    fn status_adapters_and_components_never_disagree_on_the_live_roster() {
-        // THE PHASE-A INVARIANT: the three views must agree. The set of components
-        // reporting a real (non-Unknown, non-Planned-maturity) health must be
-        // exactly the adapter roster — so the cockpit's "live" cards, `status`'s
-        // adapter_health, and `adapters`' registry can never drift apart.
+    fn status_and_adapters_agree_on_the_roster_and_live_is_that_roster_plus_feed_tools() {
+        // THE INVARIANT (refined in Phase D): `status`'s adapter_health and
+        // `adapters`' registry still agree EXACTLY with the adapter roster
+        // (bulwark/system/workstate) — feeds are not adapters. But Phase D widened
+        // what "live" means: a feed-backed tool with a launch (ScriptVault,
+        // ToolFoundry) is `Live` too, even though it is not adapter-*probed*. So
+        // the cockpit's "live" cards are the adapter roster PLUS those feed-backed
+        // launchables — a superset, not an equal set. The registry is still one
+        // source; "live" is just a richer maturity than "is an adapter".
         let cfg = AppConfig::default();
         let snap = build_snapshot_with_piped(&cfg, Some(WORKSTATE_FEED));
         let reg = build_adapter_registry(&cfg);
@@ -966,7 +970,6 @@ mod tests {
             .collect();
         from_registry.sort();
 
-        // Components whose maturity is "live" must be exactly the adapter roster.
         let mut live_components: Vec<String> = snap
             .components
             .iter()
@@ -981,8 +984,19 @@ mod tests {
             .collect::<Vec<_>>();
         expected.sort();
 
+        // The two cross-source rosters still agree exactly with the adapter
+        // roster — feeds are not adapters, so adding feed-backed Live tools does
+        // not change adapter_health or the registry adapter list.
         assert_eq!(from_adapter_health, expected, "status roster");
         assert_eq!(from_registry, expected, "adapters roster");
-        assert_eq!(live_components, expected, "live component cards");
+
+        // Phase D: `live` now means "fully wired" — the adapter roster PLUS the
+        // feed-backed launchable tools (ScriptVault + ToolFoundry). So the live
+        // cards are a SUPERSET of the adapter roster. Assert the exact new set.
+        let mut expected_live = expected.clone();
+        expected_live.push("scriptvault".to_owned());
+        expected_live.push("toolfoundry".to_owned());
+        expected_live.sort();
+        assert_eq!(live_components, expected_live, "live component cards");
     }
 }
